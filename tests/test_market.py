@@ -188,3 +188,13 @@ def test_get_json_does_not_retry_other_http_errors(monkeypatch) -> None:
     monkeypatch.setattr(spot, "urlopen", fake_urlopen)
     with pytest.raises(HTTPError):
         spot._get_json("https://api.example/price", sleep=lambda _s: None)
+
+
+def test_build_recovers_after_a_run_that_stored_empty_sections() -> None:
+    # The first live run hit a rate limit and saved "history": null; the next
+    # run must rebuild history from scratch instead of crashing on it.
+    previous = {"spot": None, "history": None, "forecast": None, "contracts": None}
+    result = build.build(today=date(2026, 10, 18), previous=previous, fetcher=fake_fetcher())
+    assert result["errors"] == []
+    assert next(iter(result["history"]["months"])) == "2019-01"
+    assert result["forecast"]["months"]
