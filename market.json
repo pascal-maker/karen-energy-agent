@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "generated_at": "2026-10-18T20:43:09+00:00",
+ "generated_at": "2026-10-18T21:52:53+00:00",
  "market": "BE",
  "spot": {
   "unit": "EUR/MWh",
@@ -801,7 +801,7 @@
    ]
   },
   "stale": false,
-  "updated_at": "2026-10-18T20:43:09+00:00"
+  "updated_at": "2026-10-18T21:52:53+00:00"
  },
  "history": {
   "unit": "EUR/MWh",
@@ -905,95 +905,100 @@
    "avg_so_far": 170.04
   },
   "stale": false,
-  "updated_at": "2026-10-18T20:43:09+00:00"
+  "updated_at": "2026-10-18T21:52:53+00:00"
  },
  "forecast": {
   "unit": "EUR/MWh",
-  "method": "Seizoensprofiel (laatste 3 jaar) x exponentieel afgevlakt niveau",
-  "band": "10-90% van de fouten in een backtest op eerdere jaren; middenlijn gecorrigeerd voor de mediane fout",
+  "method": "Lokaal niveau + seizoenspatroon op de log-prijs (exponentiële afvlakking)",
+  "band": "10-90% van de fouten in een backtest over de laatste 36 maanden",
   "trained_until": "2026-09",
+  "current_month_used": true,
+  "alpha": 1.0,
+  "season_weight": 0.0,
   "backtest": {
-   "origins": 57,
-   "mape_1m": 33.1,
-   "mape_6m": 59.2,
-   "mape_12m": 76.3
+   "origins": 36,
+   "window": "2023-10..2026-09",
+   "mape_1m": 15.1,
+   "mape_6m": 34.9,
+   "mape_12m": 25.4,
+   "naive_mape_1m": 15.1
   },
   "months": [
    {
     "month": "2026-10",
-    "point": 118.83,
-    "low": 80.67,
-    "high": 191.21
+    "point": 164.19,
+    "low": 128.83,
+    "high": 199.59
    },
    {
     "month": "2026-11",
-    "point": 119.28,
-    "low": 80.17,
-    "high": 216.8
+    "point": 164.19,
+    "low": 127.96,
+    "high": 223.0
    },
    {
     "month": "2026-12",
-    "point": 111.97,
-    "low": 73.54,
-    "high": 223.53
+    "point": 164.19,
+    "low": 112.53,
+    "high": 235.56
    },
    {
     "month": "2027-01",
-    "point": 137.49,
-    "low": 86.34,
-    "high": 292.62
+    "point": 164.19,
+    "low": 112.53,
+    "high": 274.99
    },
    {
     "month": "2027-02",
-    "point": 117.66,
-    "low": 66.42,
-    "high": 240.17
+    "point": 164.19,
+    "low": 106.04,
+    "high": 292.58
    },
    {
     "month": "2027-03",
-    "point": 120.16,
-    "low": 63.49,
-    "high": 244.23
+    "point": 164.19,
+    "low": 97.74,
+    "high": 292.58
    },
    {
     "month": "2027-04",
-    "point": 91.61,
-    "low": 48.0,
-    "high": 188.56
+    "point": 164.19,
+    "low": 97.74,
+    "high": 303.67
    },
    {
     "month": "2027-05",
-    "point": 82.15,
-    "low": 40.16,
-    "high": 162.15
+    "point": 164.19,
+    "low": 97.49,
+    "high": 303.67
    },
    {
     "month": "2027-06",
-    "point": 92.97,
-    "low": 43.87,
-    "high": 175.83
+    "point": 164.19,
+    "low": 97.49,
+    "high": 303.67
    },
    {
     "month": "2027-07",
-    "point": 110.09,
-    "low": 44.14,
-    "high": 183.26
+    "point": 164.19,
+    "low": 97.49,
+    "high": 303.67
    },
    {
     "month": "2027-08",
-    "point": 115.84,
-    "low": 45.16,
-    "high": 183.23
+    "point": 164.19,
+    "low": 97.49,
+    "high": 322.7
    },
    {
     "month": "2027-09",
-    "point": 113.93,
-    "low": 42.38,
-    "high": 177.93
+    "point": 164.19,
+    "low": 97.49,
+    "high": 322.7
    }
   ],
   "stale": false,
-  "updated_at": "2026-10-18T20:43:09+00:00"
+  "updated_at": "2026-10-18T21:52:53+00:00"
  },
  "contracts": null,
  "sources": [
