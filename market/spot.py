@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Callable
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -28,11 +30,31 @@ SOURCE = {
 Point = tuple[int, float]
 Fetcher = Callable[[str], dict]
 
+# Energy-Charts rate-limits bursts (HTTP 429). Space requests out and back
+# off on 429, honouring Retry-After when it is given.
+REQUEST_GAP_SECONDS = 5.0
+RETRY_DELAYS = (15.0, 30.0, 60.0, 120.0)
+_last_request = 0.0
 
-def _get_json(url: str) -> dict:
-    request = Request(url, headers={"User-Agent": "karen-energy-agent market pipeline", "Accept": "application/json"})
-    with urlopen(request, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8"))
+
+def _get_json(url: str, *, sleep: Callable[[float], None] = time.sleep) -> dict:
+    global _last_request
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        wait = _last_request + REQUEST_GAP_SECONDS - time.monotonic()
+        if wait > 0:
+            sleep(wait)
+        _last_request = time.monotonic()
+        request = Request(url, headers={"User-Agent": "karen-energy-agent market pipeline", "Accept": "application/json"})
+        try:
+            with urlopen(request, timeout=60) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            if error.code != 429 or attempt == len(RETRY_DELAYS):
+                raise
+            retry_after = error.headers.get("Retry-After") if error.headers else None
+            delay = float(retry_after) if retry_after and retry_after.isdigit() else RETRY_DELAYS[attempt]
+            sleep(min(delay, 300.0))
+    raise AssertionError("unreachable")
 
 
 def fetch_prices(start: date, end: date, *, fetcher: Fetcher = _get_json) -> list[Point]:
