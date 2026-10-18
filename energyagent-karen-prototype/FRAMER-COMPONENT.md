@@ -1,5 +1,31 @@
 # Framer Code Component
 
+## Prijzen tab and full-screen mobile layout — 18 October 2026
+
+Karen now has **Chat | Prijzen** tabs. The Prijzen tab is a second code file,
+`EnergyMarketDashboard.tsx`, imported by `EnergyAgentConversation.tsx` as
+`./EnergyMarketDashboard.tsx`. It shows today's (and tomorrow's) Belgian
+day-ahead price, monthly history since 2019 with a 12-month trend, and a
+12-month forecast whose band and accuracy come from a backtest. The data is
+`market.json` on the `market-data` branch, rebuilt daily by
+`.github/workflows/market-daily.yml`; the new **Prijzen-data URL** property
+defaults to its raw GitHub URL. If the file can't be loaded, the tab shows no
+numbers and links to the official comparators instead.
+
+To update Framer:
+
+1. In the Framer project, create a code file named `EnergyMarketDashboard.tsx`
+   and paste this repository's version in full.
+2. Replace the contents of `EnergyAgentConversation.tsx` with this repository's
+   version. Confirm both save indicators.
+3. On the `/live-demo` page, select the Karen component and set its width and
+   height to **Fill** (100%) on the phone breakpoint, and remove any padding or
+   max-width on its parent stack there. Below 680px the component renders
+   full-screen (sticky header with tabs, sticky question bar, 15–16px text);
+   it only looks immersive if the frame lets it fill the screen.
+4. Review in Preview at phone width: both tabs, the question bar staying at
+   the bottom, and the Bronnen link under an answer.
+
 ## Stateful offer comparisons — 28 September 2026
 
 The component now sends a separate `comparison_session_id` for typed and

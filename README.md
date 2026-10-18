@@ -20,7 +20,19 @@ with its git history preserved.
 | `scripts/` | Space deploy/upload scripts and a live deployment smoke check |
 | `experiments/karen_search_ab/`, `experiments/karen_vane/` | Search provider A/B tests and claim-verification research |
 | `docs/` | Evaluation write-ups |
+| `market/`, `.github/workflows/market-daily.yml` | Market data pipeline for the Prijzen tab |
 | `tests/` | Test suite |
+
+## Market data (Prijzen tab)
+
+`market/` builds `market.json` for the dashboard: Belgian day-ahead prices from
+[Energy-Charts](https://www.energy-charts.info/) (CC BY 4.0), monthly averages
+since 2019, and a 12-month forecast (seasonal profile x smoothed level) whose
+10–90% band and accuracy come from a rolling backtest. A failed source keeps the
+previous section marked stale; values are never filled in.
+`.github/workflows/market-daily.yml` runs it daily and publishes to the
+`market-data` branch. Locally: `python -m market.build --out data/market.json`
+(needs internet access).
 
 ## Running the tests
 

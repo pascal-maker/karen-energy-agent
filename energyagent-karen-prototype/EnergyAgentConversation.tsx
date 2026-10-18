@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { addPropertyControls, ControlType } from "framer"
+import EnergyMarketDashboard, { DEFAULT_MARKET_DATA_URL } from "./EnergyMarketDashboard.tsx"
 
 type SpeechResult = { transcript: string }
 type SpeechErrorEvent = { error?: string }
@@ -23,6 +24,7 @@ type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[];
 type Props = {
     apiEndpoint: string
     sampleQuestion: string
+    marketDataUrl?: string
     style?: CSSProperties
 }
 
@@ -51,7 +53,21 @@ const normalizeQuestion = (text: string) => text.trim().toLocaleLowerCase("nl-BE
 
 const css = `
   * { box-sizing: border-box; }
-  .ea { width:100%; height:100%; min-height:590px; display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:16px; padding:18px; color:#1e2b23; background:#f6f7f3; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
+  .ea { width:100%; height:100%; min-height:590px; display:flex; flex-direction:column; gap:14px; padding:18px; color:#1e2b23; background:#f6f7f3; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
+  .ea-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .ea-top .ea-brand { padding:0; border:0; }
+  .ea-tabs { display:inline-flex; gap:4px; padding:4px; border:1px solid #e2e7df; border-radius:14px; background:#fff; }
+  .ea-tab { min-height:38px; padding:0 16px; border:0; border-radius:10px; color:#3d4d42; background:transparent; font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
+  .ea-tab[aria-selected="true"] { color:#fff; background:#234f38; }
+  .ea-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:16px; }
+  .ea-composer { background:#fff; }
+  .ea-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 12px; }
+  .ea-chip { min-height:40px; padding:8px 12px; border:1px solid #d6e3d4; border-radius:12px; color:#234f38; background:#f2f7ef; font:inherit; font-size:13px; text-align:left; cursor:pointer; }
+  .ea-upload { display:inline-flex; align-items:center; justify-content:center; min-height:44px; margin-top:12px; padding:0 14px; border:1px dashed #9bc294; border-radius:12px; color:#234f38; background:#f4f8f2; font-size:13px; font-weight:600; cursor:pointer; }
+  .ea-upload input { position:absolute; width:1px; height:1px; opacity:0; }
+  .ea-upload[data-disabled="true"] { opacity:.5; cursor:not-allowed; }
+  .ea-jump { display:none; }
+  .ea-body[hidden] { display:none!important; }
   .ea-panel { min-width:0; border:1px solid #e2e7df; border-radius:20px; background:#fff; }
   .ea-main { display:flex; flex-direction:column; padding:24px; }
   .ea-brand { display:flex; align-items:center; gap:10px; padding-bottom:18px; border-bottom:1px solid #e8ece7; color:#637168; font-size:12px; }
@@ -87,14 +103,42 @@ const css = `
   .ea-audio { margin-top:10px; width:100%; height:34px; }
   .ea-voice-play { margin-top:10px; padding:8px 12px; border:1px solid #c9d9c8; border-radius:10px; color:#234f38; background:#f4f8f2; font:inherit; font-size:12px; cursor:pointer; }
   .ea-voice-play:disabled { opacity:.6; cursor:wait; }
-  @media (max-width:680px) { .ea { grid-template-columns:1fr; min-height:0; padding:10px; gap:10px; } .ea-main { min-height:490px; padding:18px; } .ea-rail { display:grid; grid-template-columns:1fr; } }
+  @media (max-width:680px) {
+    .ea { min-height:100dvh; height:auto; padding:0; gap:0; background:#fff; }
+    .ea-top { position:sticky; top:0; z-index:3; padding:10px 14px; border-bottom:1px solid #e8ece7; background:#fffffff0; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
+    .ea-top .ea-brand span { font-size:0; }
+    .ea-top .ea-brand strong { display:block; }
+    .ea-top .ea-brand br { display:none; }
+    .ea-top .ea-brand strong { font-size:15px; }
+    .ea-body { display:block; }
+    .ea-panel { border:0; border-radius:0; }
+    .ea-main { min-height:calc(100dvh - 63px); padding:16px 16px 0; }
+    .ea-kicker { margin-top:6px; font-size:11px; }
+    .ea h1 { font-size:28px; }
+    .ea-sub { font-size:15px; }
+    .ea-thread { min-height:0; }
+    .ea-question, .ea-answer { max-width:100%; font-size:15px; }
+    .ea-chip { font-size:14px; }
+    .ea-composer { position:sticky; bottom:0; z-index:2; margin:0 -16px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #edf0eb; }
+    .ea-input { font-size:16px; }
+    .ea-foot { font-size:12px; }
+    .ea-jump { display:inline-block; margin-top:10px; color:#234f38; font-size:14px; font-weight:600; }
+    .ea-rail { display:grid; gap:12px; padding:16px 16px 28px; border-top:8px solid #f6f7f3; }
+    .ea-card { padding:16px; }
+    .ea-card h2 { font-size:15px; }
+    .ea-card p, .ea-source strong { font-size:13px; }
+    .ea-source small, .ea-excerpt { font-size:12px!important; }
+    .ea-prices { padding:12px 12px 28px; background:#f6f7f3; }
+  }
 `
 
 export default function EnergyAgentConversation({
     apiEndpoint = "",
     sampleQuestion = DEMO_QUESTION,
+    marketDataUrl = DEFAULT_MARKET_DATA_URL,
     style,
 }: Props) {
+    const [tab, setTab] = useState<"chat" | "prices">("chat")
     const [question, setQuestion] = useState("")
     const [asked, setAsked] = useState("")
     const [reply, setReply] = useState<Reply | null>(null)
@@ -395,17 +439,29 @@ export default function EnergyAgentConversation({
     return (
         <div className="ea" style={style}>
             <style dangerouslySetInnerHTML={{ __html: css }} />
-            <section className="ea-panel ea-main">
+            <header className="ea-top">
                 <div className="ea-brand"><img className="ea-mark" src={KAREN_LOGO} alt="Karen-logo" /><span><strong>EnergyAgent</strong><br />EEN HELDERE KIJK OP ENERGIE</span></div>
-                <div className="ea-kicker">Energy co-pilot</div>
+                <div className="ea-tabs" role="tablist" aria-label="Karen">
+                    <button className="ea-tab" role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}>Chat</button>
+                    <button className="ea-tab" role="tab" aria-selected={tab === "prices"} onClick={() => setTab("prices")}>Prijzen</button>
+                </div>
+            </header>
+            {tab === "prices" && <div className="ea-prices"><EnergyMarketDashboard dataUrl={marketDataUrl} /></div>}
+            <div className="ea-body" hidden={tab !== "chat"}>
+            <section className="ea-panel ea-main">
+                {!asked && <><div className="ea-kicker">Energy co-pilot</div>
                 <h1>Praat met Karen.<br />Begrijp je energie.</h1>
-                <p className="ea-sub">Vraag naar je factuur, energieverbruik of verwarming. Karen laat zien waarop haar antwoord steunt.</p>
+                <p className="ea-sub">Vraag naar je factuur, energieverbruik of verwarming. Karen laat zien waarop haar antwoord steunt.</p></>}
                 <div className="ea-thread" aria-live="polite">
                     {asked && <div className="ea-question">{asked}</div>}
                     {(busy || uploading || listening) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
-                    {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!)}>Beluister Karen</button>)}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}</>}
+                    {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!)}>Beluister Karen</button>)}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{(sources.length > 0 || Boolean(reply.suggested_sources?.length)) && <a className="ea-jump" href="#ea-sources">Bekijk de bronnen ↓</a>}</>}
                 </div>
-                {!asked && <button className="ea-source" onClick={() => void ask(sampleQuestion)} style={{ border: 0, background: "#f2f7ef", borderRadius: 12, padding: 12, marginBottom: 12, textAlign: "left", cursor: "pointer" }}><strong>Probeer de voorbeeldvraag</strong><small>{sampleQuestion}</small></button>}
+                {!asked && <div className="ea-chips">
+                    <button className="ea-chip" onClick={() => void ask(sampleQuestion)}>{sampleQuestion}</button>
+                    <button className="ea-chip" onClick={() => setTab("prices")}>Wat kost stroom vandaag? Bekijk de prijzen</button>
+                </div>}
+                <div className="ea-composer">
                 <button className="ea-mic" type="button" data-listening={listening} onClick={() => listening ? stopVoice() : startVoice()} disabled={busy || uploading || Boolean(sessionId)} aria-label={listening ? "Stop luisteren" : "Stel je vraag met je stem"}>
                     <span aria-hidden="true">{listening ? "■" : "🎙"}</span>{listening ? "Stop luisteren" : "Stel je vraag met je stem"}
                 </button>
@@ -416,16 +472,19 @@ export default function EnergyAgentConversation({
                     <button className="ea-button" onClick={() => void ask(question)} disabled={busy || uploading || !question.trim()} aria-label="Verstuur vraag">↗</button>
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
+                </div>
                 <p className="ea-foot">Je browser herkent je gesproken vraag. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Alleen om Karens publieke antwoord uit te spreken gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend.</p>
             </section>
             <aside className="ea-rail">
                 <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>
-                    <input type="file" accept="application/pdf,.pdf" aria-label="Upload je energiefactuur als PDF" disabled={uploading || busy || listening} onChange={(event) => { void uploadPdf(event.target.files?.[0]); event.target.value = "" }} style={{ marginTop: 12, width: "100%", fontSize: 11 }} />
+                    <label className="ea-upload" data-disabled={uploading || busy || listening}>Kies een PDF
+                        <input type="file" accept="application/pdf,.pdf" aria-label="Upload je energiefactuur als PDF" disabled={uploading || busy || listening} onChange={(event) => { void uploadPdf(event.target.files?.[0]); event.target.value = "" }} />
+                    </label>
                     {uploadName && <p style={{ marginTop: 8 }}>Sessie actief · {uploadName}<button type="button" onClick={() => void clearPdf()} disabled={uploading || busy} style={{ marginLeft: 8 }}>Verwijder</button></p>}
                     {uploadError && <p role="alert" style={{ marginTop: 8, color: "#a13333" }}>{uploadError}</p>}
                     {uploading && <p role="status" style={{ marginTop: 8 }}>{status}</p>}
                 </section>
-                <section className="ea-card"><h2>{reply ? "Bronnen bij dit antwoord" : "Bronnen in de demo"}</h2><p>{reply?.live_source_status === "failed" ? "De live controle is niet volledig bevestigd. Gebruikte passages en links om zelf te raadplegen staan apart." : reply ? "Bronnen die Karen voor dit antwoord gebruikte." : "Officiële uitleg en relevante PDF-passage."}</p>
+                <section className="ea-card" id="ea-sources"><h2>{reply ? "Bronnen bij dit antwoord" : "Bronnen in de demo"}</h2><p>{reply?.live_source_status === "failed" ? "De live controle is niet volledig bevestigd. Gebruikte passages en links om zelf te raadplegen staan apart." : reply ? "Bronnen die Karen voor dit antwoord gebruikte." : "Officiële uitleg en relevante PDF-passage."}</p>
                     {sources.map((source, index) => <div className="ea-source" key={`${source.title}-${index}`}>
                         {source.url ? <a href={source.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}><strong>{source.title} ↗</strong><small>{source.detail || "Bron geraadpleegd"}</small></a> : <><strong>{source.title}</strong><small>{source.detail || "Bron geraadpleegd"}</small></>}
                         {source.excerpt && <p className="ea-excerpt">“{source.excerpt}”</p>}
@@ -434,6 +493,7 @@ export default function EnergyAgentConversation({
                     {Boolean(reply?.suggested_sources?.length) && <div style={{ marginTop: 18 }}><h3 style={{ fontSize: 12 }}>Zelf raadplegen · niet als bewijs gebruikt</h3>{reply?.suggested_sources?.map((source, index) => <div className="ea-source" key={`suggested-${index}`}><a href={source.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}><strong>{source.title} ↗</strong><small>{source.detail}</small></a></div>)}</div>}
                 </section>
             </aside>
+            </div>
         </div>
     )
 }
@@ -441,4 +501,5 @@ export default function EnergyAgentConversation({
 addPropertyControls(EnergyAgentConversation, {
     apiEndpoint: { title: "Backend URL", type: ControlType.String, placeholder: "https://…", defaultValue: "" },
     sampleQuestion: { title: "Voorbeeldvraag", type: ControlType.String, defaultValue: DEMO_QUESTION },
+    marketDataUrl: { title: "Prijzen-data URL", type: ControlType.String, defaultValue: DEFAULT_MARKET_DATA_URL },
 })

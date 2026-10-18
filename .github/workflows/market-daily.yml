@@ -1,0 +1,55 @@
+name: Market data (daily)
+
+# Belgian day-ahead prices are published around 12:45 CET for the next day.
+# Two runs (UTC) cover both summer and winter time; a second run the same
+# day is harmless because the build is idempotent.
+on:
+  schedule:
+    - cron: "20 12 * * *"
+    - cron: "20 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the market-data branch (created on first run)
+        run: |
+          if git ls-remote --exit-code --heads origin market-data >/dev/null; then
+            git fetch --depth 1 origin market-data
+            git worktree add data origin/market-data
+            git -C data switch -c market-data
+          else
+            git worktree add --orphan -b market-data data
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r market/requirements.txt
+
+      - name: Build market.json
+        run: python -m market.build --out data/market.json
+
+      - name: Publish
+        working-directory: data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add market.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit -m "Update market data $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin market-data
