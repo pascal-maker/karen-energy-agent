@@ -138,7 +138,8 @@ async function main() {
     await act(async () => [...document.querySelectorAll(".em-switch button")].find(b => b.textContent === "Morgen").click())
     assert.match(document.querySelector(".em").textContent, /Stroomprijs morgen/)
     await act(async () => tab("Verwachting").click())
-    assert.match(document.querySelector(".em").textContent, /eerdere momenten/)
+    assert.match(document.querySelector(".em").textContent, /Getest op de laatste 36 maanden/)
+    assert.match(document.querySelector(".em").textContent, /gelijk aan vorige maand/, "Shows the naive baseline next to the model")
     await act(async () => tab("Historiek").click())
     assert.match(document.querySelector(".em").textContent, /sinds 2019/)
     await act(async () => tab("Chat").click())
@@ -153,6 +154,13 @@ async function main() {
     await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/stale.json" })))
     await act(async () => {})
     assert.equal(box.querySelector(".em-badge").textContent, "Verouderd")
+    // When the backtest picks the random walk, the page explains the flat line instead of implying a trend.
+    responses.push({ ...marketFixture, forecast: { ...marketFixture.forecast, alpha: 1, season_weight: 0 } })
+    await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/random-walk.json" })))
+    await act(async () => {})
+    await act(async () => [...box.querySelectorAll('[role="tab"]')].find(b => b.textContent === "Verwachting").click())
+    assert.match(box.textContent, /random walk/)
+    assert.ok(!/gelijk aan vorige maand/.test(box.textContent), "No separate baseline when the model is the baseline")
     const realFetch = globalThis.fetch
     globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) })
     await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/missing.json" })))

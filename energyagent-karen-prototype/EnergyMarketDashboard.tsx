@@ -16,7 +16,10 @@ type MarketData = {
         method: string
         band: string
         trained_until: string
-        backtest: { origins: number; mape_1m: number; mape_6m: number; mape_12m: number }
+        alpha?: number
+        season_weight?: number
+        current_month_used?: boolean
+        backtest: { origins: number; mape_1m: number; mape_6m: number; mape_12m: number | null; naive_mape_1m?: number }
         months: { month: string; point: number; low: number; high: number }[]
     }) | null
     contracts: unknown
@@ -298,14 +301,19 @@ function ForecastView({ data }: { data: MarketData }) {
     const point = [...anchor, ...forecast.months.map(m => toCents(m.point))]
     const low = [...months.map(() => null), ...forecast.months.map(m => toCents(m.low))]
     const high = [...months.map(() => null), ...forecast.months.map(m => toCents(m.high))]
-    const { mape_1m, mape_12m } = forecast.backtest
+    const { origins, mape_1m, mape_6m, naive_mape_1m } = forecast.backtest
+    const pct = (value: number) => `${value.toLocaleString("nl-BE", { maximumFractionDigits: 0 })}%`
+    // A random walk (no smoothing, no season) won the backtest: say so instead of implying a trend.
+    const levelOnly = forecast.season_weight === 0 && (forecast.alpha ?? 0) >= 0.95
     return (
         <section className="em-card" aria-labelledby="em-forecast">
             <h2 id="em-forecast">Verwachting komende 12 maanden<Stale section={forecast} /></h2>
-            <p className="em-sub">Een eenvoudige statistische inschatting op basis van het seizoenspatroon en het recente prijsniveau. Geen advies: energieprijzen kunnen snel en sterk veranderen.</p>
+            <p className="em-sub">{levelOnly
+                ? "Groothandelsprijzen gedragen zich als een random walk: ze hebben geen vast gemiddelde waar ze naar terugkeren. In de laatste drie jaar voorspelde geen eenvoudig model beter dan “gelijk aan nu”. De lijn toont daarom het huidige niveau; de band toont hoe ver prijzen daar eerder van afweken."
+                : "Een eenvoudige statistische inschatting op basis van het recente prijsniveau en het seizoenspatroon."} Geen advies: energieprijzen kunnen snel en sterk veranderen.</p>
             <LineChart labels={labels} label="Gemeten maandprijzen en verwachting met bandbreedte" series={[{ name: "Gemeten", color: MEASURED, values: measured }, { name: "Verwachting", color: ACCENT, values: point }]} band={{ low, high, color: ACCENT }} />
             <Legend items={[{ color: MEASURED, label: "Gemeten" }, { color: ACCENT, label: "Verwachting (middenlijn)" }, { color: ACCENT, label: "Bandbreedte 10–90%", area: true }]} />
-            <p className="em-note">Hoe betrouwbaar? Toegepast op {forecast.backtest.origins} eerdere momenten zat deze methode gemiddeld {mape_1m.toLocaleString("nl-BE")}% naast de werkelijke prijs één maand later, en {mape_12m.toLocaleString("nl-BE")}% twaalf maanden later. In de backtest viel de prijs in 8 op de 10 gevallen binnen de band.</p>
+            <p className="em-note">Hoe betrouwbaar? Getest op de laatste {origins} maanden zat deze methode gemiddeld {pct(mape_1m)} naast de werkelijke prijs één maand later en {pct(mape_6m)} zes maanden later{naive_mape_1m !== undefined && !levelOnly ? <> (“gelijk aan vorige maand”: {pct(naive_mape_1m)})</> : null}. De band bevat 8 op de 10 van die afwijkingen.{forecast.current_month_used ? " De lopende maand telt mee naar rato van de verstreken dagen." : ""}</p>
             <details><summary>Toon als tabel</summary><table className="em-table"><thead><tr><th>Maand</th><th>Verwachting</th><th>Band</th></tr></thead><tbody>{forecast.months.map(m => <tr key={m.month}><td>{monthLabel(m.month)}</td><td>{toCents(m.point).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}</td><td>{toCents(m.low).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}–{toCents(m.high).toLocaleString("nl-BE", { maximumFractionDigits: 1 })}</td></tr>)}</tbody></table></details>
         </section>
     )

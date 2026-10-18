@@ -93,24 +93,65 @@ def test_forecast_requires_enough_contiguous_history() -> None:
         forecast.forecast(history)
 
 
-def test_forecast_follows_seasonality_with_a_backtested_band() -> None:
+def _seasonal_history(noise: float = 0.0) -> dict[str, float]:
+    import random
+    rng = random.Random(7)
     history = {}
     for year in range(2019, 2026):
         for month in range(1, 13):
             history[f"{year}-{month:02d}"] = round(
-                80 + 25 * math.cos(2 * math.pi * (month - 1) / 12) + (year - 2019) * 2, 2
+                (80 + 25 * math.cos(2 * math.pi * (month - 1) / 12)) * math.exp(rng.gauss(0, noise)), 2
             )
-    result = forecast.forecast(history)
+    return history
+
+
+def test_forecast_uses_seasonality_when_the_backtest_supports_it() -> None:
+    result = forecast.forecast(_seasonal_history())
     rows = result["months"]
     assert [r["month"] for r in rows][:2] == ["2026-01", "2026-02"]
     assert len(rows) == 12
-    assert all(r["low"] <= r["point"] <= r["high"] for r in rows)
+    assert result["season_weight"] > 0
     by_month = {r["month"]: r["point"] for r in rows}
     assert by_month["2026-01"] > by_month["2026-07"]  # winter above summer
-    assert result["backtest"]["origins"] == len(history) - forecast.MIN_TRAIN
-    assert result["backtest"]["mape_1m"] < 10  # a clean seasonal series is easy
-    assert forecast.forecast(history) == result  # deterministic
+    assert result["backtest"]["origins"] == forecast.RECENT_ORIGINS
+    assert result["backtest"]["mape_1m"] < result["backtest"]["naive_mape_1m"]
+    assert forecast.forecast(_seasonal_history()) == result  # deterministic
 
+
+def test_forecast_falls_back_to_current_level_for_a_random_walk() -> None:
+    # Non-stationary data with no seasonality: no model beats "same as now",
+    # so the backtest must pick the naive level and a flat midline.
+    import random
+    rng = random.Random(3)
+    level, history = math.log(80), {}
+    for year in range(2019, 2026):
+        for month in range(1, 13):
+            level += rng.gauss(0, 0.2)
+            history[f"{year}-{month:02d}"] = round(math.exp(level), 2)
+    result = forecast.forecast(history)
+    assert result["season_weight"] == 0.0 and result["alpha"] >= 0.8
+    points = [r["point"] for r in result["months"]]
+    last = history["2025-12"]
+    assert max(points) / min(points) < 1.02
+    assert abs(points[0] / last - 1) < 0.1
+
+
+def test_forecast_band_contains_midline_and_never_narrows() -> None:
+    rows = forecast.forecast(_seasonal_history(noise=0.15))["months"]
+    for previous, row in zip(rows, rows[1:]):
+        assert row["low"] <= row["point"] <= row["high"]
+        # Ratios are compared at cent precision (values are rounded to 2 decimals).
+        assert row["high"] / row["point"] >= previous["high"] / previous["point"] - 1e-3
+        assert row["low"] / row["point"] <= previous["low"] / previous["point"] + 1e-3
+
+
+def test_forecast_starts_from_the_running_month() -> None:
+    history = {f"{y}-{m:02d}": 80.0 for y in range(2019, 2026) for m in range(1, 13)}
+    flat = forecast.forecast(history)["months"][0]["point"]
+    early = forecast.forecast(history, current=160.0, current_fraction=0.1)
+    late = forecast.forecast(history, current=160.0, current_fraction=0.9)
+    assert early["current_month_used"] and late["current_month_used"]
+    assert flat < early["months"][0]["point"] < late["months"][0]["point"] < 160.0
 
 def test_build_assembles_all_sections_and_reuses_complete_months() -> None:
     today = date(2026, 10, 18)

@@ -909,87 +909,92 @@
  },
  "forecast": {
   "unit": "EUR/MWh",
-  "method": "Seizoensprofiel (laatste 3 jaar) x exponentieel afgevlakt niveau",
-  "band": "10-90% van de fouten in een backtest op eerdere jaren; middenlijn gecorrigeerd voor de mediane fout",
+  "method": "Lokaal niveau + seizoenspatroon op de log-prijs (exponentiële afvlakking)",
+  "band": "10-90% van de fouten in een backtest over de laatste 36 maanden",
   "trained_until": "2026-09",
+  "current_month_used": true,
+  "alpha": 0.5,
+  "season_weight": 1.0,
   "backtest": {
-   "origins": 57,
-   "mape_1m": 22.6,
-   "mape_6m": 41.7,
-   "mape_12m": 54.7
+   "origins": 36,
+   "window": "2023-10..2026-09",
+   "mape_1m": 4.8,
+   "mape_6m": 6.4,
+   "mape_12m": 3.6,
+   "naive_mape_1m": 8.0
   },
   "months": [
    {
     "month": "2026-10",
-    "point": 91.33,
-    "low": 58.22,
-    "high": 125.27
+    "point": 90.98,
+    "low": 83.6,
+    "high": 97.28
    },
    {
     "month": "2026-11",
-    "point": 100.8,
-    "low": 58.74,
-    "high": 156.61
+    "point": 101.06,
+    "low": 92.86,
+    "high": 112.59
    },
    {
     "month": "2026-12",
-    "point": 107.78,
-    "low": 57.08,
-    "high": 179.38
+    "point": 108.35,
+    "low": 99.56,
+    "high": 121.64
    },
    {
     "month": "2027-01",
-    "point": 111.54,
-    "low": 54.62,
-    "high": 184.27
+    "point": 113.93,
+    "low": 104.69,
+    "high": 128.23
    },
    {
     "month": "2027-02",
-    "point": 106.05,
-    "low": 49.67,
-    "high": 159.11
+    "point": 110.92,
+    "low": 101.92,
+    "high": 125.02
    },
    {
     "month": "2027-03",
-    "point": 101.2,
-    "low": 43.05,
-    "high": 125.88
+    "point": 103.16,
+    "low": 94.8,
+    "high": 116.35
    },
    {
     "month": "2027-04",
-    "point": 91.81,
-    "low": 37.15,
-    "high": 112.37
+    "point": 92.69,
+    "low": 85.17,
+    "high": 104.53
    },
    {
     "month": "2027-05",
-    "point": 80.74,
-    "low": 30.32,
-    "high": 98.39
+    "point": 82.04,
+    "low": 75.39,
+    "high": 92.52
    },
    {
     "month": "2027-06",
-    "point": 72.95,
-    "low": 26.36,
-    "high": 84.41
+    "point": 74.07,
+    "low": 68.06,
+    "high": 83.54
    },
    {
     "month": "2027-07",
-    "point": 70.28,
-    "low": 24.79,
-    "high": 80.04
+    "point": 70.99,
+    "low": 65.24,
+    "high": 80.07
    },
    {
     "month": "2027-08",
-    "point": 73.94,
-    "low": 25.29,
-    "high": 82.04
+    "point": 73.53,
+    "low": 67.56,
+    "high": 82.92
    },
    {
     "month": "2027-09",
-    "point": 81.1,
-    "low": 27.18,
-    "high": 88.34
+    "point": 80.88,
+    "low": 74.32,
+    "high": 91.21
    }
   ],
   "stale": false,

@@ -10,6 +10,7 @@ recorded -- values are never filled in.
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -72,9 +73,17 @@ def build(*, today: date, previous: dict, fetcher: spot.Fetcher = spot._get_json
     sections: dict[str, dict | None] = {}
     sections["spot"] = _section("spot", build_spot, previous, errors, now)
     sections["history"] = _section("history", build_history, previous, errors, now)
-    history_months = (sections["history"] or {}).get("months", {})
+    history_section = sections["history"] or {}
+    history_months = history_section.get("months", {})
+    running = history_section.get("current_month") or {}
+    # Only use the running month when it really is this month (not a stale copy).
+    current = running.get("avg_so_far") if running.get("month") == today.strftime("%Y-%m") else None
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
     sections["forecast"] = _section(
-        "forecast", lambda: {"unit": "EUR/MWh", **forecast_module.forecast(history_months)}, previous, errors, now
+        "forecast",
+        lambda: {"unit": "EUR/MWh", **forecast_module.forecast(
+            history_months, current=current, current_fraction=today.day / days_in_month)},
+        previous, errors, now,
     )
     # Phase 2 (monthly reviewed tariff cards) fills this; keep whatever was merged.
     sections["contracts"] = previous.get("contracts")
