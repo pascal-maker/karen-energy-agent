@@ -1000,7 +1000,143 @@
   "stale": false,
   "updated_at": "2026-10-18T21:52:53+00:00"
  },
- "contracts": null,
+ "contracts": {
+  "as_of": "2026-10-19",
+  "suppliers": [
+   {
+    "name": "Luminus",
+    "status": "verified",
+    "product_name": "BasicFlex Online Elektriciteit",
+    "price_per_kwh_eur": 0.1919,
+    "price_per_kwh_note": "Enkelvoudige meter; supplier energy price, including 6% VAT; October 2026 tariff card.",
+    "standing_charge_amount": 25.0,
+    "standing_charge_unit": "per_year",
+    "source_url": "https://www.luminus.be/api-next/get-pricelist?documentSlug=basicflex&energyType=electricity&language=nl&tabValue=Flanders",
+    "retrieved_at": "2026-10-19",
+    "notes": "Residential Flanders variable product. The card also publishes separate peak/off-peak prices for a dual meter and a variable injection tariff."
+   },
+   {
+    "name": "Engie",
+    "status": "unverified",
+    "product_name": "Easy variabel",
+    "price_per_kwh_eur": null,
+    "price_per_kwh_note": "Current official October 2026 offer page found, but the linked tariff-card PDF was not independently readable in this lookup.",
+    "standing_charge_amount": null,
+    "standing_charge_unit": null,
+    "source_url": "https://www.engie.be/nl/energie/elektriciteit-gas/prijzen-voorwaarden/",
+    "retrieved_at": "2026-10-19",
+    "notes": "No exact numeric tariff values were retained because the current official tariff card could not be independently read before being blocked."
+   },
+   {
+    "name": "Eneco",
+    "status": "verified",
+    "product_name": "Eneco Zon & Wind Flex",
+    "price_per_kwh_eur": 0.1949,
+    "price_per_kwh_note": "Enkelvoudige meter; estimated annual energy price on the October 2026 card, including 6% VAT. The card also shows a monthly estimate of 20.78 eurocent/kWh.",
+    "standing_charge_amount": 65.0,
+    "standing_charge_unit": "per_year",
+    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012610_NL_ENECO_POWER_FLEX.pdf",
+    "retrieved_at": "2026-10-19",
+    "notes": "Variable price indexed monthly to Belpex-RLP-M. The tariff card is valid from 1 October through 31 October 2026 for residential customers in Flanders and Wallonia."
+   },
+   {
+    "name": "TotalEnergies",
+    "status": "verified",
+    "product_name": "TotalEnergies myEssential Variabel",
+    "price_per_kwh_eur": 0.2078,
+    "price_per_kwh_note": "Enkelvoudige meter; monthly indicative supplier energy price for October 2026, including 6% VAT; exact variable index is finalized after the delivery month.",
+    "standing_charge_amount": 35.0,
+    "standing_charge_unit": "per_year",
+    "source_url": "https://totalenergies.be/static/marketing-documents/b2c/tariff-card/latest/MYESSENTIAL_ELECTRICITY_VL_NL.pdf",
+    "retrieved_at": "2026-10-19",
+    "notes": "Residential Flanders product for meters read annually. The card also publishes an estimated annual price of 22.38 eurocent/kWh and a BELPEX_M_RLP formula."
+   },
+   {
+    "name": "Mega",
+    "status": "unverified",
+    "product_name": "Cosy Flex",
+    "price_per_kwh_eur": null,
+    "price_per_kwh_note": "Official October 2026 offer page found, but the numeric current tariff card requires the postcode/product simulation and was not independently confirmed.",
+    "standing_charge_amount": null,
+    "standing_charge_unit": null,
+    "source_url": "https://www.mega.be/nl/energie",
+    "retrieved_at": "2026-10-19",
+    "notes": "No exact numeric tariff values were retained because the current official tariff card was not independently confirmed before being blocked."
+   },
+   {
+    "name": "Bolt",
+    "status": "unverified",
+    "product_name": null,
+    "price_per_kwh_eur": null,
+    "price_per_kwh_note": "No current Belgian residential electricity tariff card or pricing page could be confirmed on Bolt's official domain.",
+    "standing_charge_amount": null,
+    "standing_charge_unit": null,
+    "source_url": null,
+    "retrieved_at": "2026-10-19",
+    "notes": "No official source URL or numbers are included because a real current Belgian energy offer could not be verified."
+   },
+   {
+    "name": "Elegant",
+    "status": "unverified",
+    "product_name": "Flex",
+    "price_per_kwh_eur": null,
+    "price_per_kwh_note": "Official current-offer page lists Flex, but its numeric card is calculator/customer-zone driven; the public archive exposed only older 2026 cards during this lookup.",
+    "standing_charge_amount": null,
+    "standing_charge_unit": null,
+    "source_url": "https://partner.elegant.be/be/nl/elektriciteit-gas/tariefkaarten/",
+    "retrieved_at": "2026-10-19",
+    "notes": "No exact current October 2026 numeric values were retained. Older January/February values should not be substituted."
+   },
+   {
+    "name": "Energyvision",
+    "status": "special_case",
+    "product_name": "Goedkope stroom met 1.800 kWh vast",
+    "price_per_kwh_eur": null,
+    "price_per_kwh_note": "Mixed product: first 1,800 kWh are fixed at 0.1060 EUR/kWh; consumption above 1,800 kWh is variable at 0.2004 EUR/kWh on the October 2026 card. Not a single pure mono variable rate.",
+    "standing_charge_amount": 50.0,
+    "standing_charge_unit": "per_year",
+    "source_url": "https://www.energyvision.be/sites/default/files/inline-files/EV-1026-GS1800V-nl_0.pdf",
+    "retrieved_at": "2026-10-19",
+    "notes": "Residential Flanders product, including 6% VAT. The variable component is monthly indexed by formula; the product framing does not cleanly fit a standard variable mono comparison row."
+   },
+   {
+    "name": "OCTA+",
+    "status": "verified",
+    "product_name": "OCTA+ SmartVariabel",
+    "price_per_kwh_eur": 0.1946,
+    "price_per_kwh_note": "Enkelvoudige meter; estimated average supplier energy price for the coming 12 months on the October 2026 card, including VAT.",
+    "standing_charge_amount": 65.0,
+    "standing_charge_unit": "per_year",
+    "source_url": "https://files.octaplus.be/tariffs/E_OCTA_SMARTVARIABLE_RE_VL_NL.pdf",
+    "retrieved_at": "2026-10-19",
+    "notes": "Residential Flanders variable one-year product. The card warns that activated SMR3/AMR digital-meter configurations may be billed dynamically instead."
+   },
+   {
+    "name": "Aspiravi",
+    "status": "verified",
+    "product_name": "Eco Plus Flex",
+    "price_per_kwh_eur": 0.21352,
+    "price_per_kwh_note": "Enkelvoudige meter; September 2026 realized/reference energy cost shown on the October 2026 tariff card, including 6% VAT. October's final variable price is only known after the month ends.",
+    "standing_charge_amount": 38.5,
+    "standing_charge_unit": "per_year",
+    "source_url": "https://aspiravi-energy.be/wp-content/uploads/2026/10/900027_Eco_Plus_flex_huishoudelijk-formule-2026-1.pdf",
+    "retrieved_at": "2026-10-19",
+    "notes": "Residential variable product for contracts starting or renewing from 1 October through 31 December 2026. The card publishes the formula 0.116 x Belpex + 2 c€/kWh excl. VAT for the mono meter and restricts supply to eligible co-operators."
+   },
+   {
+    "name": "Frank Energie",
+    "status": "verified",
+    "product_name": "Frank Energie Variabel",
+    "price_per_kwh_eur": 0.186786,
+    "price_per_kwh_note": "24u/digital meter; expected October 2026 variable energy price under the official VNR estimate, including 6% VAT.",
+    "standing_charge_amount": 4.17,
+    "standing_charge_unit": "per_month",
+    "source_url": "https://cdn.sanity.io/files/8navd656/production-be/4577990f859014d566f5a0d1ed61beaba3d97d47.pdf",
+    "retrieved_at": "2026-10-19",
+    "notes": "Variable formula is (0.1068 x Belpex RLP_BE + 1.500) x 1.06 EURct/kWh. The official card calls the standing charge an abonnementskost and publishes it per month."
+   }
+  ]
+ },
  "sources": [
   {
    "title": "Energy-Charts (Fraunhofer ISE) · day-ahead BE",
