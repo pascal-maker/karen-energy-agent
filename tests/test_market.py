@@ -150,3 +150,41 @@ def test_build_without_previous_data_leaves_failed_sections_empty() -> None:
     result = build.build(today=date(2026, 10, 18), previous={}, fetcher=fake_fetcher(missing_days={date(2026, 10, 18)}))
     assert result["spot"] is None
     assert any("No day-ahead prices published" in e for e in result["errors"])
+
+
+def test_get_json_backs_off_on_rate_limit_then_succeeds(monkeypatch) -> None:
+    import io
+    from urllib.error import HTTPError
+
+    attempts, sleeps = [], []
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout):
+        attempts.append(request.full_url)
+        if len(attempts) < 3:
+            headers = {"Retry-After": "7"} if len(attempts) == 2 else {}
+            raise HTTPError(request.full_url, 429, "Too Many Requests", headers, None)
+        return Response(b'{"ok": true}')
+
+    monkeypatch.setattr(spot, "urlopen", fake_urlopen)
+    monkeypatch.setattr(spot, "_last_request", 0.0)
+    assert spot._get_json("https://api.example/price", sleep=sleeps.append) == {"ok": True}
+    assert len(attempts) == 3
+    assert spot.RETRY_DELAYS[0] in sleeps and 7.0 in sleeps
+
+
+def test_get_json_does_not_retry_other_http_errors(monkeypatch) -> None:
+    from urllib.error import HTTPError
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 500, "Server Error", {}, None)
+
+    monkeypatch.setattr(spot, "urlopen", fake_urlopen)
+    with pytest.raises(HTTPError):
+        spot._get_json("https://api.example/price", sleep=lambda _s: None)
