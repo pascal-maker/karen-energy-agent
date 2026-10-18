@@ -58,7 +58,8 @@ def build(*, today: date, previous: dict, fetcher: spot.Fetcher = spot._get_json
 
     def build_history() -> dict:
         # Complete months never change, so only refetch from last month onwards.
-        known = dict(previous.get("history", {}).get("months", {}))
+        # A failed earlier run stores the section as null, not as a missing key.
+        known = dict((previous.get("history") or {}).get("months") or {})
         start = spot.previous_month_start(today) if known else HISTORY_START
         known = {m: v for m, v in known.items() if m < start.strftime("%Y-%m")}
         fresh = spot.fetch_history(start, today, fetcher=fetcher)
