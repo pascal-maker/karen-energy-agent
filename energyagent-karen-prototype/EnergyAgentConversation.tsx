@@ -394,7 +394,7 @@ export default function EnergyAgentConversation({
 
     return (
         <div className="ea" style={style}>
-            <style>{css}</style>
+            <style dangerouslySetInnerHTML={{ __html: css }} />
             <section className="ea-panel ea-main">
                 <div className="ea-brand"><img className="ea-mark" src={KAREN_LOGO} alt="Karen-logo" /><span><strong>EnergyAgent</strong><br />EEN HELDERE KIJK OP ENERGIE</span></div>
                 <div className="ea-kicker">Energy co-pilot</div>
