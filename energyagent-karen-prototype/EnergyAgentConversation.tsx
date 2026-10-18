@@ -53,6 +53,7 @@ const normalizeQuestion = (text: string) => text.trim().toLocaleLowerCase("nl-BE
 
 const css = `
   * { box-sizing: border-box; }
+  .ea-shell { width:100%; height:100%; min-width:320px; container-type:inline-size; }
   .ea { width:100%; height:100%; min-height:590px; display:flex; flex-direction:column; gap:14px; padding:18px; color:#1e2b23; background:#f6f7f3; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
   .ea-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .ea-top .ea-brand { padding:0; border:0; }
@@ -103,7 +104,9 @@ const css = `
   .ea-audio { margin-top:10px; width:100%; height:34px; }
   .ea-voice-play { margin-top:10px; padding:8px 12px; border:1px solid #c9d9c8; border-radius:10px; color:#234f38; background:#f4f8f2; font:inherit; font-size:12px; cursor:pointer; }
   .ea-voice-play:disabled { opacity:.6; cursor:wait; }
-  @media (max-width:680px) {
+  /* Sized by the space Karen is given, not the screen: a Framer frame or page column
+     narrower than 680px gets the phone layout even when the viewport is wider. */
+  @container (max-width:680px) {
     .ea { min-height:100dvh; height:auto; padding:0; gap:0; background:#fff; }
     .ea-top { position:sticky; top:0; z-index:3; padding:10px 14px; border-bottom:1px solid #e8ece7; background:#fffffff0; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
     .ea-top .ea-brand span { font-size:0; }
@@ -437,7 +440,8 @@ export default function EnergyAgentConversation({
     const sources = reply?.sources ?? []
 
     return (
-        <div className="ea" style={style}>
+        <div className="ea-shell" style={style}>
+        <div className="ea">
             <style dangerouslySetInnerHTML={{ __html: css }} />
             <header className="ea-top">
                 <div className="ea-brand"><img className="ea-mark" src={KAREN_LOGO} alt="Karen-logo" /><span><strong>EnergyAgent</strong><br />EEN HELDERE KIJK OP ENERGIE</span></div>
@@ -494,6 +498,7 @@ export default function EnergyAgentConversation({
                 </section>
             </aside>
             </div>
+        </div>
         </div>
     )
 }

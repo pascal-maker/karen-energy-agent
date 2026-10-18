@@ -18,11 +18,15 @@ To update Framer:
    and paste this repository's version in full.
 2. Replace the contents of `EnergyAgentConversation.tsx` with this repository's
    version. Confirm both save indicators.
-3. On the `/live-demo` page, select the Karen component and set its width and
-   height to **Fill** (100%) on the phone breakpoint, and remove any padding or
-   max-width on its parent stack there. Below 680px the component renders
-   full-screen (sticky header with tabs, sticky question bar, 15–16px text);
-   it only looks immersive if the frame lets it fill the screen.
+3. Make sure the page has a **Phone** breakpoint, and on it set the Karen
+   component's width to **Fill** (never a fixed px width) and height to **Fit**
+   or **Fill**. Remove padding and fixed widths from its parent stacks there.
+   The component switches to its full-screen layout when *its own width* is
+   below 680px (a CSS container query). If any frame on the page is wider than
+   the phone, iPhone Safari zooms the whole page out: tiny text and a cut-off
+   sources column on the right, as seen on ask-karen.framer.website on
+   18 October 2026. Don't set the component to Fit width either: it needs a
+   width from its parent (minimum 320px).
 4. Review in Preview at phone width: both tabs, the question bar staying at
    the bottom, and the Bronnen link under an answer.
 

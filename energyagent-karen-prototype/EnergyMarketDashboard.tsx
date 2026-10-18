@@ -41,6 +41,7 @@ const dateLabel = (iso: string) =>
     new Date(`${iso}T12:00:00`).toLocaleDateString("nl-BE", { weekday: "long", day: "numeric", month: "long" })
 
 const css = `
+  .em-shell { width:100%; container-type:inline-size; }
   .em { display:flex; flex-direction:column; gap:14px; min-width:0; color:#1e2b23; font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
   .em-views { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; }
   .em-views::-webkit-scrollbar { display:none; }
@@ -75,7 +76,7 @@ const css = `
   .em-links { display:grid; gap:8px; margin-top:12px; }
   .em-links a { display:block; padding:12px 14px; border:1px solid #e2e7df; border-radius:14px; text-decoration:none; font-size:14px; }
   .em-links small { display:block; margin-top:2px; color:#728076; font-size:12px; }
-  @media (max-width:680px) {
+  @container (max-width:680px) {
     .em-card { padding:16px 14px; border-radius:16px; }
     .em-views { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; }
     .em-view { padding:0 4px; font-size:13px; }
@@ -353,7 +354,8 @@ export default function EnergyMarketDashboard({ dataUrl = DEFAULT_MARKET_DATA_UR
     const source = data?.sources?.[0]
 
     return (
-        <div className="em" style={style}>
+        <div className="em-shell" style={style}>
+        <div className="em">
             <style dangerouslySetInnerHTML={{ __html: css }} />
             {!data && !failed && <div className="em-card" role="status">Prijzen worden geladen…</div>}
             {failed && <div className="em-card" role="alert"><h2>Prijzen niet beschikbaar</h2><p className="em-sub">De marktgegevens konden nu niet geladen worden. Probeer later opnieuw of bekijk de officiële vergelijker van je gewest.</p><ContractsView /></div>}
@@ -367,6 +369,7 @@ export default function EnergyMarketDashboard({ dataUrl = DEFAULT_MARKET_DATA_UR
                 {active === "contracts" && <ContractsView />}
                 {source && <p className="em-note"><Updated section={active === "history" ? data.history : active === "forecast" ? data.forecast : data.spot} />Bron: <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a>{source.licence ? ` (${source.licence})` : ""}. Groothandelsprijzen zijn niet wat je op je factuur betaalt.</p>}
             </>}
+        </div>
         </div>
     )
 }
