@@ -22,10 +22,21 @@ type MarketData = {
         backtest: { origins: number; mape_1m: number; mape_6m: number; mape_12m: number | null; naive_mape_1m?: number }
         months: { month: string; point: number; low: number; high: number }[]
     }) | null
-    contracts: unknown
+    contracts: { as_of: string; suppliers: Supplier[] } | null
     sources: { title: string; url: string; licence?: string }[]
 }
 
+type Supplier = {
+    name: string
+    status: string
+    product_name: string | null
+    price_per_kwh_eur: number | null
+    price_per_kwh_note?: string
+    standing_charge_amount: number | null
+    standing_charge_unit: "per_year" | "per_month" | null
+    source_url: string | null
+    retrieved_at?: string
+}
 type Props = { dataUrl?: string; style?: CSSProperties }
 type View = "today" | "history" | "forecast" | "contracts"
 
@@ -76,6 +87,15 @@ const css = `
   .em-table th, .em-table td { padding:5px 6px; border-bottom:1px solid #edf0eb; text-align:right; }
   .em-table th:first-child, .em-table td:first-child { text-align:left; }
   .em-table-wrap { max-height:240px; overflow:auto; }
+  .em-kwh { display:flex; align-items:center; gap:8px; margin:0 0 14px; color:#4a5a4f; font-size:13px; }
+  .em-kwh input { width:96px; min-height:40px; padding:0 10px; border:1px solid #dfe5de; border-radius:10px; font:inherit; font-size:16px; }
+  .em-bars { display:grid; gap:12px; margin:0; padding:0; list-style:none; }
+  .em-bar-head { display:flex; justify-content:space-between; gap:12px; margin-bottom:6px; font-size:13px; }
+  .em-bar-head small { display:block; color:#728076; font-size:12px; }
+  .em-bar-value { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .em-bar-track { height:12px; border-radius:0 4px 4px 0; background:#f0f3ef; }
+  .em-bar { height:12px; min-width:4px; border-radius:0 4px 4px 0; }
+  .em-table small { color:#728076; }
   .em-links { display:grid; gap:8px; margin-top:12px; }
   .em-links a { display:block; padding:12px 14px; border:1px solid #e2e7df; border-radius:14px; text-decoration:none; font-size:14px; }
   .em-links small { display:block; margin-top:2px; color:#728076; font-size:12px; }
@@ -325,12 +345,57 @@ const COMPARATORS = [
     { title: "CompaCWaPE (Wallonië)", detail: "CWaPE", url: "https://www.compacwape.be/" },
 ]
 
-function ContractsView() {
+// Only contracts whose kWh price was read from the supplier's own tariff card are
+// shown; suppliers without a verified number are left out rather than shown empty.
+function pricedContracts(data: MarketData | null): (Supplier & { price: number; yearlyFee: number })[] {
+    return (data?.contracts?.suppliers ?? [])
+        .filter(s => s.status === "verified" && typeof s.price_per_kwh_eur === "number" && s.price_per_kwh_eur > 0 && s.source_url)
+        .map(s => ({
+            ...s,
+            price: s.price_per_kwh_eur as number,
+            yearlyFee: (s.standing_charge_amount ?? 0) * (s.standing_charge_unit === "per_month" ? 12 : 1),
+        }))
+}
+
+const euro = (value: number, digits = 0) => value.toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: digits, maximumFractionDigits: digits })
+
+function ContractsView({ data }: { data: MarketData | null }) {
+    const [kwh, setKwh] = useState(3500)
+    // Ranked by what you pay per year at your consumption: a lower kWh price can
+    // still cost more when the fixed fee is higher.
+    const contracts = pricedContracts(data)
+        .map(c => ({ ...c, yearly: c.price * kwh + c.yearlyFee }))
+        .sort((a, b) => a.yearly - b.yearly || a.name.localeCompare(b.name))
+    if (!contracts.length) {
+        return (
+            <section className="em-card" aria-labelledby="em-contracts">
+                <h2 id="em-contracts">Contracten vergelijken</h2>
+                <p className="em-sub">Er zijn nu geen gecontroleerde contractprijzen beschikbaar. Vergelijk bij de officiële vergelijker van je gewest:</p>
+                <div className="em-links">{COMPARATORS.map(c => <a key={c.url} href={c.url} target="_blank" rel="noreferrer"><strong>{c.title} ↗</strong><small>{c.detail}</small></a>)}</div>
+            </section>
+        )
+    }
+    const max = Math.max(...contracts.map(c => c.yearly), 1)
+    const asOf = data?.contracts?.as_of
     return (
         <section className="em-card" aria-labelledby="em-contracts">
-            <h2 id="em-contracts">Contracten vergelijken</h2>
-            <p className="em-sub">Binnenkort: de energieprijs per kWh en de vaste vergoeding van de contracten van Luminus, Engie, Eneco, TotalEnergies, Mega, Bolt, Elegant, Energyvision, Octa+, Aspiravi en Frank Energie, maandelijks uit hun officiële tariefkaarten. Tot dan vergelijk je het best bij de officiële vergelijker van je gewest:</p>
-            <div className="em-links">{COMPARATORS.map(c => <a key={c.url} href={c.url} target="_blank" rel="noreferrer"><strong>{c.title} ↗</strong><small>{c.detail}</small></a>)}</div>
+            <h2 id="em-contracts">Variabele contracten: wat betaal je per jaar?</h2>
+            <p className="em-sub">Prijs per kWh voor een enkelvoudige meter in Vlaanderen, inclusief 6% btw, zoals op de officiële tariefkaart van elke leverancier{asOf ? ` (${new Date(`${asOf}T12:00:00`).toLocaleDateString("nl-BE", { month: "long", year: "numeric" })})` : ""}. Alleen de energiekost: netkosten en heffingen komen er nog bij en zijn voor iedereen in je regio gelijk.</p>
+            <label className="em-kwh">Jaarverbruik <input type="number" inputMode="numeric" min={0} step={100} value={kwh} onChange={event => setKwh(Math.max(0, Number(event.target.value) || 0))} aria-label="Jaarverbruik in kWh" /> kWh</label>
+            <ol className="em-bars">
+                {contracts.map((c, index) => (
+                    <li key={c.name} className="em-bar-row">
+                        <div className="em-bar-head">
+                            <span><strong>{c.name}</strong><small>{c.product_name}</small></span>
+                            <span className="em-bar-value"><strong>≈ {euro(c.yearly)} per jaar</strong><small>{(c.price * 100).toLocaleString("nl-BE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} c€/kWh + {euro(c.yearlyFee)} vast</small></span>
+                        </div>
+                        <div className="em-bar-track"><div className="em-bar" style={{ width: `${(c.yearly / max) * 100}%`, background: index === 0 ? ACCENT : MEASURED }} /></div>
+                    </li>
+                ))}
+            </ol>
+            <Legend items={[{ color: ACCENT, label: `Laagste jaarbedrag bij ${kwh.toLocaleString("nl-BE")} kWh` }, { color: MEASURED, label: "Andere leveranciers" }]} />
+            <p className="em-note">Jaarbedrag = energieprijs × jaarverbruik + vaste vergoeding van de leverancier. Variabele prijzen volgen de markt en worden maandelijks herberekend; de tariefkaarten gebruiken niet allemaal dezelfde basis (maandprijs, verwachte jaarprijs of vorige maand). Controleer altijd de tariefkaart en vergelijk ook bij V-test, BruSim of CompaCWaPE.</p>
+            <details><summary>Toon als tabel met bronnen</summary><div className="em-table-wrap"><table className="em-table"><thead><tr><th>Leverancier</th><th>c€/kWh</th><th>Vaste vergoeding</th><th>Bron</th></tr></thead><tbody>{contracts.map(c => <tr key={c.name}><td>{c.name}<br /><small>{c.price_per_kwh_note}</small></td><td>{(c.price * 100).toLocaleString("nl-BE", { maximumFractionDigits: 2 })}</td><td>{euro(c.yearlyFee, 2)}/jaar</td><td><a href={c.source_url!} target="_blank" rel="noreferrer">Tariefkaart ↗</a></td></tr>)}</tbody></table></div></details>
         </section>
     )
 }
@@ -366,7 +431,7 @@ export default function EnergyMarketDashboard({ dataUrl = DEFAULT_MARKET_DATA_UR
         <div className="em">
             <style dangerouslySetInnerHTML={{ __html: css }} />
             {!data && !failed && <div className="em-card" role="status">Prijzen worden geladen…</div>}
-            {failed && <div className="em-card" role="alert"><h2>Prijzen niet beschikbaar</h2><p className="em-sub">De marktgegevens konden nu niet geladen worden. Probeer later opnieuw of bekijk de officiële vergelijker van je gewest.</p><ContractsView /></div>}
+            {failed && <div className="em-card" role="alert"><h2>Prijzen niet beschikbaar</h2><p className="em-sub">De marktgegevens konden nu niet geladen worden. Probeer later opnieuw of bekijk de officiële vergelijker van je gewest.</p><ContractsView data={null} /></div>}
             {data && <>
                 <div className="em-views" role="tablist" aria-label="Prijsoverzicht">
                     {views.map(([key, title]) => <button key={key} className="em-view" role="tab" aria-selected={active === key} onClick={() => setView(key)}>{title}</button>)}
@@ -374,8 +439,9 @@ export default function EnergyMarketDashboard({ dataUrl = DEFAULT_MARKET_DATA_UR
                 {active === "today" && <TodayView data={data} />}
                 {active === "history" && <HistoryView data={data} />}
                 {active === "forecast" && <ForecastView data={data} />}
-                {active === "contracts" && <ContractsView />}
-                {source && <p className="em-note"><Updated section={active === "history" ? data.history : active === "forecast" ? data.forecast : data.spot} />Bron: <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a>{source.licence ? ` (${source.licence})` : ""}. Groothandelsprijzen zijn niet wat je op je factuur betaalt.</p>}
+                {active === "contracts" && <ContractsView data={data} />}
+                {active === "contracts" && data.contracts?.suppliers?.length ? <p className="em-note">Bron: de officiële tariefkaarten van elke leverancier (link per leverancier in de tabel){data.contracts.as_of ? `, opgehaald op ${new Date(`${data.contracts.as_of}T12:00:00`).toLocaleDateString("nl-BE", { day: "numeric", month: "long", year: "numeric" })}` : ""}.</p>
+                    : source && <p className="em-note"><Updated section={active === "history" ? data.history : active === "forecast" ? data.forecast : data.spot} />Bron: <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a>{source.licence ? ` (${source.licence})` : ""}. Groothandelsprijzen zijn niet wat je op je factuur betaalt.</p>}
             </>}
         </div>
         </div>
