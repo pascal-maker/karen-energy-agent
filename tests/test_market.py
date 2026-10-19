@@ -264,3 +264,8 @@ def test_repository_tariff_file_is_valid() -> None:
     for supplier in priced:
         assert 0.05 < supplier["price_per_kwh_eur"] < 0.6, supplier["name"]
         assert supplier["source_url"].startswith("https://"), supplier["name"]
+    for supplier in data["suppliers"]:
+        assert supplier.get("contract_type") in ("variable", "fixed"), supplier["name"]
+    fixed = [s for s in priced if s["contract_type"] == "fixed"]
+    assert all(s["duration_months"] for s in fixed), "fixed cards say how long the price is fixed"
+    assert len({(s["name"], s["contract_type"]) for s in priced}) == len(priced), "one card per supplier and type"

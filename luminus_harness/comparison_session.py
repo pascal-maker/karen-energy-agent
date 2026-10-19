@@ -44,8 +44,8 @@ NUMBER = r"[-+]?(?:\d{1,3}(?:[. ]\d{3})+|\d+)(?:[,.]\d+)?"
 
 def is_offer_comparison_question(question: str) -> bool:
     text = question.casefold()
-    action = re.search(r"\b(?:vergelijk\w*|compar(?:e|ing|ison)|goedkoop\w*|voordelig\w*|cheapest|best(?:e)?)\b", text)
-    subject = re.search(r"\b(?:energie\w*|elektriciteit|elektriciteits\w*|stroom|aardgas\w*|gas(?:aanbiedingen|contracten|tarieven)?|electricity|leveranciers?|providers?|offers?|aanbiedingen|contracten?|tarieven|v-test|brusim|compacwape|kwh)\b", text)
+    action = re.search(r"\b(?:vergelijk\w*|compar(?:e|ing|ison|er)|goedkoop\w*|voordelig\w*|cheapest|best(?:e)?)\b", text)
+    subject = re.search(r"\b(?:energie\w*|elektriciteit|elektriciteits\w*|stroom|aardgas\w*|gas(?:aanbiedingen|contracten|tarieven)?|electricity|leveranciers?|providers?|offers?|offres?|aanbiedingen|contracten?|tarieven|v-test|brusim|compacwape|kwh)\b", text)
     return bool(action and subject)
 
 

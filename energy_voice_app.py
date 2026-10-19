@@ -22,7 +22,7 @@ from urllib.parse import urlparse# used to parse URLs
 import gradio as gr# used to create the web interface
 import numpy as np# used to handle audio data
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
@@ -940,7 +940,9 @@ async def api_petra_speech(body: PetraSpeechRequest, request: Request) -> Respon
 
 
 @api_app.post("/api/transcribe")
-async def api_transcribe(request: Request, file: UploadFile = File(...)) -> dict[str, str]:
+async def api_transcribe(
+    request: Request, file: UploadFile = File(...), language: str = Form("nl")
+) -> dict[str, str]:
     """Turn one short spoken question into text for browsers without speech recognition.
 
     The recording is transcribed once and not stored; the text goes back to the
@@ -961,7 +963,7 @@ async def api_transcribe(request: Request, file: UploadFile = File(...)) -> dict
     if not audio or len(audio) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="De opname is te lang. Houd je vraag kort.")
     try:
-        text = await asyncio.wait_for(asyncio.to_thread(transcribe_dutch, audio, content_type), timeout=40)
+        text = await asyncio.wait_for(asyncio.to_thread(transcribe_dutch, audio, content_type, language), timeout=40)
     except Exception as error:
         raise HTTPException(status_code=503, detail="Spraak omzetten is nu niet beschikbaar.") from error
     if not text:
