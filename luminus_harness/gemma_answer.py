@@ -180,6 +180,12 @@ async def _answer_small_talk(question: str, kind: str) -> dict[str, Any]:
     return {"answer": answer, "sources": [], "live_source_status": "not-needed", "processing": "small-talk"}
 
 
+async def answer_small_talk(question: str, route: str) -> dict[str, Any]:
+    """Small-talk or off-topic reply for a message Jev already routed ("small_talk" or "off_topic")."""
+    kind = "off_topic" if route == "off_topic" else small_talk_kind(question) or "greeting"
+    return await _answer_small_talk(question, kind)
+
+
 def _is_cancellation_question(question: str) -> bool:
     normalized = question.casefold()
     # Other Luminus services and payment mandates have different cancellation rules.

@@ -27,6 +27,14 @@ sample customer accounts or simulated bills.
 - `BROWSER_USE_API_KEY` (enables regional offer comparisons through V-test,
   BruSim, or CompaCWaPE). `BROWSER_USE_MAX_COST_USD` defaults to `1.00` per
   lookup; incomplete requests do not start a lookup.
+- `TYPESAFE_API_KEY` plus the variable `KAREN_JEV_ROUTING=1` (optional) let
+  TypeSafe's Jev model choose each public chat message's route: prices,
+  comparison, other energy question, small talk or off-topic. PDF sessions and
+  messages with account or invoice details are never sent. When Jev is off,
+  unsure (below `KAREN_JEV_MIN_CONFIDENCE`, default `0.6`) or unreachable,
+  Karen's word lists route the message. Run
+  `python scripts/check_jev_routing.py` with the key set to check Jev on real
+  questions before switching it on.
 
 The public API is rate-limited to 20 requests per client IP per minute, with a
 bounded in-process client map. The public FAQ answer endpoint uses the hosted
