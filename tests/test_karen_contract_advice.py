@@ -87,6 +87,19 @@ def test_english_question_gets_english_reply():
     assert reply["answer"].startswith("The fixed contract looks like the better choice.")
 
 
+def test_french_question_gets_french_reply():
+    question = "Un contrat fixe à 12 centimes, c'est mieux que variable ?"
+    assert contract_advice.is_contract_advice_question(question)
+    reply = contract_advice.contract_advice_reply(question, market())
+    assert reply["answer"].startswith("Le contrat fixe semble être le meilleur choix.")
+    assert "ce n'est pas un conseil financier" in reply["answer"]
+
+
+def test_french_question_without_price_asks_for_it_in_french():
+    reply = contract_advice.contract_advice_reply("Contrat fixe ou variable ?", market())
+    assert reply["answer"].startswith("Je peux le calculer")
+
+
 def test_missing_fixed_price_asks_for_it():
     reply = contract_advice.contract_advice_reply("vast of variabel?", market())
     assert "vaste prijs nodig" in reply["answer"]

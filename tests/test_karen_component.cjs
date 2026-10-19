@@ -39,7 +39,8 @@ function loadComponent(file) {
         require: name => name === "framer" ? { addPropertyControls() {}, ControlType: { String: "string" } }
             : name.startsWith("./") ? loadComponent(name.slice(2)) : require(name),
         window, document, console, URL, fetch: (...args) => globalThis.fetch(...args), FormData, AbortController,
-        navigator: { get userAgent() { return globalThis.testUserAgent || "jsdom" }, get mediaDevices() { return globalThis.testMediaDevices } },
+        navigator: { get userAgent() { return globalThis.testUserAgent || "jsdom" }, get mediaDevices() { return globalThis.testMediaDevices },
+            get languages() { return globalThis.testLanguages || ["nl-BE"] }, get language() { return (globalThis.testLanguages || ["nl-BE"])[0] } },
         get MediaRecorder() { return globalThis.MediaRecorder }, Blob: window.Blob,
         setTimeout, SpeechSynthesisUtterance,
     })
@@ -82,6 +83,7 @@ async function voice(question) {
         recognizer.onend?.()
     })
     assert.equal(recognizer.stopCalls, 1, "Recognition must stop once a transcript arrives")
+    assert.equal(recognizer.lang, "nl-BE", "Speech is Dutch when the browser lists Dutch")
     // The transcript is a draft: it lands in the input for review and is only sent on confirm.
     assert.equal(document.querySelector(".ea-input").value, question)
     await act(async () => document.querySelector('[aria-label="Verstuur vraag"]').click())
@@ -175,6 +177,7 @@ async function main() {
         start() { this.state = "recording" }
         stop() { this.state = "inactive"; this.ondataavailable({ data: new window.Blob(["clip"], { type: "audio/mp4" }) }); this.onstop() }
     }
+    globalThis.testLanguages = ["en-US", "fr-BE"]
     responses.push({ text: "Wat kost stroom vandaag?" })
     await act(async () => mic().click())
     await act(async () => {})
@@ -183,6 +186,8 @@ async function main() {
     await act(async () => {})
     assert.match(requests.at(-1).url, /\/api\/transcribe$/)
     assert.equal(requests.at(-1).body.get("file").name, "question.mp4")
+    assert.equal(requests.at(-1).body.get("language"), "fr", "French beats English; the recording's language goes along")
+    globalThis.testLanguages = undefined
     assert.equal(document.querySelector(".ea-input").value, "Wat kost stroom vandaag?", "Transcript is a draft, not sent")
     assert.equal(tracksStopped, 1, "Microphone is released after recording")
     const clearInput = () => act(async () => {

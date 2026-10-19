@@ -11,8 +11,8 @@ def _client(monkeypatch, transcript="Wat kost stroom vandaag?"):
 
     calls = []
 
-    def fake_transcribe(audio, content_type):
-        calls.append((len(audio), content_type))
+    def fake_transcribe(audio, content_type, language="nl"):
+        calls.append((len(audio), content_type) if language == "nl" else (len(audio), content_type, language))
         return transcript
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -31,6 +31,20 @@ def test_recording_returns_text_for_review(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json() == {"text": "Wat kost stroom vandaag?"}
     assert calls == [(9, "audio/webm;codecs=opus")]
+
+
+def test_recording_language_is_passed_on(monkeypatch) -> None:
+    client, calls = _client(monkeypatch)
+    response = client.post(
+        "/api/transcribe", data={"language": "fr"}, files={"file": ("q.webm", b"audio", "audio/webm")}
+    )
+    assert response.status_code == 200
+    assert calls == [(5, "audio/webm", "fr")]
+
+
+def test_prompt_echo_is_stripped_in_each_language() -> None:
+    for prompt in transcribe.PROMPTS.values():
+        assert transcribe.strip_prompt_echo(prompt, prompt) == ""
 
 
 def test_safari_mp4_recordings_are_accepted(monkeypatch) -> None:

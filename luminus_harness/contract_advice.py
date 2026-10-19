@@ -29,10 +29,10 @@ Z_10_90 = NormalDist().inv_cdf(0.9)
 _FIXED = re.compile(r"\b(?:vast\w*|fixed|fixe)\b", re.IGNORECASE)
 _VARIABLE = re.compile(r"\b(?:variabel\w*|variable|dynami\w*)\b", re.IGNORECASE)
 _ADVICE = re.compile(
-    r"\b(?:beter|best\w*|kiezen|kies|nemen|afsluiten|moet|loont|worth|should|better|choose|take|pick|vaut|choisir)\b",
+    r"\b(?:beter|best\w*|kiezen|kies|nemen|afsluiten|moet|loont|worth|should|better|choose|take|pick|vaut|choisir|mieux|prendre|dois)\b",
     re.IGNORECASE,
 )
-_CONTRACT = re.compile(r"\b(?:contract\w*|prijs|price|tarief|tariff|formule|offer|aanbod)\b", re.IGNORECASE)
+_CONTRACT = re.compile(r"\b(?:contract\w*|prijs|price|tarief|tariff|formule|offer|aanbod|contrat|prix|offre)\b", re.IGNORECASE)
 _CENTS = re.compile(r"(\d{1,2}(?:[.,]\d{1,3})?)\s*(?:c€|ct|cent\w*|eurocent)", re.IGNORECASE)
 _EUROS = re.compile(r"(?:€\s*(0[.,]\d{2,5})|(0[.,]\d{2,5})\s*(?:€|eur\w*))", re.IGNORECASE)
 _GAS = re.compile(r"\b\w*gas\w*\b", re.IGNORECASE)
@@ -122,6 +122,10 @@ def _missing_price_reply(lang: str) -> dict[str, Any]:
         "I can work that out, but I need the fixed price you were offered. Ask again with it, for example: "
         "\"Is a fixed contract at 21 cents per kWh better than variable?\" Add your yearly usage in kWh if you know it."
         if lang == "en" else
+        "Je peux le calculer, mais il me faut le prix fixe qu'on vous a proposé. Reposez la question avec ce prix, par "
+        "exemple : \"Un contrat fixe à 21 centimes par kWh, c'est mieux que variable ?\" Ajoutez votre consommation "
+        "annuelle en kWh si vous la connaissez."
+        if lang == "fr" else
         "Dat reken ik graag voor je uit, maar ik heb de vaste prijs nodig die je aangeboden kreeg. Vraag het opnieuw "
         "met die prijs erbij, bijvoorbeeld: \"Is een vast contract aan 21 cent per kWh beter dan variabel?\" "
         "Zet er je jaarverbruik in kWh bij als je dat kent."
@@ -166,6 +170,21 @@ def contract_advice_reply(question: str, data: dict[str, Any]) -> dict[str, Any]
             f"This is an estimate from the day-ahead price forecast and today's variable tariff cards "
             f"({len(names)} suppliers), energy price incl. 6% VAT only. Standing charges, network costs and taxes "
             "are not included, and it is not financial advice."
+        )
+    elif lang == "fr":
+        verdict = {
+            "variable": "Le variable semble être le meilleur choix.",
+            "fixed": "Le contrat fixe semble être le meilleur choix.",
+            "toss-up": "C'est serré : aucun des deux n'est clairement moins cher, donc choisissez le fixe si une facture prévisible compte pour vous.",
+        }[decision]
+        answer = (
+            f"{verdict} Il y a environ {percent} % de chances que le variable revienne moins cher qu'un fixe à "
+            f"{_cents(fixed, lang)} c€/kWh sur les 12 prochains mois. Prix variable attendu : "
+            f"{_cents(expected, lang)} c€/kWh, soit environ {f'{yearly:,.0f}'.replace(',', ' ')} € par an "
+            f"{'de moins' if expected < fixed else 'de plus'} que le fixe pour {f'{usage:,}'.replace(',', ' ')} kWh.\n"
+            f"C'est une estimation basée sur la prévision des prix day-ahead et les fiches tarifaires variables actuelles "
+            f"({len(names)} fournisseurs), prix de l'énergie TVA 6% incl. uniquement. Redevance fixe, coûts de réseau et "
+            "taxes ne sont pas inclus, et ce n'est pas un conseil financier."
         )
     else:
         verdict = {

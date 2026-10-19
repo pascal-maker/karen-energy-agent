@@ -148,6 +148,73 @@ async def test_english_energy_question_without_sources_admits_it_does_not_know(m
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(gemma_answer, "search_energy_pages", no_pages)
-    monkeypatch.setattr(gemma_answer, "_generate", lambda *_: pytest.fail("No sources means no generation"))
+    def generate(prompt, system_instruction=None):
+        # Only the Dutch search translation may run; no sources means no answer generation.
+        assert system_instruction is gemma_answer._SEARCH_TRANSLATION_INSTRUCTION
+        return "Wat is de warmtepomppremie in Wallonië?"
+
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
     result = await gemma_answer.answer_energy_question("What is the heat pump subsidy in Wallonia?", [])
     assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["en"]
+
+
+@pytest.mark.parametrize(
+    ("question", "lang"),
+    [
+        ("quel est le prix de l'électricité aujourd'hui ?", "fr"),
+        ("Pourquoi mon acompte est-il différent de ma facture annuelle ?", "fr"),
+        ("bonjour, ça va ?", "fr"),
+        ("what's the capital of France?", "en"),
+        ("wat zijn de stroomprijzen vandaag", "nl"),
+        ("ok", "nl"),
+    ],
+)
+def test_question_language(question, lang):
+    assert market_prices.question_language(question) == lang
+
+
+def test_french_price_question_gets_a_french_reply():
+    question = "quel est le prix de l'électricité aujourd'hui ?"
+    assert market_prices.is_market_price_question(question)
+    reply = market_prices.market_price_reply(market(), market_prices.question_language(question))
+    assert reply["answer"].startswith("Le prix de gros de l'électricité en Belgique")
+    assert "comparer les offres" in reply["answer"]
+
+
+@pytest.mark.asyncio
+async def test_small_talk_names_the_reply_language(monkeypatch):
+    prompts = []
+
+    def generate(prompt, system_instruction=None):
+        prompts.append(prompt)
+        return "I only know about energy, sorry!"
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
+    await gemma_answer.answer_small_talk("what's the capital of France?", "off_topic")
+    assert prompts[-1].endswith("ANTWOORDTAAL: Engels")
+
+
+@pytest.mark.asyncio
+async def test_french_energy_question_searches_in_dutch_and_answers_in_french(monkeypatch):
+    searched = []
+
+    async def pages(query, *_args, **_kwargs):
+        searched.append(query)
+        return [{"title": "Energiesparen", "url": "https://example.org", "content": "Voorschotten zijn een raming."}]
+
+    def generate(prompt, system_instruction=None):
+        if system_instruction is gemma_answer._SEARCH_TRANSLATION_INSTRUCTION:
+            return "Waarom verschilt mijn voorschot van mijn jaarafrekening?"
+        assert prompt.endswith("ANTWOORDTAAL: Frans")
+        assert "Pourquoi mon acompte" in prompt
+        return "Votre acompte est une estimation."
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", pages)
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
+    result = await gemma_answer.answer_energy_question(
+        "Pourquoi mon acompte est-il différent de ma facture annuelle ?", []
+    )
+    assert result["answer"] == "Votre acompte est une estimation."
+    assert searched and "voorschot" in searched[0]

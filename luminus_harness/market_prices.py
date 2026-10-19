@@ -25,19 +25,19 @@ MAX_SUPPLIERS = 4
 BRUSSELS = ZoneInfo("Europe/Brussels")
 
 _PRICE = re.compile(
-    r"\b\w*(?:prijs|prijzen|tarief|tarieven)\b|\b(?:kost|kosten|goedkoop\w*|price|prices|pricing|cost|costs|cheap\w*)\b",
+    r"\b\w*(?:prijs|prijzen|tarief|tarieven)\b|\b(?:kost|kosten|goedkoop\w*|price|prices|pricing|cost|costs|cheap\w*|prix|tarifs?|co[uû]t\w*|cher|ch[eè]re)\b",
     re.IGNORECASE,
 )
-_ELECTRICITY = re.compile(r"(?:stroom|elektriciteit|electricit|energie|energy|power|kwh)", re.IGNORECASE)
+_ELECTRICITY = re.compile(r"(?:stroom|elektriciteit|electricit|électricit|energie|énergie|energy|power|kwh)", re.IGNORECASE)
 # Gas, network costs, social tariffs, invoices, contracts and explicit CREG questions keep their own routes.
 _OTHER_SUBJECT = re.compile(
     r"\b\w*(?:gas|capaciteit|nettarief|netkost|distributie|sociaal|social|injectie|prosument|"
-    r"factuur|voorschot|afrekening|invoice|bill|contract|opzeg|zeggen|stopzet|verbreking|cancel|"
+    r"factuur|voorschot|afrekening|invoice|bill|contract|contrat|factur|acompte|r[ée]sili|opzeg|zeggen|stopzet|verbreking|cancel|"
     r"warmtepomp|ketel|creg)\w*\b",
     re.IGNORECASE,
 )
 # An explicit comparison request, or household inputs, goes to the comparison flow.
-_COMPARE = re.compile(r"\b(?:vergelijk\w*|compar(?:e|ing|ison)|v-test|brusim|compacwape)\b", re.IGNORECASE)
+_COMPARE = re.compile(r"\b(?:vergelijk\w*|compar(?:e|ing|ison|er)|v-test|brusim|compacwape)\b", re.IGNORECASE)
 _HOUSEHOLD_INPUT = re.compile(r"\b(?!20\d{2}\b)[1-9]\d{3}\b|\bkwh\s*(?:per|/)\s*(?:jaar|year)\b|\b\d[\d. ]*\s*kwh\b", re.IGNORECASE)
 _ENGLISH = re.compile(
     r"\b(?:the|what|what's|whats|is|are|look|up|can|you|today|price|prices|energy|electricity|how|much|current|please|"
@@ -47,6 +47,12 @@ _ENGLISH = re.compile(
 _DUTCH = re.compile(
     r"\b(?:de|het|wat|zijn|is|zoek|op|kan|je|jij|vandaag|prijs|prijzen|stroom|energie|hoeveel|huidige|actuele|toon|mij|een|"
     r"ik|moet|dan|beter|mijn|aan|voor|en|vast|vaste|variabel|gebruik|welke|goedkoper|nemen|kiezen)\b",
+    re.IGNORECASE,
+)
+_FRENCH = re.compile(
+    r"\b(?:le|la|les|est|quel|quelle|quels|prix|électricité|electricite|aujourd|je|j|mon|ma|mes|un|une|des|du|pour|"
+    r"combien|coûte|coute|fixe|contrat|vous|tu|que|qui|bonjour|ça|c|pourquoi|mieux|dois|prendre|moins|cher|chère|"
+    r"facture|acompte|chauffage|chaudière|consommation|merci|avec|sur|pas)\b",
     re.IGNORECASE,
 )
 
@@ -66,9 +72,12 @@ def is_market_price_question(question: str) -> bool:
 
 
 def question_language(question: str) -> str:
-    """'en' when the question reads as English, otherwise Karen's default 'nl'."""
+    """'en' or 'fr' when the question reads as English or French, otherwise Karen's default 'nl'."""
     english = len(_ENGLISH.findall(question))
     dutch = len(_DUTCH.findall(question))
+    french = len(_FRENCH.findall(question))
+    if french > max(english, dutch):
+        return "fr"
     return "en" if english > dutch else "nl"
 
 
@@ -96,20 +105,20 @@ async def load_market_data() -> dict[str, Any] | None:
 
 def _cents(value: float, lang: str) -> str:
     text = f"{value:.1f}"
-    return text if lang == "en" else text.replace(".", ",")
+    return text if lang == "en" else text.replace(".", ",")  # nl and fr use a decimal comma
 
 
 def _join(items: list[str], lang: str) -> str:
     if len(items) < 2:
         return "".join(items)
-    return ", ".join(items[:-1]) + (" and " if lang == "en" else " en ") + items[-1]
+    return ", ".join(items[:-1]) + {"en": " and ", "fr": " et "}.get(lang, " en ") + items[-1]
 
 
 def _day_label(day: str, lang: str) -> str:
     today = datetime.now(BRUSSELS).date().isoformat()
     if day == today:
-        return "today" if lang == "en" else "vandaag"
-    return f"on {day}" if lang == "en" else f"op {day}"
+        return {"en": "today", "fr": "aujourd'hui"}.get(lang, "vandaag")
+    return {"en": f"on {day}", "fr": f"le {day}"}.get(lang, f"op {day}")
 
 
 def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | None:
@@ -129,6 +138,13 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
             + (f" It is cheapest around {_join([f'{h}:00' for h in hours], lang)}." if hours else "")
             + " That is before network costs, levies and VAT."
         ]
+    elif lang == "fr":
+        lines = [
+            f"Le prix de gros de l'électricité en Belgique (day-ahead) est {when} de {avg} centimes par kWh en moyenne, "
+            f"entre {low} et {high} centimes."
+            + (f" C'est le moins cher vers {_join([f'{h}h' for h in hours], lang)}." if hours else "")
+            + " C'est hors coûts de réseau, taxes et TVA."
+        ]
     else:
         lines = [
             f"De groothandelsprijs voor stroom in België (day-ahead) is {when} gemiddeld {avg} cent per kWh, "
@@ -146,22 +162,21 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         key=lambda supplier: supplier["price_per_kwh_eur"],
     )[:MAX_SUPPLIERS]
     if suppliers:
-        lines.append(
-            "Variable contracts on the suppliers' current tariff cards (energy price incl. 6% VAT, without network costs):"
-            if lang == "en" else
-            "Variabele contracten op de huidige tariefkaarten van leveranciers (energieprijs incl. 6% btw, zonder netkosten):"
-        )
+        lines.append({
+            "en": "Variable contracts on the suppliers' current tariff cards (energy price incl. 6% VAT, without network costs):",
+            "fr": "Contrats variables sur les fiches tarifaires actuelles des fournisseurs (prix de l'énergie TVA 6% incl., hors coûts de réseau) :",
+        }.get(lang, "Variabele contracten op de huidige tariefkaarten van leveranciers (energieprijs incl. 6% btw, zonder netkosten):"))
         for supplier in suppliers:
             cents = _cents(supplier["price_per_kwh_eur"] * 100, lang)
-            unit = "cents/kWh" if lang == "en" else "cent/kWh"
+            unit = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
             name, product = supplier["name"], str(supplier.get("product_name") or "")
             label = product if product.casefold().startswith(name.casefold()) else f"{name} {product}".strip()
             lines.append(f"• {label}: {cents} {unit}")
-    lines.append(
-        "Want to know what this means for your home? Say \"compare offers\" and I'll ask for your region, postcode and usage."
-        if lang == "en" else
-        "Wil je weten wat dat voor jou betekent? Zeg \"vergelijk aanbiedingen\", dan vraag ik je gewest, postcode en verbruik."
-    )
+    lines.append({
+        "en": "Want to know what this means for your home? Say \"compare offers\" and I'll ask for your region, postcode and usage.",
+        "fr": "Vous voulez savoir ce que cela représente pour votre logement ? Dites \"comparer les offres\" et je vous "
+              "demanderai votre région, code postal et consommation.",
+    }.get(lang, "Wil je weten wat dat voor jou betekent? Zeg \"vergelijk aanbiedingen\", dan vraag ik je gewest, postcode en verbruik."))
 
     market_source = next(iter(data.get("sources") or []), {})
     sources = [{

@@ -49,6 +49,14 @@ const demoReply: Reply = {
 }
 
 const DEMO_QUESTION = "Waarom verschilt mijn voorschot van mijn jaarafrekening?"
+// Speech follows the browser's languages: Dutch whenever it is listed, else French or English, else Dutch.
+const SPEECH_LOCALES = { nl: "nl-BE", fr: "fr-BE", en: "en-GB" } as const
+type VoiceLanguage = keyof typeof SPEECH_LOCALES
+const voiceLanguage = (): VoiceLanguage => {
+    const listed = typeof navigator === "undefined" ? [] : [...(navigator.languages || []), navigator.language || ""]
+    const codes = listed.map((language) => language.toLowerCase().slice(0, 2))
+    return (["nl", "fr", "en"] as const).find((code) => codes.includes(code)) ?? "nl"
+}
 const normalizeQuestion = (text: string) => text.trim().toLocaleLowerCase("nl-BE").replace(/[?!.]+$/, "")
 
 const css = `
@@ -451,7 +459,7 @@ export default function EnergyAgentConversation({
         }
         clearPetra()
         const nextRecognition = new SpeechRecognitionCtor()
-        nextRecognition.lang = "nl-BE"
+        nextRecognition.lang = SPEECH_LOCALES[voiceLanguage()]
         nextRecognition.interimResults = false
         nextRecognition.continuous = false
         let hasTranscript = false
@@ -495,7 +503,7 @@ export default function EnergyAgentConversation({
                 "service-not-allowed": "De browser blokkeert zijn spraakherkenningsdienst voor deze pagina.",
                 "audio-capture": "De browser vindt geen werkende microfoon. Controleer je invoerapparaat.",
                 network: "De browser-spraakdienst is niet bereikbaar. Controleer je verbinding en probeer opnieuw.",
-                "language-not-supported": "Deze browser-spraakdienst ondersteunt nl-BE niet. Typ je vraag hieronder.",
+                "language-not-supported": `Deze browser-spraakdienst ondersteunt ${SPEECH_LOCALES[voiceLanguage()]} niet. Typ je vraag hieronder.`,
                 aborted: "Spraakherkenning is gestopt. Typ je vraag of probeer opnieuw.",
             }
             setVoiceError(messages[event.error || ""] || `Spraakherkenning mislukte${event.error ? ` (${event.error})` : ""}. Typ je vraag of probeer opnieuw.`)
@@ -571,6 +579,7 @@ export default function EnergyAgentConversation({
             const form = new FormData()
             const extension = audio.type.includes("mp4") ? "mp4" : audio.type.includes("ogg") ? "ogg" : "webm"
             form.append("file", audio, `question.${extension}`)
+            form.append("language", voiceLanguage())
             const response = await fetch(endpointFor("transcribe"), { method: "POST", body: form })
             const payload = await response.json().catch(() => ({}))
             if (!response.ok || typeof payload.text !== "string" || !payload.text.trim()) {
