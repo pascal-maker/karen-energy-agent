@@ -22,6 +22,12 @@ backend to the Space on every push to `main` that touches backend files, or on
 demand from the Actions tab. It needs a Hugging Face write token as repository
 secret `HF_TOKEN`.
 
+**Default size in Framer.** The component now declares Framer layout hints
+(`@framerSupportedLayoutWidth any`, intrinsic size 1200 × 820). A freshly placed
+Karen starts as a desktop-size block, and Width/Height can be set to Fill. An
+instance that is already on the canvas keeps its old fixed size until you
+change it, or delete it and place it again.
+
 **Desktop width.** On ask-karen.framer.website (19 October) Karen rendered as a
 narrow column of about 420px on a wide desktop screen. Karen then uses its phone
 layout and the Contracten table has no room. On the **Desktop** breakpoint set

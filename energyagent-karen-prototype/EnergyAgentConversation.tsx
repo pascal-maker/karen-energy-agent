@@ -156,6 +156,16 @@ function microphoneDeniedMessage(): string {
     return "Microfoontoegang is geweigerd voor deze site. Tik op het slot- of instellingenicoon naast het adres, zet Microfoon op Toestaan en probeer opnieuw."
 }
 
+/**
+ * Framer layout hints: Karen may be set to Fill (any width/height) and, when
+ * first placed, starts as a full desktop-size block instead of a small default.
+ * Below 680px of its own width it switches to the full-screen phone layout.
+ *
+ * @framerSupportedLayoutWidth any
+ * @framerSupportedLayoutHeight any
+ * @framerIntrinsicWidth 1200
+ * @framerIntrinsicHeight 820
+ */
 export default function EnergyAgentConversation({
     apiEndpoint = "",
     sampleQuestion = DEMO_QUESTION,
