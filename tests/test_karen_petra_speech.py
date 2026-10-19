@@ -81,3 +81,26 @@ def test_petra_token_rejects_tampering_and_expiry(monkeypatch) -> None:
         app._public_speech_from_token(token)
     assert expired.value.status_code == 404
     assert app._sign_public_speech("a" * (app.MAX_SPEECH_CHARS + 1)) is None
+
+
+def test_petra_calls_babbeldoos_with_the_space_token(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    from luminus_harness import petra_tts
+
+    wav = tmp_path / "petra.wav"
+    wav.write_bytes(b"RIFF\x00\x00\x00\x00WAVEdata")
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, src, hf_token=None, verbose=True):
+            seen["token"] = hf_token
+
+        def submit(self, *args, **kwargs):
+            return types.SimpleNamespace(result=lambda timeout: [str(wav)])
+
+    monkeypatch.setitem(sys.modules, "gradio_client", types.SimpleNamespace(Client=FakeClient))
+    monkeypatch.setenv("HF_TOKEN", "hf_test")
+    assert petra_tts.synthesize_petra("Hallo").startswith(b"RIFF")
+    assert seen["token"] == "hf_test"

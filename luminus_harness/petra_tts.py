@@ -1,5 +1,6 @@
 """Optional Petra voice for public Karen answers in the non-commercial POC."""
 
+import os
 from pathlib import Path
 
 
@@ -15,7 +16,9 @@ def synthesize_petra(text: str) -> bytes:
 
     from gradio_client import Client
 
-    client = Client(SPACE, verbose=False)
+    # Anonymous calls share a small ZeroGPU quota and fail once it is used up; the Space's
+    # HF_TOKEN gives Karen the account's own quota.
+    client = Client(SPACE, hf_token=os.getenv("HF_TOKEN", "").strip() or None, verbose=False)
     result = client.submit(
         text, "Petra (aanbevolen)", None, "Narration", 1.0, -1,
         api_name="/speak",
