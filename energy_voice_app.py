@@ -61,6 +61,7 @@ from luminus_harness.comparison_session import (
     pdf_comparison_reply,
 )
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
+from luminus_harness.contract_advice import answer_contract_advice
 from luminus_harness.jev import route_question
 from luminus_harness.market_prices import answer_market_price_question
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
@@ -847,6 +848,10 @@ async def api_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
         question = body.question.strip()
         # Jev picks the route when enabled and confident; otherwise the word lists below decide.
         route = await route_question(question)
+        if route in (None, "contract_advice"):
+            advice = await answer_contract_advice(question, recognised=route == "contract_advice")
+            if advice is not None:
+                return _with_petra_speech({**advice, "comparison_session_id": None})
         if route == "compare":
             values = {**extract_inputs(question, "region"), **extract_additional_inputs(question)}
             return _with_petra_speech(await _comparison_sessions.submit(values, None))

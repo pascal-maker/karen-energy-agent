@@ -37,6 +37,10 @@ ROUTES = {
         "Explicitly asks to compare offers or switch supplier for their own home, or gives their region, postcode "
         "or yearly kWh usage."
     ),
+    "contract_advice": (
+        "Asks whether to choose a fixed, variable or dynamic electricity contract, or whether a fixed price they "
+        "were offered is a good deal."
+    ),
     "energy_other": (
         "Any other energy question, including gas prices, network costs, the capacity tariff (capaciteitstarief), "
         "social tariffs, invoices, advance payments, heating, boilers, premiums, rules, contracts or cancelling."

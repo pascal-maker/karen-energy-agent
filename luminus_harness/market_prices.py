@@ -40,11 +40,13 @@ _OTHER_SUBJECT = re.compile(
 _COMPARE = re.compile(r"\b(?:vergelijk\w*|compar(?:e|ing|ison)|v-test|brusim|compacwape)\b", re.IGNORECASE)
 _HOUSEHOLD_INPUT = re.compile(r"\b(?!20\d{2}\b)[1-9]\d{3}\b|\bkwh\s*(?:per|/)\s*(?:jaar|year)\b|\b\d[\d. ]*\s*kwh\b", re.IGNORECASE)
 _ENGLISH = re.compile(
-    r"\b(?:the|what|what's|whats|is|are|look|up|can|you|today|price|prices|energy|electricity|how|much|current|please|show|me)\b",
+    r"\b(?:the|what|what's|whats|is|are|look|up|can|you|today|price|prices|energy|electricity|how|much|current|please|"
+    r"show|me|i|should|take|or|than|better|my|it|do|does|at|for|and|cheaper|which|will|fixed|cents?|use)\b",
     re.IGNORECASE,
 )
 _DUTCH = re.compile(
-    r"\b(?:de|het|wat|zijn|is|zoek|op|kan|je|jij|vandaag|prijs|prijzen|stroom|energie|hoeveel|huidige|actuele|toon|mij|een)\b",
+    r"\b(?:de|het|wat|zijn|is|zoek|op|kan|je|jij|vandaag|prijs|prijzen|stroom|energie|hoeveel|huidige|actuele|toon|mij|een|"
+    r"ik|moet|dan|beter|mijn|aan|voor|en|vast|vaste|variabel|gebruik|welke|goedkoper|nemen|kiezen)\b",
     re.IGNORECASE,
 )
 
