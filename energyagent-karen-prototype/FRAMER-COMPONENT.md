@@ -12,6 +12,16 @@ confirms. The backend must be redeployed for this
 (`scripts/upload_energy_voice_space.py` now includes `luminus_harness/transcribe.py`);
 until then those browsers show "Spraak omzetten is nu niet beschikbaar".
 
+**Petra voice only after a spoken question.** Karen used to read every public
+answer aloud right after showing it. Now she speaks automatically only when the
+question was asked by voice; after a typed question she shows a "Beluister
+Karen" button instead.
+
+**Deploying the backend.** `.github/workflows/deploy-space.yml` uploads the
+backend to the Space on every push to `main` that touches backend files, or on
+demand from the Actions tab. It needs a Hugging Face write token as repository
+secret `HF_TOKEN`.
+
 **Desktop width.** On ask-karen.framer.website (19 October) Karen rendered as a
 narrow column of about 420px on a wide desktop screen. Karen then uses its phone
 layout and the Contracten table has no room. On the **Desktop** breakpoint set

@@ -1,0 +1,53 @@
+name: Deploy Hugging Face Space
+
+# Uploads the backend files listed in scripts/upload_energy_voice_space.py to
+# the existing Space. The Space's own secrets (OPENAI_API_KEY, GEMINI_API_KEY,
+# ...) stay in Hugging Face; this workflow only needs a write token.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - energy_voice_app.py
+      - luminus_harness/**
+      - requirements/energy-voice-demo.txt
+      - energy_voice_space/**
+      - scripts/upload_energy_voice_space.py
+      - energie_agent_kennisbasis_luminus_elegant_eneco.pdf
+      - energyagent-karen-prototype/assets/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-space
+  cancel-in-progress: false
+
+env:
+  SPACE_ID: pascal-maker/belgian-energy-voice-assistant
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the Hugging Face token
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::Add a Hugging Face write token as repository secret HF_TOKEN (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install "huggingface_hub>=0.30,<1"
+
+      - name: Upload backend files to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python scripts/upload_energy_voice_space.py "$SPACE_ID"

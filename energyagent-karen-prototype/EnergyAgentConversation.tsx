@@ -329,6 +329,9 @@ export default function EnergyAgentConversation({
     async function ask(text: string) {
         const clean = text.trim()
         if (!clean || busy || uploading) return
+        // Speak the answer automatically only when the question itself was spoken;
+        // typed questions get a "Beluister Karen" button instead.
+        const askedByVoice = voiceDraft
         clearPetra()
         if (listening) stopVoice()
         setAnswerError("")
@@ -353,7 +356,7 @@ export default function EnergyAgentConversation({
                 if (!data.answer) throw new Error("Het antwoord ontbreekt in de API-respons")
                 if ("comparison_session_id" in data) setComparisonSessionId(data.comparison_session_id || "")
                 setReply(data)
-                if (!sessionId && data.processing !== "local-only") {
+                if (askedByVoice && !sessionId && data.processing !== "local-only") {
                     if (data.petra_speech_token) void playPetra(data.petra_speech_token)
                     else setPetraError("Voor dit antwoord is geen audio beschikbaar. Je kunt het antwoord hierboven lezen.")
                 }
@@ -580,7 +583,7 @@ export default function EnergyAgentConversation({
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
                 </div>
-                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Alleen om Karens publieke antwoord uit te spreken gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend.</p>
+                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend.</p>
             </section>
             <aside className="ea-rail">
                 <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>
