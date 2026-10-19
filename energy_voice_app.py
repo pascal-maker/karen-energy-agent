@@ -314,7 +314,9 @@ async def answer_text_turn(question: str | None, state: dict[str, Any] | None):
             status_html = _status("Passage gevonden", "Verwerkt op Karen’s backend zonder generatief model")
         else:
             result = await answer_energy_question(clean_question, BASE_KNOWLEDGE)
-            if result.get("processing") == "verified-public-sources":
+            if result.get("processing") == "small-talk":
+                detail = "Gewoon gesprek · geen bronnen nodig"
+            elif result.get("processing") == "verified-public-sources":
                 detail = "Live controle niet volledig bevestigd" if result.get("live_source_status") == "failed" else "Officiële bronpassages gecontroleerd"
             else:
                 detail = "Publieke FAQ-kennis · verwerkt via Gemma"

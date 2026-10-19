@@ -167,10 +167,44 @@ async function main() {
     assert.equal(requests.at(-1).body.get("file").name, "question.mp4")
     assert.equal(document.querySelector(".ea-input").value, "Wat kost stroom vandaag?", "Transcript is a draft, not sent")
     assert.equal(tracksStopped, 1, "Microphone is released after recording")
-    await act(async () => {
+    const clearInput = () => act(async () => {
         Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(document.querySelector(".ea-input"), "")
         document.querySelector(".ea-input").dispatchEvent(new window.Event("input", { bubbles: true }))
     })
+    await clearInput()
+
+    // Chrome's own speech service fails (it sends audio to Google): Karen records instead
+    // of showing an error.
+    window.SpeechRecognition = savedRecognition
+    responses.push({ text: "Hoe hoog is mijn voorschot?" })
+    await act(async () => mic().click())
+    await act(async () => recognizer.onerror({ error: "network" }))
+    assert.ok(![...document.querySelectorAll('[role="alert"]')].some(a => /niet bereikbaar/.test(a.textContent)), "A failing speech service is not shown as an error")
+    await act(async () => recognizer.onend?.())
+    await act(async () => {})
+    assert.equal(mic().getAttribute("data-listening"), "true", "Karen records after the speech service failed")
+    await act(async () => mic().click())
+    await act(async () => {})
+    assert.match(requests.at(-1).url, /\/api\/transcribe$/)
+    assert.equal(document.querySelector(".ea-input").value, "Hoe hoog is mijn voorschot?")
+    await clearInput()
+
+    // Chrome on iPhone exposes the API but iOS blocks it there: record straight away.
+    recognizer = undefined
+    globalThis.testUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/130.0 Mobile/15E148"
+    responses.push({ text: "Wat is het capaciteitstarief?" })
+    await act(async () => mic().click())
+    await act(async () => {})
+    assert.equal(recognizer, undefined, "No doomed recognition attempt in Chrome on iPhone")
+    assert.equal(mic().getAttribute("data-listening"), "true")
+    await act(async () => mic().click())
+    await act(async () => {})
+    assert.match(requests.at(-1).url, /\/api\/transcribe$/)
+    assert.equal(document.querySelector(".ea-input").value, "Wat is het capaciteitstarief?")
+    await clearInput()
+    globalThis.testUserAgent = undefined
+    delete window.SpeechRecognition
+
     globalThis.testMediaDevices = undefined
     globalThis.MediaRecorder = undefined
     globalThis.testUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/130.0 Mobile/15E148"

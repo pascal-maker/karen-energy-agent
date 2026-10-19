@@ -135,9 +135,13 @@ const css = `
   }
 `
 
+function isIosOtherBrowser(userAgent: string): boolean {
+    return /iPhone|iPad|iPod/.test(userAgent) && /CriOS|FxiOS|EdgiOS|GSA\/|FBAN|FBAV|Instagram|WhatsApp/.test(userAgent)
+}
+
 // Where the browser's speech recognition is missing or blocked, say why and what to do.
 function voiceUnsupportedMessage(userAgent: string): string {
-    if (/iPhone|iPad|iPod/.test(userAgent) && /CriOS|FxiOS|EdgiOS|GSA\/|FBAN|FBAV|Instagram|WhatsApp/.test(userAgent)) {
+    if (isIosOtherBrowser(userAgent)) {
         return "Spraakherkenning werkt op iPhone en iPad alleen in Safari. Open deze pagina in Safari, of typ je vraag hieronder."
     }
     return "Deze browser heeft geen spraakherkenning (bijvoorbeeld Firefox of Brave). Gebruik Chrome, Edge of Safari, of typ je vraag hieronder."
@@ -374,6 +378,8 @@ export default function EnergyAgentConversation({
                     ? "Vergelijking actief · Karen vraagt ontbrekende gegevens"
                     : data.processing === "local-only"
                     ? "Antwoord uit PDF-passage · op Karen’s backend verwerkt"
+                    : data.processing === "small-talk"
+                    ? "Antwoord klaar"
                     : data.live_source_status === "failed"
                     ? "Antwoord klaar · live controle niet volledig bevestigd"
                         : data.sources?.length ? "Antwoord klaar · bewijs bijgevoegd" : "Antwoord klaar · geen bronfragment gevonden")
@@ -405,10 +411,13 @@ export default function EnergyAgentConversation({
             setVoiceError("Spraak werkt alleen op een beveiligde (https) pagina. Typ je vraag hieronder.")
             return
         }
-        if (!SpeechRecognitionCtor) {
-            // No built-in recognition (e.g. Chrome or the Google app on iPhone, Firefox):
+        const canRecord = Boolean(apiEndpoint.trim() && navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined")
+        // iOS only lets Safari use speech recognition; Chrome and other iPhone browsers
+        // expose the API but every attempt fails, so record from the start there.
+        if (!SpeechRecognitionCtor || (canRecord && isIosOtherBrowser(navigator.userAgent))) {
+            // No usable built-in recognition (e.g. Chrome or the Google app on iPhone, Firefox):
             // record a short clip and let Karen's backend transcribe it instead.
-            if (apiEndpoint.trim() && navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined") {
+            if (canRecord) {
                 void startRecording()
             } else {
                 setVoiceError(voiceUnsupportedMessage(navigator.userAgent))
@@ -421,6 +430,7 @@ export default function EnergyAgentConversation({
         nextRecognition.interimResults = false
         nextRecognition.continuous = false
         let hasTranscript = false
+        let recordInstead = false
         nextRecognition.onresult = (event) => {
             const transcript = event.results[0]?.[0]?.transcript?.trim()
             if (!transcript) {
@@ -447,6 +457,13 @@ export default function EnergyAgentConversation({
             setListening(false)
             if (voiceTimeout.current !== null) window.clearTimeout(voiceTimeout.current)
             voiceTimeout.current = null
+            // The browser's speech service itself failed (Chrome sends audio to Google,
+            // which can be unreachable): record and transcribe on Karen's backend instead.
+            if (canRecord && ["network", "service-not-allowed", "language-not-supported"].includes(event.error || "")) {
+                recordInstead = true
+                setStatus("De spraakdienst van je browser werkt niet · Karen neemt zelf op…")
+                return
+            }
             const messages: Record<string, string> = {
                 "no-speech": "Geen spraak ontvangen. Spreek meteen na het indrukken van de microfoon.",
                 "not-allowed": microphoneDeniedMessage(),
@@ -463,6 +480,8 @@ export default function EnergyAgentConversation({
             if (voiceTimeout.current !== null) window.clearTimeout(voiceTimeout.current)
             voiceTimeout.current = null
             setRecognition(null)
+            // Start only after recognition has fully ended, so its cleanup can't stop the recording.
+            if (recordInstead) void startRecording()
         }
         try {
             setRecognition(nextRecognition)

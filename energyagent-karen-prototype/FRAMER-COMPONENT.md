@@ -1,5 +1,22 @@
 # Framer Code Component
 
+## Small talk, and voice in Chrome — 19 October 2026
+
+**Small talk.** "Hallo", "hoe gaat het ermee?", "dankjewel" or "wie ben jij?"
+used to get "Ik vond hiervoor geen passende bron". Karen now chats back briefly
+through Gemma with a separate instruction that allows no energy facts, and falls
+back to a fixed Dutch reply when Gemma is unavailable. Questions outside energy
+that find no source get a short note on what Karen helps with. A greeting
+followed by a real question ("hoi, waarom is mijn voorschot hoger?") still goes
+through the normal source path. Replies carry `processing: "small-talk"`.
+
+**Voice in Chrome.** Chrome on iPhone exposes the speech API, but iOS lets only
+Safari use it, so every attempt failed; Karen now records there straight away.
+On desktop and Android, Chrome sends audio to Google's speech service; when that
+fails (`network`, `service-not-allowed`, `language-not-supported`) Karen now
+switches to recording and `/api/transcribe` instead of showing an error. A clip
+without speech no longer comes back as the transcription prompt.
+
 ## Voice on every phone, and the desktop width — 19 October 2026
 
 **Voice fallback.** Browsers without built-in speech recognition (Chrome and the
