@@ -55,6 +55,7 @@ globalThis.fetch = async (url, options) => {
     if (options.method === "DELETE") return { ok: true, json: async () => ({ deleted: true }) }
     assert.ok(responses.length, "Unexpected request")
     const reply = responses.shift()
+    if (typeof reply.blob === "function") return { ok: true, blob: reply.blob }
     return { ok: true, json: async () => reply }
 }
 const token = "structured-comparison-session"
@@ -129,6 +130,20 @@ async function main() {
     await act(async () => recognizer.onerror({ error: "not-allowed" }))
     assert.match(document.querySelector('[role="alert"]').textContent, /Microfoontoegang is geweigerd|ingesloten venster/)
     await act(async () => recognizer.onend?.())
+
+    // Petra speaks automatically only after a spoken question; a typed one shows a button.
+    const petraCalls = () => requests.filter(r => r.url.endsWith("/api/petra-speech")).length
+    const petraBefore = petraCalls()
+    responses.push({ answer: "Getypt antwoord", comparison_session_id: null, petra_speech_token: "typed-token" })
+    await typed("Wat is het capaciteitstarief?")
+    assert.equal(petraCalls(), petraBefore, "Typed question: no automatic voice")
+    assert.ok([...document.querySelectorAll("button")].some(b => b.textContent === "Beluister Karen"), "Typed question offers the button")
+    responses.push({ answer: "Gesproken antwoord", comparison_session_id: null, petra_speech_token: "voice-token" })
+    responses.push({ blob: async () => new window.Blob(["RIFF"], { type: "audio/wav" }) })
+    await voice("Wat is het sociaal tarief?")
+    await act(async () => {})
+    assert.equal(petraCalls(), petraBefore + 1, "Spoken question: answer is read aloud")
+    assert.deepEqual(requests.at(-1).body, { token: "voice-token" })
 
     // No built-in speech recognition (e.g. Chrome on iPhone): record a clip, the backend
     // transcribes it, and the text lands in the input as a draft to check first.
