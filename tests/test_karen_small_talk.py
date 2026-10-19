@@ -94,4 +94,4 @@ async def test_energy_question_without_sources_still_says_so(monkeypatch):
     monkeypatch.setattr(gemma_answer, "_generate", lambda *_: pytest.fail("No sources means no generation"))
     chunks = [KnowledgeChunk(page=1, text="Iets over isolatiepremies.", urls=(), source="faq.pdf")]
     result = await gemma_answer.answer_energy_question("Welke premie krijg ik voor een warmtepomp in Wallonië?", chunks)
-    assert result["answer"].startswith("Ik vond hiervoor geen passende bron")
+    assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["nl"]
