@@ -62,6 +62,7 @@ from luminus_harness.comparison_session import (
 )
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
+from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.jev import route_question
 from luminus_harness.market_prices import answer_market_price_question
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
@@ -673,6 +674,12 @@ class PublicWebAnswerRequest(BaseModel):
     question: str = Field(min_length=2, max_length=300)
 
 
+class FeedbackRequest(BaseModel):
+    feedback_token: str = Field(min_length=40, max_length=16384)
+    rating: str = Field(pattern="^(up|down)$")
+    comment: str | None = Field(default=None, max_length=2000)
+
+
 class PetraSpeechRequest(BaseModel):
     token: str = Field(min_length=40, max_length=8192)
 
@@ -835,6 +842,14 @@ async def api_delete_comparison_session(comparison_session_id: str, request: Req
 async def api_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
     """Route public comparisons before Gemma; never send PDF sessions externally."""
     _allow_api_request(request)
+    reply = await _answer(body)
+    # Only public answers can be rated; PDF and offer-comparison replies carry personal inputs.
+    if not body.session_id and reply.get("processing") != "local-only" and not reply.get("comparison_status"):
+        reply["feedback_token"] = sign_feedback(body.question.strip(), reply.get("answer", ""), str(reply.get("processing", "")))
+    return reply
+
+
+async def _answer(body: AnswerRequest) -> dict[str, Any]:
     if body.session_id:
         if body.comparison_session_id or is_offer_comparison_question(body.question):
             _comparison_sessions.discard(body.comparison_session_id)
@@ -880,6 +895,18 @@ async def _hosted_answer(question: str, comparison_session_id: str | None) -> di
         })
     except GemmaAPIError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@api_app.post("/api/feedback")
+async def api_feedback(body: FeedbackRequest, request: Request) -> dict[str, bool]:
+    """Store a 👍/👎 on a recent public answer, identified by its signed feedback token."""
+    _allow_api_request(request)
+    try:
+        record = build_record(body.feedback_token, body.rating, body.comment)
+    except FeedbackError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    await asyncio.to_thread(store_feedback, record)
+    return {"stored": True}
 
 
 @api_app.post("/api/public-web-answer")
