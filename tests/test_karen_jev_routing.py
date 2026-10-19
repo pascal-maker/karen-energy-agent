@@ -127,6 +127,15 @@ def test_jev_off_topic_route_skips_the_source_search(api, monkeypatch):
     api[2].assert_not_awaited()
 
 
+@pytest.mark.parametrize("question", [
+    "Why is my advance payment different from my annual bill?",
+    "Pourquoi mon acompte est-il différent de ma facture annuelle ?",
+])
+def test_bill_questions_jev_calls_small_talk_still_get_sources(api, monkeypatch, question):
+    route_to(monkeypatch, "small_talk")
+    assert ask(api, question)["answer"] == "Bestaand antwoord"
+
+
 def test_jev_energy_route_keeps_price_words_on_the_source_path(api, monkeypatch):
     route_to(monkeypatch, "energy_other")
     load = AsyncMock()

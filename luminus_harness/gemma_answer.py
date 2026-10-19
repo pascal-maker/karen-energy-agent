@@ -126,7 +126,11 @@ _ENERGY_TOPIC = re.compile(
     r"verwarmingsketel|cv.ketel|verwarming|warmtepomp\w*|zonnepanel\w*|"
     r"energiefactuur|voorschot|jaarafrekening|kilowattuur|kwh|tarief|"
     r"netbeheerder|capaciteitstarief|nettarief|energietarief|\w*premie\w*|isolatie|"
-    r"verbruik|creg|brugel|cwape|v.test|brusim)\b",
+    r"verbruik|creg|brugel|cwape|v.test|brusim|"
+    # English and French: a non-Dutch energy question must not be answered as off-topic.
+    r"bills?|invoices?|advance payments?|boilers?|meter readings?|smart meters?|tariffs?|"
+    r"énergie\w*|électricité|gaz|chauffage|chaudières?|factures?|acomptes?|consommation|compteurs?|pompe à chaleur|"
+    r"panneaux solaires)\b",
     re.IGNORECASE,
 )
 _HEATING_TOPIC = re.compile(r"\b(?:gasketel|verwarmingsketel|cv.ketel|verwarming|warmtepomp)\b", re.IGNORECASE)
@@ -163,6 +167,10 @@ def _needs_public_search(question: str, selected: list[KnowledgeChunk]) -> bool:
         not _strong_local_match(question, selected)
         or bool(_LIVE_REQUEST.search(question)) or bool(_HEATING_TOPIC.search(question))
     )
+
+
+def mentions_energy(question: str) -> bool:
+    return bool(_ENERGY_TOPIC.search(question))
 
 
 def small_talk_kind(question: str) -> str | None:
