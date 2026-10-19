@@ -120,10 +120,10 @@ async def search_energy_sources(
 def is_electricity_price_question(question: str) -> bool:
     """Recognize electricity-price requests that must get a live source lookup."""
     # Check if the question contains words related to electricity (e.g. stroom, kwh)
-    has_electricity = re.search(r"\b(elektriciteit|elektriciteitsprijs|stroom|stroomprijs|kwh)\b", question, re.I)
+    has_electricity = re.search(r"\b(elektriciteit\w*|stroom\w*|kwh|electricity)\b", question, re.I)
     # Check if the question contains words related to price/tariffs
     has_price = re.search(
-        r"\b(elektriciteitsprijs|stroomprijs|kwh[- ]?(?:prijs|tarief)|prijs|prijzen|tarief|tarieven|kost|kosten|cent|€/kwh)\b",
+        r"\b(\w*prijs|\w*prijzen|kwh[- ]?(?:prijs|tarief)|tarief|tarieven|kost|kosten|cent|€/kwh|price|prices)\b",
         question,
         re.I,
     )

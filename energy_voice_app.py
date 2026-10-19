@@ -54,6 +54,7 @@ from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uplo
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from luminus_harness.comparison_session import ComparisonSessions, is_offer_comparison_question, pdf_comparison_reply
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
+from luminus_harness.market_prices import answer_market_price_question
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -834,6 +835,11 @@ async def api_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="Deze PDF-sessie is verlopen. Upload de PDF opnieuw.")
         result = answer_uploaded_pdf_question(body.question.strip(), session["chunks"])
         return {**result, "processing": "local-only", "filename": session["filename"]}
+    if body.comparison_session_id not in _comparison_sessions.sessions:
+        # A plain price question gets today's prices; the comparison form is only offered.
+        prices = await answer_market_price_question(body.question.strip())
+        if prices is not None:
+            return _with_petra_speech({**prices, "comparison_session_id": None})
     comparison = await _comparison_sessions.answer(body.question.strip(), body.comparison_session_id)
     if comparison is not None:
         return _with_petra_speech(comparison)
