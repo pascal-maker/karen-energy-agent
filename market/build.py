@@ -22,6 +22,8 @@ from . import forecast as forecast_module
 from . import spot
 
 HISTORY_START = date(2019, 1, 1)
+# Supplier tariff-card prices, updated through reviewed pull requests on main.
+CONTRACTS_FILE = Path(__file__).with_name("tariffs-phase2.json")
 SCHEMA_VERSION = 1
 
 
@@ -46,7 +48,8 @@ def _section(name: str, build: Callable[[], dict], previous: dict, errors: list[
     return {**section, "stale": False, "updated_at": now}
 
 
-def build(*, today: date, previous: dict, fetcher: spot.Fetcher = spot._get_json, now: str | None = None) -> dict:
+def build(*, today: date, previous: dict, fetcher: spot.Fetcher = spot._get_json, now: str | None = None,
+          contracts_file: Path | None = CONTRACTS_FILE) -> dict:
     now = now or datetime.now(timezone.utc).isoformat(timespec="seconds")
     errors: list[str] = []
 
@@ -85,8 +88,14 @@ def build(*, today: date, previous: dict, fetcher: spot.Fetcher = spot._get_json
             history_months, current=current, current_fraction=today.day / days_in_month)},
         previous, errors, now,
     )
-    # Phase 2 (monthly reviewed tariff cards) fills this; keep whatever was merged.
-    sections["contracts"] = previous.get("contracts")
+    # The reviewed file on main is the source; keep the published copy if it is missing or unreadable.
+    contracts = _load(contracts_file) if contracts_file else {}
+    if contracts.get("suppliers"):
+        sections["contracts"] = contracts
+    else:
+        if contracts_file and contracts_file.exists():
+            errors.append(f"contracts: {contracts_file.name} has no suppliers or is not valid JSON")
+        sections["contracts"] = previous.get("contracts")
 
     return {
         "schema_version": SCHEMA_VERSION,

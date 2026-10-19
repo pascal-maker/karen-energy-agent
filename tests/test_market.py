@@ -239,3 +239,28 @@ def test_build_recovers_after_a_run_that_stored_empty_sections() -> None:
     assert result["errors"] == []
     assert next(iter(result["history"]["months"])) == "2019-01"
     assert result["forecast"]["months"]
+
+
+def test_build_publishes_contracts_from_the_reviewed_file(tmp_path) -> None:
+    import json as _json
+    source = tmp_path / "tariffs.json"
+    source.write_text(_json.dumps({"as_of": "2026-10-19", "suppliers": [{"name": "Luminus", "price_per_kwh_eur": 0.19}]}))
+    result = build.build(today=date(2026, 10, 18), previous={"contracts": {"as_of": "old"}},
+                         fetcher=fake_fetcher(), contracts_file=source)
+    assert result["contracts"]["as_of"] == "2026-10-19"
+
+    source.write_text("{not json")
+    kept = build.build(today=date(2026, 10, 18), previous={"contracts": {"as_of": "old"}},
+                       fetcher=fake_fetcher(), contracts_file=source)
+    assert kept["contracts"] == {"as_of": "old"}
+    assert any(e.startswith("contracts:") for e in kept["errors"])
+
+
+def test_repository_tariff_file_is_valid() -> None:
+    import json as _json
+    data = _json.loads(build.CONTRACTS_FILE.read_text(encoding="utf-8"))
+    priced = [s for s in data["suppliers"] if s["status"] == "verified" and s["price_per_kwh_eur"]]
+    assert priced, "at least one verified supplier price"
+    for supplier in priced:
+        assert 0.05 < supplier["price_per_kwh_eur"] < 0.6, supplier["name"]
+        assert supplier["source_url"].startswith("https://"), supplier["name"]

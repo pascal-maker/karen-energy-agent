@@ -135,6 +135,27 @@ const css = `
   }
 `
 
+// Where the browser's speech recognition is missing or blocked, say why and what to do.
+function voiceUnsupportedMessage(userAgent: string): string {
+    if (/iPhone|iPad|iPod/.test(userAgent) && /CriOS|FxiOS|EdgiOS|GSA\/|FBAN|FBAV|Instagram|WhatsApp/.test(userAgent)) {
+        return "Spraakherkenning werkt op iPhone en iPad alleen in Safari. Open deze pagina in Safari, of typ je vraag hieronder."
+    }
+    return "Deze browser heeft geen spraakherkenning (bijvoorbeeld Firefox of Brave). Gebruik Chrome, Edge of Safari, of typ je vraag hieronder."
+}
+
+function microphoneDeniedMessage(): string {
+    let framed = false
+    try {
+        framed = window.self !== window.top
+    } catch {
+        framed = true
+    }
+    if (framed) {
+        return "De microfoon is geblokkeerd omdat Karen hier in een ingesloten venster draait (zoals de Framer-preview). Open de gepubliceerde pagina rechtstreeks, of typ je vraag hieronder."
+    }
+    return "Microfoontoegang is geweigerd voor deze site. Tik op het slot- of instellingenicoon naast het adres, zet Microfoon op Toestaan en probeer opnieuw."
+}
+
 export default function EnergyAgentConversation({
     apiEndpoint = "",
     sampleQuestion = DEMO_QUESTION,
@@ -360,8 +381,12 @@ export default function EnergyAgentConversation({
         }
         const speechWindow = window as SpeechWindow
         const SpeechRecognitionCtor = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
+        if (window.isSecureContext === false) {
+            setVoiceError("Spraak werkt alleen op een beveiligde (https) pagina. Typ je vraag hieronder.")
+            return
+        }
         if (!SpeechRecognitionCtor) {
-            setVoiceError("Spraakherkenning is niet beschikbaar in deze browser. Typ je vraag hieronder.")
+            setVoiceError(voiceUnsupportedMessage(navigator.userAgent))
             return
         }
         clearPetra()
@@ -398,7 +423,7 @@ export default function EnergyAgentConversation({
             voiceTimeout.current = null
             const messages: Record<string, string> = {
                 "no-speech": "Geen spraak ontvangen. Spreek meteen na het indrukken van de microfoon.",
-                "not-allowed": "Microfoontoegang geweigerd. Sta microfoontoegang toe voor Framer in je browserinstellingen.",
+                "not-allowed": microphoneDeniedMessage(),
                 "service-not-allowed": "De browser blokkeert zijn spraakherkenningsdienst voor deze pagina.",
                 "audio-capture": "De browser vindt geen werkende microfoon. Controleer je invoerapparaat.",
                 network: "De browser-spraakdienst is niet bereikbaar. Controleer je verbinding en probeer opnieuw.",

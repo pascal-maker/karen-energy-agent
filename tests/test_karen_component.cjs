@@ -122,6 +122,12 @@ async function main() {
     await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent === "Verwijder").click())
     assert.equal(mic().disabled, false)
 
+    // Voice blocked: a denied microphone inside a frame names the frame, not a generic error.
+    await act(async () => mic().click())
+    await act(async () => recognizer.onerror({ error: "not-allowed" }))
+    assert.match(document.querySelector('[role="alert"]').textContent, /Microfoontoegang is geweigerd|ingesloten venster/)
+    await act(async () => recognizer.onend?.())
+
     // Prijzen tab: fetches market.json once, shows today's stats, keeps the chat state.
     const tab = name => [...document.querySelectorAll('[role="tab"]')].find(button => button.textContent === name)
     responses.push({ answer: "Antwoord voor de tabwissel", comparison_session_id: null })
@@ -142,6 +148,20 @@ async function main() {
     assert.match(document.querySelector(".em").textContent, /gelijk aan vorige maand/, "Shows the naive baseline next to the model")
     await act(async () => tab("Historiek").click())
     assert.match(document.querySelector(".em").textContent, /sinds 2019/)
+    // Contracten: only suppliers with a verified kWh price on their tariff card are listed.
+    await act(async () => tab("Contracten").click())
+    const rows = [...document.querySelectorAll(".em-bar-head > span:first-child > strong")].map(node => node.textContent)
+    assert.deepEqual(rows.sort(), ["Aspiravi", "Eneco", "Frank Energie", "Luminus", "OCTA+", "TotalEnergies"])
+    for (const missing of ["Engie", "Mega", "Bolt", "Elegant", "Energyvision"]) {
+        assert.ok(!document.querySelector(".em").textContent.includes(missing), `${missing} has no verified price and must not be listed`)
+    }
+    assert.match(document.querySelector(".em-bar-row").textContent, /Luminus[\s\S]*697/, "Lowest annual amount at 3500 kWh first, even with a higher kWh price than Frank Energie")
+    await act(async () => {
+        const input = document.querySelector('[aria-label="Jaarverbruik in kWh"]')
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, "10000")
+        input.dispatchEvent(new window.Event("input", { bubbles: true }))
+    })
+    assert.match(document.querySelector(".em-bar-row").textContent, /Frank Energie/, "At 10,000 kWh the lower kWh price outweighs the higher fixed fee")
     await act(async () => tab("Chat").click())
     assert.equal(document.querySelector(".ea-answer").textContent, answerBefore, "Switching tabs keeps the conversation")
 
