@@ -35,6 +35,12 @@ sample customer accounts or simulated bills.
   Karen's word lists route the message. Run
   `python scripts/check_jev_routing.py` with the key set to check Jev on real
   questions before switching it on.
+- `HF_TOKEN` (write access) plus the variable `KAREN_FEEDBACK_DATASET`, for
+  example `pascal-maker/karen-feedback` (optional), store the 👍/👎 ratings
+  under public answers in that private dataset; it is created on first use.
+  Only public answers can be rated, through a signed token, so PDF and
+  comparison answers are never stored. `python scripts/feedback_report.py`
+  lists the 👎 answers to turn into tests.
 
 The public API is rate-limited to 20 requests per client IP per minute, with a
 bounded in-process client map. The public FAQ answer endpoint uses the hosted

@@ -19,7 +19,7 @@ type SpeechRecognizer = {
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognizer; webkitSpeechRecognition?: new () => SpeechRecognizer }
 
 type Source = { title: string; detail?: string; url?: string; excerpt?: string }
-type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_session_id?: string | null; comparison_status?: string }
+type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_session_id?: string | null; comparison_status?: string }
 
 type Props = {
     apiEndpoint: string
@@ -104,6 +104,10 @@ const css = `
   .ea-audio { margin-top:10px; width:100%; height:34px; }
   .ea-voice-play { margin-top:10px; padding:8px 12px; border:1px solid #c9d9c8; border-radius:10px; color:#234f38; background:#f4f8f2; font:inherit; font-size:12px; cursor:pointer; }
   .ea-voice-play:disabled { opacity:.6; cursor:wait; }
+  .ea-feedback { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; color:#607269; font-size:12px; }
+  .ea-feedback button { padding:5px 10px; border:1px solid #d7e2d5; border-radius:10px; background:#fff; font:inherit; cursor:pointer; }
+  .ea-feedback button:disabled { opacity:.6; cursor:wait; }
+  .ea-feedback textarea { flex-basis:100%; min-height:54px; padding:8px 10px; border:1px solid #d7e2d5; border-radius:10px; font:inherit; font-size:12px; resize:vertical; }
   /* Sized by the space Karen is given, not the screen: a Framer frame or page column
      narrower than 680px gets the phone layout even when the viewport is wider. */
   @container (max-width:680px) {
@@ -199,6 +203,9 @@ export default function EnergyAgentConversation({
     const recorder = useRef<MediaRecorder | null>(null)
     const recordingStream = useRef<MediaStream | null>(null)
     const [transcribing, setTranscribing] = useState(false)
+    const [feedback, setFeedback] = useState<"idle" | "sending" | "sent" | "failed">("idle")
+    const [feedbackOpen, setFeedbackOpen] = useState(false)
+    const [feedbackComment, setFeedbackComment] = useState("")
     const petraAbort = useRef<AbortController | null>(null)
     const petraPlayer = useRef<HTMLAudioElement | null>(null)
     const petraAudioUrlRef = useRef("")
@@ -213,7 +220,7 @@ export default function EnergyAgentConversation({
         if (petraAudioUrlRef.current) URL.revokeObjectURL(petraAudioUrlRef.current)
     }, [])
 
-    function endpointFor(path: "upload" | "session" | "comparison-session" | "petra-speech" | "transcribe"): string {
+    function endpointFor(path: "upload" | "session" | "comparison-session" | "petra-speech" | "transcribe" | "feedback"): string {
         const url = new URL(apiEndpoint.trim())
         url.pathname = url.pathname.replace(/\/api\/answer\/?$/, `/api/${path}`)
         if (!url.pathname.endsWith(`/api/${path}`)) {
@@ -353,6 +360,9 @@ export default function EnergyAgentConversation({
         setQuestion("")
         setVoiceDraft(false)
         setReply(null)
+        setFeedback("idle")
+        setFeedbackOpen(false)
+        setFeedbackComment("")
         setBusy(true)
         setStatus("Karen haalt relevante bronpassages op…")
         try {
@@ -395,6 +405,21 @@ export default function EnergyAgentConversation({
             setAnswerError(error instanceof Error ? error.message : "Karen kon de vraag niet beantwoorden.")
         } finally {
             setBusy(false)
+        }
+    }
+
+    async function sendFeedback(rating: "up" | "down", comment = "") {
+        if (!reply?.feedback_token) return
+        setFeedback("sending")
+        try {
+            const response = await fetch(endpointFor("feedback"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ feedback_token: reply.feedback_token, rating, ...(comment.trim() ? { comment: comment.trim() } : {}) }),
+            })
+            setFeedback(response.ok ? "sent" : "failed")
+        } catch {
+            setFeedback("failed")
         }
     }
 
@@ -594,7 +619,19 @@ export default function EnergyAgentConversation({
                 <div className="ea-thread" aria-live="polite">
                     {asked && <div className="ea-question">{asked}</div>}
                     {(busy || uploading || listening || transcribing) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
-                    {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!)}>Beluister Karen</button>)}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{(sources.length > 0 || Boolean(reply.suggested_sources?.length)) && <a className="ea-jump" href="#ea-sources">Bekijk de bronnen ↓</a>}</>}
+                    {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!)}>Beluister Karen</button>)}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
+                        ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>
+                        : <div className="ea-feedback">
+                            {feedbackOpen ? <>
+                                <textarea aria-label="Wat ging er mis?" placeholder="Wat ging er mis? (optioneel, geen persoonlijke gegevens)" value={feedbackComment} maxLength={500} onChange={(event) => setFeedbackComment(event.target.value)} />
+                                <button disabled={feedback === "sending"} onClick={() => void sendFeedback("down", feedbackComment)}>Verstuur feedback</button>
+                            </> : <>
+                                <span>Was dit nuttig?</span>
+                                <button aria-label="Nuttig antwoord" disabled={feedback === "sending"} onClick={() => void sendFeedback("up")}>👍</button>
+                                <button aria-label="Niet nuttig" disabled={feedback === "sending"} onClick={() => setFeedbackOpen(true)}>👎</button>
+                            </>}
+                            {feedback === "failed" && <span role="status">Feedback versturen lukte niet. Probeer het later opnieuw.</span>}
+                        </div>)}{(sources.length > 0 || Boolean(reply.suggested_sources?.length)) && <a className="ea-jump" href="#ea-sources">Bekijk de bronnen ↓</a>}</>}
                 </div>
                 {!asked && <div className="ea-chips">
                     <button className="ea-chip" onClick={() => void ask(sampleQuestion)}>{sampleQuestion}</button>
