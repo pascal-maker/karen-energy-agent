@@ -50,6 +50,7 @@ from luminus_harness.gemma_answer import (
     GemmaAPIError,
     answer_energy_question,
     answer_small_talk,
+    mentions_energy,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
@@ -875,6 +876,9 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
             prices = await answer_market_price_question(question, recognised=route == "price")
             if prices is not None:
                 return _with_petra_speech({**prices, "comparison_session_id": None})
+        if route in ("small_talk", "off_topic") and mentions_energy(question):
+            # Jev sometimes files English or French bill questions as small talk; energy words win.
+            route = "energy_other"
         if route in ("small_talk", "off_topic"):
             return _with_petra_speech({**await answer_small_talk(question, route), "comparison_session_id": None})
         if route == "energy_other":
