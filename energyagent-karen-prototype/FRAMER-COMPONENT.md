@@ -1,5 +1,27 @@
 # Framer Code Component
 
+## Voice on every phone, and the desktop width — 19 October 2026
+
+**Voice fallback.** Browsers without built-in speech recognition (Chrome and the
+Google app on iPhone, Firefox, in-app browsers) now record a short clip, at most
+15 seconds, and post it to the backend's new `POST /api/transcribe`. The backend
+transcribes it in Dutch with OpenAI (`gpt-4o-mini-transcribe`, override with
+`KAREN_STT_MODEL`), keeps nothing, and returns only the text. As with built-in
+recognition, the text lands in the input field and is sent only when the visitor
+confirms. The backend must be redeployed for this
+(`scripts/upload_energy_voice_space.py` now includes `luminus_harness/transcribe.py`);
+until then those browsers show "Spraak omzetten is nu niet beschikbaar".
+
+**Desktop width.** On ask-karen.framer.website (19 October) Karen rendered as a
+narrow column of about 420px on a wide desktop screen. Karen then uses its phone
+layout and the Contracten table has no room. On the **Desktop** breakpoint set
+the Karen component to **Width: Fill** with a max width of about 1200px, centred,
+and **Height: Fit** (or Fill). Keep **Width: Fill** on the Phone breakpoint too.
+
+The live site was also still running a different, hand-edited Contracten view
+that lists unverified suppliers. Replace both code files with this repository's
+versions; that view lists only the suppliers with a verified price.
+
 ## Prijzen tab and full-screen mobile layout — 18 October 2026
 
 Karen now has **Chat | Prijzen** tabs. The Prijzen tab is a second code file,

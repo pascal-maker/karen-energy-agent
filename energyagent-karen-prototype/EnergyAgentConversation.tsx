@@ -182,17 +182,24 @@ export default function EnergyAgentConversation({
     const [petraAudioUrl, setPetraAudioUrl] = useState("")
     const [recognition, setRecognition] = useState<SpeechRecognizer | null>(null)
     const voiceTimeout = useRef<number | null>(null)
+    const recorder = useRef<MediaRecorder | null>(null)
+    const recordingStream = useRef<MediaStream | null>(null)
+    const [transcribing, setTranscribing] = useState(false)
     const petraAbort = useRef<AbortController | null>(null)
     const petraPlayer = useRef<HTMLAudioElement | null>(null)
     const petraAudioUrlRef = useRef("")
 
     useEffect(() => () => {
+        // Leaving mid-recording: release the microphone without sending the clip.
+        if (recorder.current) recorder.current.onstop = null
+        if (recorder.current?.state === "recording") recorder.current.stop()
+        recordingStream.current?.getTracks().forEach(track => track.stop())
         petraAbort.current?.abort()
         petraPlayer.current?.pause()
         if (petraAudioUrlRef.current) URL.revokeObjectURL(petraAudioUrlRef.current)
     }, [])
 
-    function endpointFor(path: "upload" | "session" | "comparison-session" | "petra-speech"): string {
+    function endpointFor(path: "upload" | "session" | "comparison-session" | "petra-speech" | "transcribe"): string {
         const url = new URL(apiEndpoint.trim())
         url.pathname = url.pathname.replace(/\/api\/answer\/?$/, `/api/${path}`)
         if (!url.pathname.endsWith(`/api/${path}`)) {
@@ -386,7 +393,13 @@ export default function EnergyAgentConversation({
             return
         }
         if (!SpeechRecognitionCtor) {
-            setVoiceError(voiceUnsupportedMessage(navigator.userAgent))
+            // No built-in recognition (e.g. Chrome or the Google app on iPhone, Firefox):
+            // record a short clip and let Karen's backend transcribe it instead.
+            if (apiEndpoint.trim() && navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined") {
+                void startRecording()
+            } else {
+                setVoiceError(voiceUnsupportedMessage(navigator.userAgent))
+            }
             return
         }
         clearPetra()
@@ -455,7 +468,72 @@ export default function EnergyAgentConversation({
         }
     }
 
+    async function startRecording() {
+        clearPetra()
+        let stream: MediaStream
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        } catch (error) {
+            const name = (error as { name?: string })?.name
+            setVoiceError(name === "NotAllowedError" || name === "SecurityError"
+                ? microphoneDeniedMessage()
+                : "De browser vindt geen werkende microfoon. Controleer je invoerapparaat of typ je vraag hieronder.")
+            return
+        }
+        recordingStream.current = stream
+        const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg"].find(type => MediaRecorder.isTypeSupported?.(type))
+        const nextRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+        const chunks: Blob[] = []
+        nextRecorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
+        nextRecorder.onstop = () => {
+            stream.getTracks().forEach(track => track.stop())
+            recordingStream.current = null
+            recorder.current = null
+            setListening(false)
+            if (voiceTimeout.current !== null) window.clearTimeout(voiceTimeout.current)
+            voiceTimeout.current = null
+            const type = (nextRecorder.mimeType || mimeType || "audio/webm").split(";")[0]
+            void transcribeRecording(new Blob(chunks, { type }))
+        }
+        recorder.current = nextRecorder
+        nextRecorder.start()
+        setListening(true)
+        setStatus("Karen neemt op… Stel je publieke vraag en tik op Stop.")
+        // Keep clips short: the backend accepts about 30 seconds.
+        voiceTimeout.current = window.setTimeout(() => { if (nextRecorder.state === "recording") nextRecorder.stop() }, 15000)
+    }
+
+    async function transcribeRecording(audio: Blob) {
+        if (!audio.size) {
+            setVoiceError("Er werd geen geluid opgenomen. Probeer opnieuw of typ je vraag.")
+            return
+        }
+        setTranscribing(true)
+        setStatus("Karen zet je opname om naar tekst…")
+        try {
+            const form = new FormData()
+            const extension = audio.type.includes("mp4") ? "mp4" : audio.type.includes("ogg") ? "ogg" : "webm"
+            form.append("file", audio, `question.${extension}`)
+            const response = await fetch(endpointFor("transcribe"), { method: "POST", body: form })
+            const payload = await response.json().catch(() => ({}))
+            if (!response.ok || typeof payload.text !== "string" || !payload.text.trim()) {
+                throw new Error(typeof payload.detail === "string" ? payload.detail : "")
+            }
+            setQuestion(payload.text.trim())
+            setVoiceDraft(true)
+            setStatus("Controleer de herkende vraag en druk op verzenden.")
+        } catch (error) {
+            setVoiceError((error as Error).message || "Je opname kon niet worden omgezet naar tekst. Typ je vraag of probeer opnieuw.")
+        } finally {
+            setTranscribing(false)
+        }
+    }
+
     function stopVoice() {
+        if (recorder.current?.state === "recording") {
+            recorder.current.stop()
+            return
+        }
         recognition?.stop()
         setListening(false)
         if (voiceTimeout.current !== null) window.clearTimeout(voiceTimeout.current)
@@ -483,7 +561,7 @@ export default function EnergyAgentConversation({
                 <p className="ea-sub">Vraag naar je factuur, energieverbruik of verwarming. Karen laat zien waarop haar antwoord steunt.</p></>}
                 <div className="ea-thread" aria-live="polite">
                     {asked && <div className="ea-question">{asked}</div>}
-                    {(busy || uploading || listening) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
+                    {(busy || uploading || listening || transcribing) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
                     {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!)}>Beluister Karen</button>)}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{(sources.length > 0 || Boolean(reply.suggested_sources?.length)) && <a className="ea-jump" href="#ea-sources">Bekijk de bronnen ↓</a>}</>}
                 </div>
                 {!asked && <div className="ea-chips">
@@ -491,7 +569,7 @@ export default function EnergyAgentConversation({
                     <button className="ea-chip" onClick={() => setTab("prices")}>Wat kost stroom vandaag? Bekijk de prijzen</button>
                 </div>}
                 <div className="ea-composer">
-                <button className="ea-mic" type="button" data-listening={listening} onClick={() => listening ? stopVoice() : startVoice()} disabled={busy || uploading || Boolean(sessionId)} aria-label={listening ? "Stop luisteren" : "Stel je vraag met je stem"}>
+                <button className="ea-mic" type="button" data-listening={listening} onClick={() => listening ? stopVoice() : startVoice()} disabled={busy || uploading || transcribing || Boolean(sessionId)} aria-label={listening ? "Stop luisteren" : "Stel je vraag met je stem"}>
                     <span aria-hidden="true">{listening ? "■" : "🎙"}</span>{listening ? "Stop luisteren" : "Stel je vraag met je stem"}
                 </button>
                 {voiceError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{voiceError}</p>}
@@ -502,7 +580,7 @@ export default function EnergyAgentConversation({
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
                 </div>
-                <p className="ea-foot">Je browser herkent je gesproken vraag. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Alleen om Karens publieke antwoord uit te spreken gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend.</p>
+                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Alleen om Karens publieke antwoord uit te spreken gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend.</p>
             </section>
             <aside className="ea-rail">
                 <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>
