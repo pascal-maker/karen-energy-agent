@@ -68,3 +68,16 @@ def test_audio_extension_ignores_codec_parameters() -> None:
     assert transcribe.audio_extension("audio/webm;codecs=opus") == "webm"
     assert transcribe.audio_extension("Audio/MP4") == "mp4"
     assert transcribe.audio_extension("video/webm") is None
+
+
+def test_prompt_echo_from_a_silent_clip_is_dropped() -> None:
+    assert transcribe.strip_prompt_echo(transcribe.PROMPT) == ""
+    assert transcribe.strip_prompt_echo("nederlandse belgische energievragen") == ""
+    assert transcribe.strip_prompt_echo(f"{transcribe.PROMPT} Wat kost stroom vandaag?") == "Wat kost stroom vandaag?"
+    assert transcribe.strip_prompt_echo(" Hoeveel kWh verbruik ik? ") == "Hoeveel kWh verbruik ik?"
+
+
+def test_silent_clip_reports_no_question(monkeypatch) -> None:
+    client, _calls = _client(monkeypatch, transcript="")
+    response = client.post("/api/transcribe", files={"file": ("q.webm", b"\x1aE\xdf\xa3audio", "audio/webm")})
+    assert response.status_code == 422

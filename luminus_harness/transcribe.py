@@ -1,11 +1,13 @@
-"""Dutch speech-to-text for browsers without built-in speech recognition.
+"""Dutch speech-to-text for browsers without working built-in speech recognition.
 
-Chrome and the Google app on iPhone, Firefox and in-app browsers have no Web
-Speech API. The Karen component then records a short clip and posts it here;
-the clip is transcribed once and never stored.
+Chrome and the Google app on iPhone, Firefox and in-app browsers have no usable
+Web Speech API, and Chrome's own speech service can be unreachable. The Karen
+component then records a short clip and posts it here; the clip is transcribed
+once and never stored.
 """
 
 import os
+import re
 
 MAX_AUDIO_BYTES = 2 * 1024 * 1024  # ~30 s of compressed speech
 AUDIO_TYPES = {
@@ -41,4 +43,15 @@ def transcribe_dutch(audio: bytes, content_type: str) -> str:
         language="nl",
         prompt=PROMPT,
     )
-    return (result.text or "").strip()
+    return strip_prompt_echo(result.text or "")
+
+
+def strip_prompt_echo(text: str) -> str:
+    """Drop the prompt when the model repeats it for a clip without speech.
+
+    A silent or noisy clip can come back as the prompt itself, which would
+    otherwise land in the input field as if the visitor had said it."""
+    for sentence in (part.strip() for part in PROMPT.split(".")):
+        if sentence:
+            text = re.sub(rf"{re.escape(sentence)}\.?", " ", text, flags=re.IGNORECASE)
+    return " ".join(text.split())
