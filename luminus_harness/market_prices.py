@@ -191,11 +191,6 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         unit = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
         for card in fixed_cards:
             lines.append(f"• {card_label(card)}: {_cents(card['price_per_kwh_eur'] * 100, lang)} {unit}")
-    lines.append({
-        "en": "Want to know what this means for your home? Say \"compare offers\" and I'll ask for your region, postcode and usage.",
-        "fr": "Vous voulez savoir ce que cela représente pour votre logement ? Dites \"comparer les offres\" et je vous "
-              "demanderai votre région, code postal et consommation.",
-    }.get(lang, "Wil je weten wat dat voor jou betekent? Zeg \"vergelijk aanbiedingen\", dan vraag ik je gewest, postcode en verbruik."))
 
     market_source = next(iter(data.get("sources") or []), {})
     sources = [{
