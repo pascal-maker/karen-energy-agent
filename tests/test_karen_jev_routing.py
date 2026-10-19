@@ -139,3 +139,11 @@ def test_without_jev_the_word_lists_still_route(api, monkeypatch):
     monkeypatch.setenv("KAREN_JEV_ROUTING", "0")
     reply = ask(api, "Vergelijk aanbiedingen")
     assert reply["answer"] == comparison.PROMPTS["region"]
+
+
+def test_jev_price_route_still_leaves_gas_to_the_source_path(api, monkeypatch):
+    from tests.test_karen_market_prices import market
+
+    route_to(monkeypatch, "price")
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
+    assert ask(api, "Hoeveel kost aardgas per kWh?")["answer"] == "Bestaand antwoord"

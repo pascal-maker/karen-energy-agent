@@ -29,9 +29,18 @@ DEFAULT_MIN_CONFIDENCE = 0.6
 TIMEOUT_SECONDS = 4.0
 
 ROUTES = {
-    "price": "Asks for current electricity or energy prices or tariffs in general, without giving personal household details.",
-    "compare": "Wants offers or suppliers compared for their own home, or gives their region, postcode or yearly kWh usage.",
-    "energy_other": "Any other energy question: invoices, advance payments, heating, boilers, gas, network costs, premiums, rules, contracts or cancelling.",
+    "price": (
+        "Asks what electricity costs right now in general: today's market price or the current or best supplier "
+        "prices per kWh, without giving any personal household details."
+    ),
+    "compare": (
+        "Explicitly asks to compare offers or switch supplier for their own home, or gives their region, postcode "
+        "or yearly kWh usage."
+    ),
+    "energy_other": (
+        "Any other energy question, including gas prices, network costs, the capacity tariff (capaciteitstarief), "
+        "social tariffs, invoices, advance payments, heating, boilers, premiums, rules, contracts or cancelling."
+    ),
     "small_talk": "Only a greeting, thanks, goodbye, how-are-you, or a question about who Karen is.",
     "off_topic": "Not about energy at all.",
 }

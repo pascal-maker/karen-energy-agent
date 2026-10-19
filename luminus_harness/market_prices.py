@@ -187,9 +187,13 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
 async def answer_market_price_question(question: str, *, recognised: bool = False) -> dict[str, Any] | None:
     """None when this isn't a general price question or market.json is unavailable.
 
-    `recognised` skips the word-list check when Jev already routed the question here.
+    `recognised` skips the price-word check when Jev already routed the question here; gas,
+    network-cost and household-detail questions still go elsewhere, since market.json can't answer them.
     """
-    if not recognised and not is_market_price_question(question):
+    if recognised:
+        if _OTHER_SUBJECT.search(question) or _HOUSEHOLD_INPUT.search(question):
+            return None
+    elif not is_market_price_question(question):
         return None
     data = await load_market_data()
     if data is None:
