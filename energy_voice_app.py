@@ -54,6 +54,7 @@ from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uplo
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from luminus_harness.comparison_session import ComparisonSessions, is_offer_comparison_question, pdf_comparison_reply
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
+from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
     answer_public_web_question,
@@ -683,6 +684,7 @@ _upload_sessions: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _comparison_sessions = ComparisonSessions()
 _petra_token_secret = secrets.token_bytes(32)
 _petra_rate_limiter = SlidingWindowRateLimiter(requests=3, window_seconds=60, max_clients=10_000)
+_transcribe_rate_limiter = SlidingWindowRateLimiter(requests=6, window_seconds=60, max_clients=10_000)
 
 
 def _sign_public_speech(answer: str) -> str | None:
@@ -872,6 +874,36 @@ async def api_petra_speech(body: PetraSpeechRequest, request: Request) -> Respon
     except Exception as error:
         raise HTTPException(status_code=503, detail="Petra is nu niet beschikbaar.") from error
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@api_app.post("/api/transcribe")
+async def api_transcribe(request: Request, file: UploadFile = File(...)) -> dict[str, str]:
+    """Turn one short spoken question into text for browsers without speech recognition.
+
+    The recording is transcribed once and not stored; the text goes back to the
+    visitor's input field to be checked before it is sent as a question."""
+    _allow_api_request(request)
+    client_key = request.client.host if request.client else "unknown"
+    if not _transcribe_rate_limiter.allow(client_key, time.monotonic()):
+        raise HTTPException(status_code=429, detail="Te veel spraakopnames kort na elkaar.")
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=503, detail="Spraak omzetten is nu niet beschikbaar.")
+    declared_length = request.headers.get("content-length", "")
+    if declared_length.isdigit() and int(declared_length) > MAX_AUDIO_BYTES + 64 * 1024:
+        raise HTTPException(status_code=413, detail="De opname is te lang. Houd je vraag kort.")
+    content_type = file.content_type or ""
+    if not audio_extension(content_type):
+        raise HTTPException(status_code=415, detail="Dit opnameformaat wordt niet ondersteund.")
+    audio = await file.read(MAX_AUDIO_BYTES + 1)
+    if not audio or len(audio) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="De opname is te lang. Houd je vraag kort.")
+    try:
+        text = await asyncio.wait_for(asyncio.to_thread(transcribe_dutch, audio, content_type), timeout=40)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Spraak omzetten is nu niet beschikbaar.") from error
+    if not text:
+        raise HTTPException(status_code=422, detail="Ik hoorde geen vraag in de opname.")
+    return {"text": text[:1000]}
 
 
 @api_app.get("/", include_in_schema=False)

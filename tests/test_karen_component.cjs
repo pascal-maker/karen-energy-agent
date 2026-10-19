@@ -39,6 +39,8 @@ function loadComponent(file) {
         require: name => name === "framer" ? { addPropertyControls() {}, ControlType: { String: "string" } }
             : name.startsWith("./") ? loadComponent(name.slice(2)) : require(name),
         window, document, console, URL, fetch: (...args) => globalThis.fetch(...args), FormData, AbortController,
+        navigator: { get userAgent() { return globalThis.testUserAgent || "jsdom" }, get mediaDevices() { return globalThis.testMediaDevices } },
+        get MediaRecorder() { return globalThis.MediaRecorder }, Blob: window.Blob,
         setTimeout, SpeechSynthesisUtterance,
     })
     return componentModule.exports
@@ -127,6 +129,40 @@ async function main() {
     await act(async () => recognizer.onerror({ error: "not-allowed" }))
     assert.match(document.querySelector('[role="alert"]').textContent, /Microfoontoegang is geweigerd|ingesloten venster/)
     await act(async () => recognizer.onend?.())
+
+    // No built-in speech recognition (e.g. Chrome on iPhone): record a clip, the backend
+    // transcribes it, and the text lands in the input as a draft to check first.
+    const savedRecognition = window.SpeechRecognition
+    delete window.SpeechRecognition
+    let tracksStopped = 0
+    globalThis.testMediaDevices = { getUserMedia: async () => ({ getTracks: () => [{ stop() { tracksStopped += 1 } }] }) }
+    globalThis.MediaRecorder = class {
+        static isTypeSupported(type) { return type === "audio/mp4" }
+        constructor(stream, options) { this.mimeType = options?.mimeType || ""; this.state = "inactive" }
+        start() { this.state = "recording" }
+        stop() { this.state = "inactive"; this.ondataavailable({ data: new window.Blob(["clip"], { type: "audio/mp4" }) }); this.onstop() }
+    }
+    responses.push({ text: "Wat kost stroom vandaag?" })
+    await act(async () => mic().click())
+    await act(async () => {})
+    assert.equal(mic().getAttribute("data-listening"), "true", "Recording is shown as listening")
+    await act(async () => mic().click())
+    await act(async () => {})
+    assert.match(requests.at(-1).url, /\/api\/transcribe$/)
+    assert.equal(requests.at(-1).body.get("file").name, "question.mp4")
+    assert.equal(document.querySelector(".ea-input").value, "Wat kost stroom vandaag?", "Transcript is a draft, not sent")
+    assert.equal(tracksStopped, 1, "Microphone is released after recording")
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(document.querySelector(".ea-input"), "")
+        document.querySelector(".ea-input").dispatchEvent(new window.Event("input", { bubbles: true }))
+    })
+    globalThis.testMediaDevices = undefined
+    globalThis.MediaRecorder = undefined
+    globalThis.testUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/130.0 Mobile/15E148"
+    await act(async () => mic().click())
+    assert.match(document.querySelector('[role="alert"]').textContent, /alleen in Safari/, "Without recording support, iPhone users are pointed to Safari")
+    globalThis.testUserAgent = undefined
+    window.SpeechRecognition = savedRecognition
 
     // Prijzen tab: fetches market.json once, shows today's stats, keeps the chat state.
     const tab = name => [...document.querySelectorAll('[role="tab"]')].find(button => button.textContent === name)
