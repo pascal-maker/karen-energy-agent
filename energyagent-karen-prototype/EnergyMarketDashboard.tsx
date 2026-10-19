@@ -101,8 +101,10 @@ const css = `
   .em-links small { display:block; margin-top:2px; color:#728076; font-size:12px; }
   @container (max-width:680px) {
     .em-card { padding:16px 14px; border-radius:16px; }
-    .em-views { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; }
-    .em-view { padding:0 4px; font-size:13px; }
+    /* Buttons share the row but never clip their label: if the font is wider
+       (Framer substitutes fonts) the row scrolls sideways instead. */
+    .em-views { gap:4px; }
+    .em-view { flex:1 0 auto; padding:0 10px; white-space:nowrap; }
     .em-tiles { gap:6px; }
     .em-tile { padding:10px; }
     .em-tile strong { font-size:18px; }
