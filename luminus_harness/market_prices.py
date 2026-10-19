@@ -184,9 +184,12 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
     }
 
 
-async def answer_market_price_question(question: str) -> dict[str, Any] | None:
-    """None when this isn't a general price question or market.json is unavailable."""
-    if not is_market_price_question(question):
+async def answer_market_price_question(question: str, *, recognised: bool = False) -> dict[str, Any] | None:
+    """None when this isn't a general price question or market.json is unavailable.
+
+    `recognised` skips the word-list check when Jev already routed the question here.
+    """
+    if not recognised and not is_market_price_question(question):
         return None
     data = await load_market_data()
     if data is None:

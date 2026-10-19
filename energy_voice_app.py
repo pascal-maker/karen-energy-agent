@@ -49,11 +49,19 @@ from luminus_harness.knowledge import (
 from luminus_harness.gemma_answer import (
     GemmaAPIError,
     answer_energy_question,
+    answer_small_talk,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
-from luminus_harness.comparison_session import ComparisonSessions, is_offer_comparison_question, pdf_comparison_reply
+from luminus_harness.comparison_session import (
+    ComparisonSessions,
+    extract_additional_inputs,
+    extract_inputs,
+    is_offer_comparison_question,
+    pdf_comparison_reply,
+)
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
+from luminus_harness.jev import route_question
 from luminus_harness.market_prices import answer_market_price_question
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
@@ -836,19 +844,34 @@ async def api_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
         result = answer_uploaded_pdf_question(body.question.strip(), session["chunks"])
         return {**result, "processing": "local-only", "filename": session["filename"]}
     if body.comparison_session_id not in _comparison_sessions.sessions:
-        # A plain price question gets today's prices; the comparison form is only offered.
-        prices = await answer_market_price_question(body.question.strip())
-        if prices is not None:
-            return _with_petra_speech({**prices, "comparison_session_id": None})
+        question = body.question.strip()
+        # Jev picks the route when enabled and confident; otherwise the word lists below decide.
+        route = await route_question(question)
+        if route == "compare":
+            values = {**extract_inputs(question, "region"), **extract_additional_inputs(question)}
+            return _with_petra_speech(await _comparison_sessions.submit(values, None))
+        if route in (None, "price"):
+            # A plain price question gets today's prices; the comparison form is only offered.
+            prices = await answer_market_price_question(question, recognised=route == "price")
+            if prices is not None:
+                return _with_petra_speech({**prices, "comparison_session_id": None})
+        if route in ("small_talk", "off_topic"):
+            return _with_petra_speech({**await answer_small_talk(question, route), "comparison_session_id": None})
+        if route == "energy_other":
+            return await _hosted_answer(question, None)
     comparison = await _comparison_sessions.answer(body.question.strip(), body.comparison_session_id)
     if comparison is not None:
         return _with_petra_speech(comparison)
+    return await _hosted_answer(body.question.strip(), body.comparison_session_id)
+
+
+async def _hosted_answer(question: str, comparison_session_id: str | None) -> dict[str, Any]:
     try:
-        result = await answer_energy_question(body.question.strip(), BASE_KNOWLEDGE)
+        result = await answer_energy_question(question, BASE_KNOWLEDGE)
         return _with_petra_speech({
             **result,
             "processing": result.get("processing", "hosted-public-knowledge"),
-            "comparison_session_id": body.comparison_session_id if body.comparison_session_id in _comparison_sessions.sessions else None,
+            "comparison_session_id": comparison_session_id if comparison_session_id in _comparison_sessions.sessions else None,
         })
     except GemmaAPIError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
