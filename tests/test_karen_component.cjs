@@ -236,16 +236,17 @@ async function main() {
     globalThis.testUserAgent = undefined
     window.SpeechRecognition = savedRecognition
 
-    // Prijzen tab: fetches market.json once, shows today's stats, keeps the chat state.
-    const tab = name => [...document.querySelectorAll('[role="tab"]')].find(button => button.textContent === name)
-    responses.push({ answer: "Antwoord voor de tabwissel", comparison_session_id: null })
-    await typed("Wat is een capaciteitstarief?")
-    const answerBefore = document.querySelector(".ea-answer").textContent
+    // Karen is one chat screen: no tabs, and the price chip asks the question in the chat.
+    assert.equal(document.querySelector(".ea [role=\"tab\"]"), null, "No Prijzen tab")
+    const Dashboard = loadComponent("EnergyMarketDashboard.tsx").default
+    // The standalone price dashboard: fetches market.json once and shows today's stats.
+    const freshBox = document.createElement("div")
+    document.body.appendChild(freshBox)
     responses.push(marketFixture)
-    await act(async () => tab("Prijzen").click())
+    await act(async () => createRoot(freshBox).render(React.createElement(Dashboard, {})))
     await act(async () => {})
     assert.match(requests.at(-1).url, /raw\.githubusercontent\.com\/pascal-maker\/karen-energy-agent\/market-data\/market\.json$/)
-    assert.equal(document.querySelector(".ea-body").hidden, true)
+    const tab = name => [...freshBox.querySelectorAll('[role="tab"]')].find(button => button.textContent === name)
     assert.match(document.querySelector(".em").textContent, /Stroomprijs vandaag/)
     assert.match(document.querySelector(".em").textContent, /Energy-Charts/)
     assert.ok(!document.querySelector(".em-badge"), "Fresh data has no stale badge")
@@ -270,11 +271,9 @@ async function main() {
         input.dispatchEvent(new window.Event("input", { bubbles: true }))
     })
     assert.match(document.querySelector(".em-bar-row").textContent, /Frank Energie/, "At 10,000 kWh the lower kWh price outweighs the higher fixed fee")
-    await act(async () => tab("Chat").click())
-    assert.equal(document.querySelector(".ea-answer").textContent, answerBefore, "Switching tabs keeps the conversation")
+    freshBox.remove()
 
     // Stale data is badged; an unreachable data file shows the official comparators instead of numbers.
-    const Dashboard = loadComponent("EnergyMarketDashboard.tsx").default
     const box = document.createElement("div")
     document.body.appendChild(box)
     const dashboardRoot = createRoot(box)
@@ -289,6 +288,14 @@ async function main() {
     await act(async () => [...box.querySelectorAll('[role="tab"]')].find(b => b.textContent === "Verwachting").click())
     assert.match(box.textContent, /random walk/)
     assert.ok(!/gelijk aan vorige maand/.test(box.textContent), "No separate baseline when the model is the baseline")
+    // Fixed-price cards are for the chat's contract advice; the dashboard keeps listing variable contracts.
+    const fixedCard = { name: "OCTA+", status: "verified", contract_type: "fixed", product_name: "Fixed", price_per_kwh_eur: 0.1838,
+        standing_charge_amount: 65, standing_charge_unit: "per_year", source_url: "https://files.octaplus.be/fixed.pdf" }
+    responses.push({ ...marketFixture, contracts: { ...marketFixture.contracts, suppliers: [...marketFixture.contracts.suppliers, fixedCard] } })
+    await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/fixed.json" })))
+    await act(async () => {})
+    await act(async () => [...box.querySelectorAll('[role="tab"]')].find(b => b.textContent === "Contracten").click())
+    assert.ok(![...box.querySelectorAll(".em-bar-head small")].some(node => node.textContent === "Fixed"), "Fixed cards are not listed as variable")
     const realFetch = globalThis.fetch
     globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) })
     await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/missing.json" })))
@@ -300,6 +307,6 @@ async function main() {
     await act(async () => dashboardRoot.unmount())
     await act(async () => root.unmount())
     dom.window.close()
-    console.log("Karen component: typed/voice session continuity, source cards, voice drafts, terminal reset, PDF isolation and Prijzen tab passed.")
+    console.log("Karen component: typed/voice session continuity, source cards, voice drafts, terminal reset, PDF isolation and price dashboard passed.")
 }
 main().catch(error => { console.error(error); process.exitCode = 1; dom.window.close() })

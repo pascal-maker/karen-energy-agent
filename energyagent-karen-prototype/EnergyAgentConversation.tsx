@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { addPropertyControls, ControlType } from "framer"
-import EnergyMarketDashboard, { DEFAULT_MARKET_DATA_URL } from "./EnergyMarketDashboard.tsx"
 
 type SpeechResult = { transcript: string }
 type SpeechErrorEvent = { error?: string }
@@ -24,7 +23,6 @@ type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[];
 type Props = {
     apiEndpoint: string
     sampleQuestion: string
-    marketDataUrl?: string
     style?: CSSProperties
 }
 
@@ -65,9 +63,6 @@ const css = `
   .ea { width:100%; height:100%; min-height:590px; display:flex; flex-direction:column; gap:14px; padding:18px; color:#1e2b23; background:#f6f7f3; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
   .ea-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .ea-top .ea-brand { padding:0; border:0; }
-  .ea-tabs { display:inline-flex; gap:4px; padding:4px; border:1px solid #e2e7df; border-radius:14px; background:#fff; }
-  .ea-tab { min-height:38px; padding:0 16px; border:0; border-radius:10px; color:#3d4d42; background:transparent; font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
-  .ea-tab[aria-selected="true"] { color:#fff; background:#234f38; }
   .ea-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:16px; }
   .ea-composer { background:#fff; }
   .ea-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 12px; }
@@ -143,7 +138,6 @@ const css = `
     .ea-card h2 { font-size:15px; }
     .ea-card p, .ea-source strong { font-size:13px; }
     .ea-source small, .ea-excerpt { font-size:12px!important; }
-    .ea-prices { padding:12px 12px 28px; background:#f6f7f3; }
   }
 `
 
@@ -185,10 +179,8 @@ function microphoneDeniedMessage(): string {
 export default function EnergyAgentConversation({
     apiEndpoint = "",
     sampleQuestion = DEMO_QUESTION,
-    marketDataUrl = DEFAULT_MARKET_DATA_URL,
     style,
 }: Props) {
-    const [tab, setTab] = useState<"chat" | "prices">("chat")
     const [question, setQuestion] = useState("")
     const [asked, setAsked] = useState("")
     const [reply, setReply] = useState<Reply | null>(null)
@@ -614,13 +606,8 @@ export default function EnergyAgentConversation({
             <style dangerouslySetInnerHTML={{ __html: css }} />
             <header className="ea-top">
                 <div className="ea-brand"><img className="ea-mark" src={KAREN_LOGO} alt="Karen-logo" /><span><strong>EnergyAgent</strong><br />EEN HELDERE KIJK OP ENERGIE</span></div>
-                <div className="ea-tabs" role="tablist" aria-label="Karen">
-                    <button className="ea-tab" role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}>Chat</button>
-                    <button className="ea-tab" role="tab" aria-selected={tab === "prices"} onClick={() => setTab("prices")}>Prijzen</button>
-                </div>
             </header>
-            {tab === "prices" && <div className="ea-prices"><EnergyMarketDashboard dataUrl={marketDataUrl} /></div>}
-            <div className="ea-body" hidden={tab !== "chat"}>
+            <div className="ea-body">
             <section className="ea-panel ea-main">
                 {!asked && <><div className="ea-kicker">Energy co-pilot</div>
                 <h1>Praat met Karen.<br />Begrijp je energie.</h1>
@@ -644,7 +631,7 @@ export default function EnergyAgentConversation({
                 </div>
                 {!asked && <div className="ea-chips">
                     <button className="ea-chip" onClick={() => void ask(sampleQuestion)}>{sampleQuestion}</button>
-                    <button className="ea-chip" onClick={() => setTab("prices")}>Wat kost stroom vandaag? Bekijk de prijzen</button>
+                    <button className="ea-chip" onClick={() => void ask("Wat kost stroom vandaag?")}>Wat kost stroom vandaag?</button>
                 </div>}
                 <div className="ea-composer">
                 <button className="ea-mic" type="button" data-listening={listening} onClick={() => listening ? stopVoice() : startVoice()} disabled={busy || uploading || transcribing || Boolean(sessionId)} aria-label={listening ? "Stop luisteren" : "Stel je vraag met je stem"}>
@@ -687,5 +674,4 @@ export default function EnergyAgentConversation({
 addPropertyControls(EnergyAgentConversation, {
     apiEndpoint: { title: "Backend URL", type: ControlType.String, placeholder: "https://…", defaultValue: "" },
     sampleQuestion: { title: "Voorbeeldvraag", type: ControlType.String, defaultValue: DEMO_QUESTION },
-    marketDataUrl: { title: "Prijzen-data URL", type: ControlType.String, defaultValue: DEFAULT_MARKET_DATA_URL },
 })

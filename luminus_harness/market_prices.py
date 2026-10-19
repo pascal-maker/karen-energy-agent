@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 DEFAULT_MARKET_DATA_URL = "https://raw.githubusercontent.com/pascal-maker/karen-energy-agent/market-data/market.json"
 CACHE_SECONDS = 10 * 60
 MAX_SUPPLIERS = 4
+MAX_FIXED = 2
 BRUSSELS = ZoneInfo("Europe/Brussels")
 
 _PRICE = re.compile(
@@ -103,6 +104,23 @@ async def load_market_data() -> dict[str, Any] | None:
     return data
 
 
+def verified_cards(data: dict[str, Any], contract_type: str = "variable") -> list[dict[str, Any]]:
+    """Verified tariff cards with a kWh price, cheapest first. Cards without a contract_type are variable."""
+    return sorted(
+        (
+            card for card in (data.get("contracts") or {}).get("suppliers") or []
+            if card.get("status") == "verified" and isinstance(card.get("price_per_kwh_eur"), (int, float))
+            and card.get("contract_type", "variable") == contract_type
+        ),
+        key=lambda card: card["price_per_kwh_eur"],
+    )
+
+
+def card_label(card: dict[str, Any]) -> str:
+    name, product = card["name"], str(card.get("product_name") or "")
+    return product if product.casefold().startswith(name.casefold()) else f"{name} {product}".strip()
+
+
 def _cents(value: float, lang: str) -> str:
     text = f"{value:.1f}"
     return text if lang == "en" else text.replace(".", ",")  # nl and fr use a decimal comma
@@ -154,13 +172,8 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         ]
 
     contracts = data.get("contracts") or {}
-    suppliers = sorted(
-        (
-            supplier for supplier in contracts.get("suppliers") or []
-            if supplier.get("status") == "verified" and isinstance(supplier.get("price_per_kwh_eur"), (int, float))
-        ),
-        key=lambda supplier: supplier["price_per_kwh_eur"],
-    )[:MAX_SUPPLIERS]
+    suppliers = verified_cards(data)[:MAX_SUPPLIERS]
+    fixed_cards = verified_cards(data, "fixed")[:MAX_FIXED]
     if suppliers:
         lines.append({
             "en": "Variable contracts on the suppliers' current tariff cards (energy price incl. 6% VAT, without network costs):",
@@ -169,9 +182,15 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         for supplier in suppliers:
             cents = _cents(supplier["price_per_kwh_eur"] * 100, lang)
             unit = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
-            name, product = supplier["name"], str(supplier.get("product_name") or "")
-            label = product if product.casefold().startswith(name.casefold()) else f"{name} {product}".strip()
-            lines.append(f"• {label}: {cents} {unit}")
+            lines.append(f"• {card_label(supplier)}: {cents} {unit}")
+    if fixed_cards:
+        lines.append({
+            "en": "Cheapest fixed contracts on the current tariff cards:",
+            "fr": "Contrats fixes les moins chers sur les fiches tarifaires actuelles :",
+        }.get(lang, "Goedkoopste vaste contracten op de huidige tariefkaarten:"))
+        unit = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
+        for card in fixed_cards:
+            lines.append(f"• {card_label(card)}: {_cents(card['price_per_kwh_eur'] * 100, lang)} {unit}")
     lines.append({
         "en": "Want to know what this means for your home? Say \"compare offers\" and I'll ask for your region, postcode and usage.",
         "fr": "Vous voulez savoir ce que cela représente pour votre logement ? Dites \"comparer les offres\" et je vous "
@@ -185,10 +204,10 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         "url": market_source.get("url", "https://www.energy-charts.info/charts/price_spot_market/chart.htm?l=nl&c=BE"),
         "excerpt": f"Gemiddeld {day['avg']} EUR/MWh, min {day['min']}, max {day['max']}.",
     }]
-    for supplier in suppliers:
+    for supplier in suppliers + fixed_cards:
         if supplier.get("source_url"):
             sources.append({
-                "title": f"Tariefkaart {supplier['name']}",
+                "title": f"Tariefkaart {card_label(supplier)}",
                 "detail": f"Opgehaald {supplier.get('retrieved_at', contracts.get('as_of', ''))}",
                 "url": supplier["source_url"],
                 "excerpt": str(supplier.get("price_per_kwh_note", ""))[:360],

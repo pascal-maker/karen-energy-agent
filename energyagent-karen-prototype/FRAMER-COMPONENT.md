@@ -55,6 +55,15 @@ The live site was also still running a different, hand-edited Contracten view
 that lists unverified suppliers. Replace both code files with this repository's
 versions; that view lists only the suppliers with a verified price.
 
+## One chat screen — 19 October 2026
+
+The Prijzen tab is gone: in testing, people only used the chat. Karen still
+answers price and fixed-or-variable questions from the same `market.json`, and
+the "Wat kost stroom vandaag?" chip now asks that question in the chat.
+`EnergyAgentConversation.tsx` no longer imports `EnergyMarketDashboard.tsx`, so
+paste only `EnergyAgentConversation.tsx`. The dashboard code file can stay in
+Framer or be deleted; it is no longer used on the page.
+
 ## Prijzen tab and full-screen mobile layout — 18 October 2026
 
 Karen now has **Chat | Prijzen** tabs. The Prijzen tab is a second code file,

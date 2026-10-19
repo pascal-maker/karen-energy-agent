@@ -352,6 +352,8 @@ const COMPARATORS = [
 function pricedContracts(data: MarketData | null): (Supplier & { price: number; yearlyFee: number })[] {
     return (data?.contracts?.suppliers ?? [])
         .filter(s => s.status === "verified" && typeof s.price_per_kwh_eur === "number" && s.price_per_kwh_eur > 0 && s.source_url)
+        // This view lists variable contracts; fixed-price cards are used by the chat.
+        .filter(s => (s as Supplier & { contract_type?: string }).contract_type !== "fixed")
         .map(s => ({
             ...s,
             price: s.price_per_kwh_eur as number,
