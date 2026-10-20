@@ -22,6 +22,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from .perplexity_agent import _PRIVATE_INPUT
+from .steps import report_step
 
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_MODEL = "jev-latest"
@@ -106,6 +107,26 @@ async def route_question(question: str) -> str | None:
     if not jev_routing_enabled() or not 2 <= len(question) <= 500 or _PRIVATE_INPUT.search(question):
         return None
     answer = await ask_choice(question, ROUTE_INSTRUCTIONS, ROUTES)
-    if answer is None or answer["confidence"] < _min_confidence():
+    if answer is None:
         return None
-    return answer["choice"]
+    used = answer["confidence"] >= _min_confidence()
+    report_step("route", choice=answer["choice"], confidence=round(float(answer["confidence"]), 3),
+                probabilities=_route_probabilities(answer.get("probabilities")), used=used)
+    return answer["choice"] if used else None
+
+
+def _route_probabilities(raw: Any) -> dict[str, float]:
+    """Jev's probability per route, from either a mapping or a list of {option, probability}."""
+    items: list[tuple[Any, Any]] = []
+    if isinstance(raw, dict):
+        items = list(raw.items())
+    elif isinstance(raw, list):
+        items = [
+            (item.get("option") or item.get("choice") or item.get("label"), item.get("probability") or item.get("p"))
+            for item in raw if isinstance(item, dict)
+        ]
+    return {
+        str(route): round(float(value), 3)
+        for route, value in items
+        if route in ROUTES and isinstance(value, (int, float))
+    }

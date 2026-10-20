@@ -1,5 +1,11 @@
 # Framer Code Component
 
+## Karen shows her work: route, search, pages — 20 October 2026
+
+While she answers, the chat draws Karen's route in five stages: Vraag, Begrijpen, Zoeken, Lezen and Antwoord. Under it you see Jev's three most likely routes as bars with percentages (when Jev routing is on), the sites she searches as chips that light up when a page from them is read, and the pages she reads as links. When the answer is done, one line stays: "Jev: Energievraag 92% · Karen zocht één keer en las 2 pagina's."
+
+`/api/answer-stream` sends these as `{"step": {...}}` lines: `{"kind": "route", "choice", "confidence", "probabilities", "used"}`, `{"kind": "search", "sites": [...]}` and `{"kind": "read", "pages": [{"title", "url"}]}`. When the first pages don't answer, the backend tries the next sites once; the draft text is cleared when a new search step arrives after text.
+
 ## Answers appear while Karen writes, and a backup model — 20 October 2026
 
 The component first posts to `/api/answer-stream`, which takes the same body as `/api/answer`. It answers with JSON lines: `{"delta": "..."}` while Gemma writes, then `{"reply": {...}}` with the same reply `/api/answer` returns, or `{"error": "...", "status": 503}`. The text appears in the chat as it arrives. A backend without the route (404 or 405) gets the plain `/api/answer` call instead. Only the final answer of a sourced energy question streams. Prices, small talk and comparisons arrive whole.

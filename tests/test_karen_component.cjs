@@ -183,6 +183,25 @@ async function main() {
     assert.equal(document.querySelector(".ea-state"), null, "No status line once text is showing")
     await act(async () => { globalThis.releaseStream(); await new Promise(resolve => setTimeout(resolve, 20)) })
     assert.equal(document.querySelector(".ea-answer").textContent, "Het capaciteitstarief rekent je piek aan.")
+    // Karen's work shows as steps while she searches, then as one summary line.
+    responses.push({ stream: [
+        { step: { kind: "route", choice: "energy_other", confidence: 0.92, used: true, probabilities: { energy_other: 0.92, price: 0.05, small_talk: 0.01, compare: 0.02 } } },
+        { step: { kind: "search", sites: ["fluvius.be", "sibelga.be", "ores.be", "resa.be"] } },
+        { step: { kind: "read", pages: [{ title: "Digitale meter aflezen", url: "https://www.fluvius.be/meter" }] } },
+    ], later: [{ delta: "Druk op knop 1." }, { reply: { answer: "Druk op knop 1.", comparison_session_id: null, sources: [] } }] })
+    await typed("Hoe lees ik mijn digitale meter af?")
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    const stage = label => document.querySelector(".ea-flow-stages").children[["Vraag", "Begrijpen", "Zoeken", "Lezen", "Antwoord"].indexOf(label)].dataset.state
+    assert.equal(document.querySelector(".ea-flow-caption").textContent, "Leest Digitale meter aflezen")
+    assert.deepEqual([stage("Vraag"), stage("Begrijpen"), stage("Zoeken"), stage("Lezen"), stage("Antwoord")], ["done", "done", "done", "active", "todo"])
+    const jevRows = [...document.querySelectorAll(".ea-jev-row")].map(row => `${row.textContent}:${row.dataset.chosen}`)
+    assert.deepEqual(jevRows, ["Energievraag92%:true", "Prijsvraag5%:false", "Aanbiedingen vergelijken2%:false"], "Jev's three most likely routes")
+    const chips = [...document.querySelectorAll(".ea-site")].map(chip => `${chip.textContent}:${chip.dataset.read}`)
+    assert.deepEqual(chips, ["fluvius.be:true", "sibelga.be:false", "ores.be:false", "resa.be:false"], "The site a page came from lights up")
+    assert.equal(document.querySelector(".ea-page").href, "https://www.fluvius.be/meter")
+    await act(async () => { globalThis.releaseStream(); await new Promise(resolve => setTimeout(resolve, 20)) })
+    assert.equal(document.querySelector(".ea-flow"), null)
+    assert.equal(document.querySelector(".ea-flow-done").textContent, "Jev: Energievraag 92% · Karen zocht één keer en las één pagina.")
     // An error line ends the stream with Karen's message.
     responses.push({ stream: [{ delta: "Half" }, { error: "Gemma is tijdelijk overbelast of de API-limiet is bereikt.", status: 503 }] })
     await typed("Wat is het sociaal tarief?")

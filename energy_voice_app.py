@@ -67,6 +67,7 @@ from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.jev import route_question
+from luminus_harness.steps import answer_steps
 from luminus_harness.market_prices import answer_market_price_question, is_gas_price_question
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
@@ -859,7 +860,8 @@ async def api_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
 async def api_answer_stream(body: AnswerRequest, request: Request) -> StreamingResponse:
     """The same answer as /api/answer, as JSON lines: the text while it is written, then the full reply.
 
-    Lines are {"delta": text}, then {"reply": {...}} or {"error": detail, "status": code}."""
+    Lines are {"step": {...}} for each site search and page read, {"delta": text} while the
+    answer is written, then {"reply": {...}} or {"error": detail, "status": code}."""
     _allow_api_request(request)
     # Gemma writes from a worker thread. Each piece is queued right there, before the worker
     # returns, so the text always comes before the reply; the event only wakes the reader.
@@ -873,6 +875,7 @@ async def api_answer_stream(body: AnswerRequest, request: Request) -> StreamingR
 
     async def produce() -> None:
         answer_stream.set(lambda text: push({"delta": text}))
+        answer_steps.set(lambda step: push({"step": step}))
         try:
             push({"reply": await _rated_answer(body)})
         except HTTPException as error:
