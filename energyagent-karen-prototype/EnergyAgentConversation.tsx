@@ -223,6 +223,8 @@ export default function EnergyAgentConversation({
     const thread = useRef<HTMLDivElement | null>(null)
     const [status, setStatus] = useState("Klaar om te helpen")
     const [busy, setBusy] = useState(false)
+    // The answer as Karen writes it; replaced by the full reply when it arrives.
+    const [draft, setDraft] = useState("")
     const [answerError, setAnswerError] = useState("")
     const [uploading, setUploading] = useState(false)
     const [sessionId, setSessionId] = useState("")
@@ -296,7 +298,7 @@ export default function EnergyAgentConversation({
         window.speechSynthesis?.cancel()
     }, [])
 
-    function endpointFor(path: "upload" | "session" | "comparison-session" | "petra-speech" | "transcribe" | "feedback"): string {
+    function endpointFor(path: "answer-stream" | "upload" | "session" | "comparison-session" | "petra-speech" | "transcribe" | "feedback"): string {
         const url = new URL(apiEndpoint.trim())
         url.pathname = url.pathname.replace(/\/api\/answer\/?$/, `/api/${path}`)
         if (!url.pathname.endsWith(`/api/${path}`)) {
@@ -468,19 +470,24 @@ export default function EnergyAgentConversation({
         setFeedbackOpen(false)
         setFeedbackComment("")
         setBusy(true)
+        setDraft("")
         setStatus("Karen haalt relevante bronpassages op…")
         try {
             if (apiEndpoint.trim()) {
-                const response = await fetch(apiEndpoint, {
+                const request = {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ question: clean, ...(sessionId ? { session_id: sessionId } : {}), ...(comparisonSessionId ? { comparison_session_id: comparisonSessionId } : {}), ...(history.length ? { history } : {}) }),
-                })
+                }
+                let response = await fetch(endpointFor("answer-stream"), request)
+                // A backend without the streaming route still answers on the plain one.
+                if (response.status === 404 || response.status === 405) response = await fetch(apiEndpoint, request)
                 if (!response.ok) {
                     const errorData = (await response.json().catch(() => null)) as { detail?: string } | null
                     throw new Error(errorData?.detail || `Verzoek mislukt (${response.status})`)
                 }
-                const data = (await response.json()) as Reply
+                const streamed = Boolean(response.headers?.get?.("content-type")?.includes("ndjson") && response.body?.getReader)
+                const data = streamed ? await readAnswerStream(response) : (await response.json()) as Reply
                 if (!data.answer) throw new Error("Het antwoord ontbreekt in de API-respons")
                 if ("comparison_session_id" in data) setComparisonSessionId(data.comparison_session_id || "")
                 setReply(data)
@@ -509,6 +516,34 @@ export default function EnergyAgentConversation({
             setAnswerError(error instanceof Error ? error.message : "Karen kon de vraag niet beantwoorden.")
         } finally {
             setBusy(false)
+            setDraft("")
+        }
+    }
+
+    // Reads the streaming answer: JSON lines with text pieces, then the full reply or an error.
+    async function readAnswerStream(response: Response): Promise<Reply> {
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ""
+        let text = ""
+        for (;;) {
+            const { value, done } = await reader.read()
+            buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+            let newline = buffer.indexOf("\n")
+            while (newline >= 0) {
+                const line = buffer.slice(0, newline).trim()
+                buffer = buffer.slice(newline + 1)
+                newline = buffer.indexOf("\n")
+                if (!line) continue
+                const event = JSON.parse(line) as { delta?: string; reply?: Reply; error?: string }
+                if (event.reply) return event.reply
+                if (event.error) throw new Error(event.error)
+                if (event.delta) {
+                    text += event.delta
+                    setDraft(text)
+                }
+            }
+            if (done) throw new Error("Het antwoord werd onderbroken. Probeer het opnieuw.")
         }
     }
 
@@ -720,7 +755,8 @@ export default function EnergyAgentConversation({
                 <div className="ea-thread" aria-live="polite" ref={thread}>
                     {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.answer}</div></div>)}
                     {asked && <div className="ea-question">{asked}</div>}
-                    {(busy || uploading || listening || transcribing) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
+                    {(busy || uploading || listening || transcribing) && !draft && <div className="ea-state"><span className="ea-dot" />{status}</div>}
+                    {busy && draft && <div className="ea-answer">{draft}</div>}
                     {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
                         ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>
                         : <div className="ea-feedback">
@@ -751,7 +787,7 @@ export default function EnergyAgentConversation({
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
                 </div>
-                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
+                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma (of een OpenAI-model als Gemma overbelast is) en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
             </section>
             <aside className="ea-rail">
                 <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>

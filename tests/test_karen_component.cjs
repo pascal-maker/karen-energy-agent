@@ -42,7 +42,7 @@ function loadComponent(file) {
         navigator: { get userAgent() { return globalThis.testUserAgent || "jsdom" }, get mediaDevices() { return globalThis.testMediaDevices },
             get languages() { return globalThis.testLanguages || ["nl-BE"] }, get language() { return (globalThis.testLanguages || ["nl-BE"])[0] } },
         get MediaRecorder() { return globalThis.MediaRecorder }, Blob: window.Blob,
-        setTimeout, SpeechSynthesisUtterance,
+        setTimeout, SpeechSynthesisUtterance, TextDecoder,
     })
     return componentModule.exports
 }
@@ -55,6 +55,25 @@ globalThis.fetch = async (url, options) => {
     if (options.method === "DELETE") return { ok: true, json: async () => ({ deleted: true }) }
     assert.ok(responses.length, "Unexpected request")
     const reply = responses.shift()
+    if (reply.stream) {
+        // A streaming answer: JSON lines arrive in pieces that need not end on a line break.
+        const encode = events => new TextEncoder().encode(events.map(event => JSON.stringify(event)).join("\n") + "\n")
+        const first = encode(reply.stream)
+        const pieces = [first.slice(0, 9), first.slice(9, 31), first.slice(31)]
+        return { ok: true, status: 200, headers: { get: () => "application/x-ndjson" }, body: { getReader: () => ({
+            read: async () => {
+                if (pieces.length) return { value: pieces.shift(), done: false }
+                if (reply.later) {
+                    // Hold the rest back until the test has looked at the half-written answer.
+                    await new Promise(resolve => { globalThis.releaseStream = resolve })
+                    const rest = encode(reply.later)
+                    reply.later = null
+                    return { value: rest, done: false }
+                }
+                return { value: undefined, done: true }
+            },
+        }) } }
+    }
     if (reply.status) return { ok: false, status: reply.status, json: async () => ({ detail: "Petra is nu niet beschikbaar." }) }
     if (typeof reply.blob === "function") return { ok: true, blob: reply.blob }
     return { ok: true, json: async () => reply }
@@ -155,6 +174,26 @@ async function main() {
     assert.equal(requests.at(-1).url, "https://backend.example/api/feedback")
     assert.deepEqual(requests.at(-1).body, { feedback_token: "signed-feedback-token", rating: "down", comment: "Geen gasprijs" })
     assert.match(document.querySelector(".ea-chat, #root").textContent, /Bedankt! Karen leert van je feedback\./)
+    // Streaming: the text shows while Karen writes it, then the full reply replaces it.
+    responses.push({ stream: [{ delta: "Het capaciteits" }, { delta: "tarief rekent " }], later: [{ delta: "je piek aan." }, { reply: { answer: "Het capaciteitstarief rekent je piek aan.", comparison_session_id: null, sources: [] } }] })
+    await typed("Wat is het capaciteitstarief?")
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    assert.ok(requests.at(-1).url.endsWith("/api/answer-stream"))
+    assert.equal(document.querySelector(".ea-answer").textContent, "Het capaciteitstarief rekent ", "Text shows while Karen writes")
+    assert.equal(document.querySelector(".ea-state"), null, "No status line once text is showing")
+    await act(async () => { globalThis.releaseStream(); await new Promise(resolve => setTimeout(resolve, 20)) })
+    assert.equal(document.querySelector(".ea-answer").textContent, "Het capaciteitstarief rekent je piek aan.")
+    // An error line ends the stream with Karen's message.
+    responses.push({ stream: [{ delta: "Half" }, { error: "Gemma is tijdelijk overbelast of de API-limiet is bereikt.", status: 503 }] })
+    await typed("Wat is het sociaal tarief?")
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    assert.match(document.querySelector("#root").textContent, /Gemma is tijdelijk overbelast/)
+    // An older backend without the streaming route: fall back to the plain answer route.
+    responses.push({ status: 404 })
+    responses.push({ answer: "Antwoord van de oude route", comparison_session_id: null })
+    await typed("Wat is een voorschot?")
+    assert.ok(requests.at(-1).url.endsWith("/api/answer"))
+    assert.equal(document.querySelector(".ea-answer").textContent, "Antwoord van de oude route")
     responses.push({ answer: "Zonder token", comparison_session_id: null })
     await typed("Hoe werkt het capaciteitstarief?")
     assert.equal(document.querySelector(".ea-feedback"), null, "No rating without a feedback token")

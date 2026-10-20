@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import re
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -18,6 +19,14 @@ from .voice_agent import is_electricity_price_question
 
 class GemmaAPIError(RuntimeError):
     """An actionable error returned by the hosted Gemma API call."""
+
+
+class GemmaUnavailableError(GemmaAPIError):
+    """Gemma is overloaded, rate limited or unreachable; another model may answer instead."""
+
+
+# Set by the streaming endpoint: receives the final answer's text piece by piece.
+answer_stream: contextvars.ContextVar[Callable[[str], None] | None] = contextvars.ContextVar("answer_stream", default=None)
 
 
 _SYSTEM_INSTRUCTION = """Je bent Karen, een behulpzame assistent voor Belgische energievragen.
@@ -395,7 +404,51 @@ async def _answer_cancellation_question(question: str) -> dict[str, Any]:
     }
 
 
-def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION) -> str:
+def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, on_delta: Callable[[str], None] | None = None) -> str:
+    """Answer with Gemma; when Gemma is overloaded or unreachable, answer with the backup model.
+
+    With `on_delta`, Gemma's text is passed on piece by piece while it is written."""
+    try:
+        return _generate_gemma(prompt, system_instruction, on_delta)
+    except GemmaUnavailableError as error:
+        if not os.getenv("OPENAI_API_KEY", "").strip():
+            raise
+        try:
+            text = _generate_backup(prompt, system_instruction)
+        except Exception:
+            raise error from None
+        if on_delta:
+            on_delta(text)
+        return text
+
+
+def _generate_backup(prompt: str, system_instruction: str) -> str:
+    """Same prompt to an OpenAI model, used only while Gemma is unavailable."""
+    from openai import OpenAI
+
+    model = os.getenv("KAREN_BACKUP_MODEL", "gpt-5-mini").strip()
+    options: dict[str, Any] = {"reasoning": {"effort": "minimal"}} if model.startswith("gpt-5") else {}
+    result = OpenAI(timeout=40).responses.create(model=model, instructions=system_instruction, input=prompt, **options)
+    text = (result.output_text or "").strip()
+    if not text:
+        raise ValueError("The backup model returned no text")
+    return text
+
+
+def _answer_text(payload: Any, separator: str = "\n") -> str:
+    """Visible text of one Gemma response or stream chunk, without thought parts."""
+    try:
+        parts = payload["candidates"][0]["content"]["parts"]
+        return separator.join(
+            part["text"]
+            for part in parts
+            if part.get("thought") is not True and isinstance(part.get("text"), str)
+        )
+    except (KeyError, IndexError, TypeError) as error:
+        raise GemmaAPIError("Gemma gaf geen bruikbaar antwoord terug.") from error
+
+
+def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, on_delta: Callable[[str], None] | None = None) -> str:
     """
     Sends a prompt to the Google Generative Language API using the specified Gemma model.
     Handles network requests, error parsing (HTTP errors, invalid keys, etc.), and extracts
@@ -406,8 +459,9 @@ def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION) -> str
         raise GemmaAPIError("Gemma is nog niet ingesteld: voeg GEMINI_API_KEY toe aan de backend.")
 
     model = os.getenv("GEMMA_MODEL", "gemma-4-26b-a4b-it").strip()
+    method = "streamGenerateContent?alt=sse" if on_delta else "generateContent"
     request = Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:{method}",
         data=json.dumps({
             "systemInstruction": {"parts": [{"text": system_instruction}]},
             "contents": [{"parts": [{"text": prompt}]}],
@@ -416,9 +470,24 @@ def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION) -> str
         headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
         method="POST",
     )
+    streamed: list[str] = []
     try:
         with urlopen(request, timeout=45) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+            if on_delta:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    piece = _answer_text(json.loads(line[5:]), "")
+                    # Leading whitespace is dropped so the shown text matches the stripped answer.
+                    if piece and not streamed:
+                        piece = piece.lstrip()
+                    if piece:
+                        streamed.append(piece)
+                        on_delta(piece)
+                payload = None
+            else:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
     except HTTPError as error:
         if error.code == 400:
             try:
@@ -443,23 +512,18 @@ def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION) -> str
                 ) from error
         if error.code in (401, 403):
             raise GemmaAPIError("Gemma heeft de API-sleutel geweigerd; controleer GEMINI_API_KEY.") from error
-        if error.code == 429:
-            raise GemmaAPIError("Gemma is tijdelijk overbelast of de API-limiet is bereikt.") from error
+        if error.code == 429 or error.code >= 500:
+            raise GemmaUnavailableError("Gemma is tijdelijk overbelast of de API-limiet is bereikt.") from error
         raise GemmaAPIError(f"Gemma gaf HTTP {error.code} terug.") from error
-    except (TimeoutError, URLError, json.JSONDecodeError) as error:
-        raise GemmaAPIError("Gemma kon nu geen verbinding maken.") from error
+    except (TimeoutError, URLError, OSError, json.JSONDecodeError) as error:
+        if streamed:
+            # Part of the answer is already on screen; switching models now would mix two answers.
+            raise GemmaAPIError("Gemma stopte midden in het antwoord.") from error
+        raise GemmaUnavailableError("Gemma kon nu geen verbinding maken.") from error
 
-    try:
-        answer = payload["candidates"][0]["content"]["parts"]
-        text = "\n".join(
-            part["text"]
-            for part in answer
-            if part.get("thought") is not True and isinstance(part.get("text"), str)
-        ).strip()
-    except (KeyError, IndexError, TypeError) as error:
-        raise GemmaAPIError("Gemma gaf geen bruikbaar antwoord terug.") from error
+    text = ("".join(streamed) if on_delta else _answer_text(payload)).strip()
     if not text:
-        raise GemmaAPIError("Gemma gaf een leeg antwoord terug.")
+        raise GemmaUnavailableError("Gemma gaf een leeg antwoord terug.")
     return text
 
 
@@ -708,5 +772,6 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
         }
 
     prompt = _prompt(original_question, selected, web_pages) + f"\nANTWOORDTAAL: {_REPLY_LANGUAGE[lang]}"
-    answer = await asyncio.to_thread(_generate, prompt)
+    stream = answer_stream.get()
+    answer = await asyncio.to_thread(_generate, prompt, _SYSTEM_INSTRUCTION, stream) if stream else await asyncio.to_thread(_generate, prompt)
     return {"answer": answer, "sources": sources, "live_source_status": live_source_status}
