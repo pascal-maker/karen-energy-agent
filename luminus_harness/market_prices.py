@@ -32,7 +32,7 @@ _PRICE = re.compile(
 )
 _ELECTRICITY = re.compile(r"(?:stroom|elektriciteit|electricit|électricit|energie|énergie|energy|power|kwh)", re.IGNORECASE)
 # Only plain gas and gas-price words; a gasfactuur or gasketel is a different question.
-_GAS = re.compile(r"\b(?:(?:aard)?gas(?:prijs|prijzen|tarief|tarieven)?|gaz)\b", re.IGNORECASE)
+_GAS = re.compile(r"\b(?:(?:aard)?gas(?:prijs|prijzen|tarief|tarieven|contract|contracten)?|gaz)\b", re.IGNORECASE)
 # A gas price list can't answer a boiler question or a "why" question.
 _GAS_ELSEWHERE = re.compile(r"\b(?:\w*ketel\w*|boiler|chaudi[eè]re|waarom|why|pourquoi)\b", re.IGNORECASE)
 # Gas, network costs, social tariffs, invoices, contracts and explicit CREG questions keep their own routes.

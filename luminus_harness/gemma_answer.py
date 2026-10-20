@@ -138,8 +138,8 @@ _LUMINUS_INVOICE_CURATED_CONTENT = (
 _ENERGY_TOPIC = re.compile(
     r"\b(?:energie\w*|elektriciteit\w*|stroom\w*|energy|electricity|electric|heating|heat pump|solar panels?|aardgas|gas|gasprijs|gasfactuur|gasketel|"
     r"verwarmingsketel|cv.ketel|verwarming|warmtepomp\w*|zonnepanel\w*|"
-    r"energiefactuur|voorschot|jaarafrekening|kilowattuur|kwh|tarief|"
-    r"netbeheerder|capaciteitstarief|nettarief|energietarief|\w*premie\w*|isolatie|"
+    r"energiefactuur|voorschot|jaarafrekening|kilowattuur|kwh|\w*tarief\w*|prosument\w*|injectie\w*|"
+    r"netbeheerder|\w*premie\w*|isolatie|energieleverancier\w*|"
     r"verbruik|creg|brugel|cwape|v.test|brusim|"
     # English and French: a non-Dutch energy question must not be answered as off-topic.
     r"bills?|invoices?|advance payments?|boilers?|meter readings?|smart meters?|tariffs?|"
@@ -161,6 +161,34 @@ def _public_search_scope(question: str) -> str:
     if re.search(r"\b(?:walloni[eë]|waals|wallonie)\b", lowered):
         return "wallonia_public"
     return "official_energy"
+
+
+# Question words that make a web search worse, not better.
+_SEARCH_FILLER = {
+    "wie", "welke", "welk", "wanneer", "waarom", "waar", "moet", "mag", "krijg", "heeft", "hebben", "word",
+    "wordt", "worden", "kun", "kunnen", "nog", "eens", "graag", "u", "uw", "we", "wij", "ons", "onze",
+}
+
+
+def _search_keywords(question: str) -> str:
+    """The question's content words, for a second search when the full sentence finds nothing."""
+    words = [
+        word for word in TOKEN_RE.findall(question)
+        if word.casefold() not in STOP_WORDS and word.casefold() not in _SEARCH_FILLER and len(word) > 2
+    ]
+    return " ".join(words)
+
+
+async def _search_public_pages(question: str, scope: str) -> list[dict[str, str]]:
+    """Search the official sites; a whole sentence over seven sites often finds nothing, so retry narrower."""
+    pages = await search_energy_pages(question[:350], scope, max_pages=2)
+    keywords = _search_keywords(question)
+    if not pages and keywords and keywords.casefold() != question.casefold():
+        pages = await search_energy_pages(keywords, scope, max_pages=2)
+    if not pages and scope == "official_energy" and keywords:
+        # Most of Karen's visitors are in Flanders; the answer names the region its source covers.
+        pages = await search_energy_pages(keywords, "flanders_public", max_pages=2)
+    return pages
 
 
 def _strong_local_match(question: str, selected: list[KnowledgeChunk]) -> bool:
@@ -659,7 +687,7 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
             if fallback:
                 web_pages = [fallback]
         if not web_pages:
-            web_pages = await search_energy_pages(question[:350], scope, max_pages=2)
+            web_pages = await _search_public_pages(question, scope)
         live_source_status = "checked" if web_pages else "failed"
         for page in web_pages:
             sources.append({
