@@ -269,3 +269,10 @@ def test_repository_tariff_file_is_valid() -> None:
     fixed = [s for s in priced if s["contract_type"] == "fixed"]
     assert all(s["duration_months"] for s in fixed), "fixed cards say how long the price is fixed"
     assert len({(s["name"], s["contract_type"]) for s in priced}) == len(priced), "one card per supplier and type"
+    gas = [s for s in data["gas_suppliers"] if s["status"] == "verified"]
+    assert {s["contract_type"] for s in gas} == {"variable", "fixed"}
+    for supplier in gas:
+        assert 0.03 < supplier["price_per_kwh_eur"] < 0.3, supplier["name"]
+        assert supplier["source_url"].startswith("https://"), supplier["name"]
+        assert supplier["contract_type"] == "variable" or supplier["duration_months"], supplier["name"]
+    assert len({(s["name"], s["contract_type"]) for s in gas}) == len(gas), "one gas card per supplier and type"
