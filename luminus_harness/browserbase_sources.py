@@ -62,6 +62,11 @@ ENERGY_SOURCE_SCOPES = {
     "brussels_public": ["leefmilieu.brussels", "brugel.brussels"],
     "flanders_public": ["vlaanderen.be", "vlaamsenutsregulator.be"],
     "wallonia_public": ["energie.wallonie.be", "cwape.be"],
+    # Grid operators answer meters, connections, outages and the capacity tariff.
+    "grid_operators": ["fluvius.be", "sibelga.be", "ores.be", "resa.be"],
+    # Belgian news, only for why-questions about prices and for news requests.
+    "news": ["vrt.be", "standaard.be", "tijd.be", "nieuwsblad.be"],
+    "consumer": ["test-aankoop.be", "mijnenergie.be"],
     "official_energy": ["creg.be", "vlaanderen.be", "vlaamsenutsregulator.be",
                         "leefmilieu.brussels", "brugel.brussels", "energie.wallonie.be", "cwape.be"],
     "trusted_energy": [
