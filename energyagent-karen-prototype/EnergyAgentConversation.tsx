@@ -23,7 +23,7 @@ type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[];
 // What Karen does while she answers, shown in the chat as she works.
 const stepSummary = (steps: Step[]) => {
     const route = steps.find((step) => step.kind === "route")
-    const jev = route && route.kind === "route" ? `Jev: ${ROUTE_LABELS[route.choice] || route.choice} ${percent(route.confidence)}` : ""
+    const jev = route && route.kind === "route" ? `Jev: ${ROUTE_LABELS[route.choice] || route.choice} ${percent(route.probabilities?.[route.choice] ?? route.confidence)}` : ""
     const searches = steps.filter((step) => step.kind === "search").length
     if (!searches) return `${jev}.`
     const pages = steps.reduce((total, step) => total + (step.kind === "read" ? step.pages.length : 0), 0)
