@@ -168,3 +168,18 @@ def test_gas_price_questions_get_the_gas_cards_whatever_jev_picks(api, monkeypat
         reply = ask(api, question)
         assert reply["processing"] == "market-data" and "Gasprijzen" in reply["answer"]
     api[2].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_jev_route_and_probabilities_are_reported_as_a_step(monkeypatch, enabled):
+    from luminus_harness.steps import answer_steps
+
+    steps = []
+    answer_steps.set(steps.append)
+    monkeypatch.setattr(jev, "_post_system_one", lambda _body: jev_answer("energy_other", 0.92))
+    assert await jev.route_question("Wat is een budgetmeter?") == "energy_other"
+    monkeypatch.setattr(jev, "_post_system_one", lambda _body: jev_answer("price", 0.4))
+    assert await jev.route_question("hmm") is None
+    assert steps[0]["kind"] == "route" and steps[0]["choice"] == "energy_other" and steps[0]["used"] is True
+    assert steps[0]["probabilities"]["energy_other"] == 0.92 and steps[0]["probabilities"]["price"] == 0.01
+    assert steps[1]["used"] is False, "A guess below the confidence bar is shown but not followed"

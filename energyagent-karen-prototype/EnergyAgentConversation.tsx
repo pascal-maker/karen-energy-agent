@@ -20,6 +20,75 @@ type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognizer; w
 type Source = { title: string; detail?: string; url?: string; excerpt?: string }
 type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_session_id?: string | null; comparison_status?: string }
 
+// What Karen does while she answers, shown in the chat as she works.
+const stepSummary = (steps: Step[]) => {
+    const route = steps.find((step) => step.kind === "route")
+    const jev = route && route.kind === "route" ? `Jev: ${ROUTE_LABELS[route.choice] || route.choice} ${percent(route.confidence)}` : ""
+    const searches = steps.filter((step) => step.kind === "search").length
+    if (!searches) return `${jev}.`
+    const pages = steps.reduce((total, step) => total + (step.kind === "read" ? step.pages.length : 0), 0)
+    const read = pages === 0 ? "vond geen bruikbare pagina" : `las ${pages === 1 ? "één pagina" : `${pages} pagina's`}`
+    const search = `Karen zocht ${searches === 1 ? "één keer" : `${searches} keer`} en ${read}.`
+    return jev ? `${jev} · ${search}` : search
+}
+type Step =
+    | { kind: "route"; choice: string; confidence: number; probabilities: Record<string, number>; used: boolean }
+    | { kind: "search"; sites: string[] }
+    | { kind: "read"; pages: { title: string; url: string }[] }
+// Jev's routes, in the words a visitor reads.
+const ROUTE_LABELS: Record<string, string> = {
+    price: "Prijsvraag", compare: "Aanbiedingen vergelijken", contract_advice: "Vast of variabel",
+    energy_other: "Energievraag", small_talk: "Praatje", off_topic: "Buiten energie",
+}
+const percent = (value: number) => `${Math.round(value * 100)}%`
+const siteList = (sites: string[]) => sites.length > 3 ? `${sites.slice(0, 3).join(", ")} en ${sites.length - 3} andere` : sites.join(", ")
+
+const hostOf = (url: string) => {
+    try {
+        return new URL(url).hostname.replace(/^www\./, "")
+    } catch {
+        return ""
+    }
+}
+
+// The route Karen takes, drawn as she goes: question, search (the sites light up when a page
+// from them is read), read (the pages), answer.
+function KarenFlow({ steps, writing }: { steps: Step[]; writing: boolean }) {
+    const sites = [...new Set(steps.flatMap((step) => step.kind === "search" ? step.sites : []))]
+    const pages = steps.flatMap((step) => step.kind === "read" ? step.pages : [])
+    const readHosts = pages.map((page) => hostOf(page.url))
+    const last = steps[steps.length - 1]
+    const route = steps.find((step) => step.kind === "route")
+    const stage = writing ? 4 : pages.length ? 3 : sites.length ? 2 : 1
+    const caption = writing
+        ? "Schrijft het antwoord…"
+        : last.kind === "search" ? `Zoekt op ${siteList(last.sites)}…`
+        : last.kind === "read" ? `Leest ${last.pages.map((page) => page.title).join(", ")}`
+        : last.used ? `Jev herkent: ${ROUTE_LABELS[last.choice] || last.choice}` : "Jev twijfelt · Karen kiest zelf de route"
+    const ranked = route && route.kind === "route"
+        ? Object.entries(route.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3)
+        : []
+    return <div className="ea-flow" role="status" aria-label="Wat Karen doet">
+        <ol className="ea-flow-stages">
+            {["Vraag", "Begrijpen", "Zoeken", "Lezen", "Antwoord"].map((label, index) => <li key={label} data-state={index < stage ? "done" : index === stage ? "active" : "todo"}>{label}</li>)}
+        </ol>
+        <p className="ea-flow-caption">{caption}</p>
+        {ranked.length > 0 && route && route.kind === "route" && <div className="ea-jev" aria-label="Kansen volgens Jev">
+            {ranked.map(([name, value]) => <div className="ea-jev-row" key={name} data-chosen={name === route.choice && route.used}>
+                <span>{ROUTE_LABELS[name] || name}</span>
+                <span className="ea-jev-bar"><span style={{ width: percent(value) }} /></span>
+                <span>{percent(value)}</span>
+            </div>)}
+        </div>}
+        <div className="ea-flow-sites">
+            {sites.map((site) => <span key={site} className="ea-site" data-read={readHosts.some((host) => host === site || host.endsWith(`.${site}`))}>{site}</span>)}
+        </div>
+        {pages.length > 0 && <div className="ea-flow-pages">
+            {pages.map((page) => <a key={page.url} className="ea-page" href={page.url} target="_blank" rel="noreferrer">{page.title}</a>)}
+        </div>}
+    </div>
+}
+
 type Props = {
     apiEndpoint: string
     sampleQuestion: string
@@ -119,6 +188,34 @@ const css = `
   .ea-answer, .ea-past-answer { max-width:94%; padding:15px 17px; border:1px solid #e8ece7; border-radius:4px 16px 16px; background:#fbfcfa; font-size:13px; line-height:1.65; white-space:pre-line; }
   .ea-state { display:flex; align-items:center; gap:8px; margin:4px 0 12px; color:#68776d; font-size:12px; }
   .ea-dot { width:8px; height:8px; border-radius:50%; background:#55a573; }
+  .ea-flow { max-width:94%; margin:4px 0 14px; padding:14px 14px 12px; border:1px solid #e3ebe2; border-radius:14px; background:linear-gradient(180deg,#f5f9f3,#fbfcfa); }
+  .ea-flow-stages { display:grid; grid-template-columns:repeat(5,1fr); margin:0; padding:0; list-style:none; }
+  .ea-flow-stages li { position:relative; display:grid; justify-items:center; gap:6px; color:#9aa79e; font-size:11px; font-weight:600; }
+  .ea-flow-stages li::before { content:""; position:relative; z-index:1; width:12px; height:12px; border-radius:50%; background:#dfe7de; box-shadow:0 0 0 3px #f6f9f4; transition:background .3s; }
+  .ea-flow-stages li:not(:first-child)::after { content:""; position:absolute; top:5px; right:50%; width:100%; height:2px; background:#dfe7de; transition:background .3s; }
+  .ea-flow-stages li[data-state="done"], .ea-flow-stages li[data-state="active"] { color:#234f38; }
+  .ea-flow-stages li[data-state="done"]::before, .ea-flow-stages li[data-state="active"]::before,
+  .ea-flow-stages li[data-state="done"]::after, .ea-flow-stages li[data-state="active"]::after { background:#55a573; }
+  .ea-flow-stages li[data-state="active"]::before { animation:ea-ring 1.2s ease-out infinite; }
+  .ea-flow-caption { margin:12px 0 8px; color:#4f6156; font-size:12px; text-align:center; }
+  .ea-flow-sites, .ea-flow-pages { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; }
+  .ea-flow-pages { margin-top:8px; }
+  .ea-site { padding:3px 9px; border:1px solid #dfe7de; border-radius:999px; color:#7d8b82; background:white; font-size:11px; animation:ea-pop .3s ease-out both; transition:all .3s; }
+  .ea-site[data-read="true"] { border-color:#55a573; color:#234f38; background:#eef6ef; }
+  .ea-page { max-width:100%; padding:6px 10px; border-radius:10px; color:#234f38; background:#e6f1e7; font-size:11px; font-weight:600; text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; animation:ea-pop .35s ease-out both; }
+  .ea-jev { display:grid; gap:5px; max-width:340px; margin:0 auto 10px; }
+  .ea-jev-row { display:grid; grid-template-columns:minmax(0,9em) 1fr 3.2em; gap:8px; align-items:center; color:#7d8b82; font-size:11px; }
+  .ea-jev-row span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ea-jev-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+  .ea-jev-row[data-chosen="true"] { color:#234f38; font-weight:600; }
+  .ea-jev-bar { height:6px; border-radius:3px; background:#e4ebe3; overflow:hidden; }
+  .ea-jev-bar span { display:block; height:100%; border-radius:3px; background:#b9cdbd; animation:ea-grow .6s ease-out both; transform-origin:left; }
+  .ea-jev-row[data-chosen="true"] .ea-jev-bar span { background:#55a573; }
+  @keyframes ea-grow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
+  .ea-flow-done { margin:-4px 0 12px; color:#8a978e; font-size:11px; }
+  @keyframes ea-pop { from { opacity:0; transform:translateY(4px) scale(.96); } to { opacity:1; transform:none; } }
+  @keyframes ea-ring { 0% { box-shadow:0 0 0 3px #f6f9f4, 0 0 0 3px #55a57366; } 100% { box-shadow:0 0 0 3px #f6f9f4, 0 0 0 11px #55a57300; } }
+  @media (prefers-reduced-motion: reduce) { .ea-jev-bar span, .ea-site, .ea-page, .ea-flow-stages li[data-state="active"]::before { animation:none; } }
   .ea-controls { display:grid; grid-template-columns:minmax(0,1fr) 48px; gap:8px; }
   .ea-input { min-width:0; height:48px; padding:0 14px; border:1px solid #dfe5de; border-radius:14px; outline:none; color:#27372c; background:white; font:inherit; font-size:13px; }
   .ea-input:focus { border-color:#72a584; box-shadow:0 0 0 3px #72a58420; }
@@ -225,6 +322,7 @@ export default function EnergyAgentConversation({
     const [busy, setBusy] = useState(false)
     // The answer as Karen writes it; replaced by the full reply when it arrives.
     const [draft, setDraft] = useState("")
+    const [steps, setSteps] = useState<Step[]>([])
     const [answerError, setAnswerError] = useState("")
     const [uploading, setUploading] = useState(false)
     const [sessionId, setSessionId] = useState("")
@@ -471,6 +569,7 @@ export default function EnergyAgentConversation({
         setFeedbackComment("")
         setBusy(true)
         setDraft("")
+        setSteps([])
         setStatus("Karen haalt relevante bronpassages op…")
         try {
             if (apiEndpoint.trim()) {
@@ -535,9 +634,18 @@ export default function EnergyAgentConversation({
                 buffer = buffer.slice(newline + 1)
                 newline = buffer.indexOf("\n")
                 if (!line) continue
-                const event = JSON.parse(line) as { delta?: string; reply?: Reply; error?: string }
+                const event = JSON.parse(line) as { delta?: string; reply?: Reply; error?: string; step?: Step }
                 if (event.reply) return event.reply
                 if (event.error) throw new Error(event.error)
+                if (event.step) {
+                    const step = event.step
+                    setSteps((previous) => [...previous, step])
+                    // A new search after text means the first pages did not answer: Karen starts over.
+                    if (text) {
+                        text = ""
+                        setDraft("")
+                    }
+                }
                 if (event.delta) {
                     text += event.delta
                     setDraft(text)
@@ -755,7 +863,9 @@ export default function EnergyAgentConversation({
                 <div className="ea-thread" aria-live="polite" ref={thread}>
                     {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.answer}</div></div>)}
                     {asked && <div className="ea-question">{asked}</div>}
-                    {(busy || uploading || listening || transcribing) && !draft && <div className="ea-state"><span className="ea-dot" />{status}</div>}
+                    {busy && steps.length > 0 && <KarenFlow steps={steps} writing={Boolean(draft)} />}
+                    {(busy || uploading || listening || transcribing) && !draft && !(busy && steps.length > 0) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
+                    {!busy && steps.length > 0 && reply && <p className="ea-flow-done">{stepSummary(steps)}</p>}
                     {busy && draft && <div className="ea-answer">{draft}</div>}
                     {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
                         ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>

@@ -11,9 +11,10 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .browserbase_sources import ENERGY_SOURCES, SUPPLIER_SOURCES, fetch_energy_page, named_supplier, search_energy_pages
+from .browserbase_sources import ENERGY_SOURCE_SCOPES, ENERGY_SOURCES, SUPPLIER_SOURCES, fetch_energy_page, named_supplier, search_energy_pages
 from .knowledge import KnowledgeChunk, STOP_WORDS, TOKEN_RE, retrieve
 from .market_prices import question_language
+from .steps import report_step as _report_step
 from .voice_agent import is_electricity_price_question
 
 
@@ -202,27 +203,47 @@ def _search_keywords(question: str) -> str:
     return " ".join(words)
 
 
-async def _search_public_pages(question: str, scope: str) -> list[dict[str, str]]:
-    """Search the sites that fit the question; a whole sentence over many sites often finds nothing, so retry narrower."""
+async def _search_scope(query: str, scope: str, max_pages: int = 2) -> list[dict[str, str]]:
+    _report_step("search", sites=ENERGY_SOURCE_SCOPES.get(scope, []))
+    pages = await search_energy_pages(query, scope, max_pages=max_pages)
+    if pages:
+        _report_step("read", pages=[{"title": page["title"], "url": page["url"]} for page in pages])
+    return pages
+
+
+def _search_attempts(question: str, scope: str) -> list[tuple[str, str]]:
+    """The (query, scope) searches to try in order; a whole sentence over many sites often finds nothing."""
     keywords = _search_keywords(question)
+    attempts: list[tuple[str, str]] = []
     # Topic sites first: news explains why prices move, grid operators know meters and connections.
     if _NEWS_TOPIC.search(question) and keywords:
-        pages = await search_energy_pages(keywords, "news", max_pages=2)
-        if pages:
-            return pages
+        attempts.append((keywords, "news"))
     if _GRID_TOPIC.search(question) and keywords and scope in ("official_energy", "flanders_public"):
-        pages = await search_energy_pages(keywords, "grid_operators", max_pages=2)
-        if pages:
-            return pages
-    pages = await search_energy_pages(question[:350], scope, max_pages=2)
-    if not pages and keywords and keywords.casefold() != question.casefold():
-        pages = await search_energy_pages(keywords, scope, max_pages=2)
-    if not pages and scope == "official_energy" and keywords:
+        attempts.append((keywords, "grid_operators"))
+    attempts.append((question[:350], scope))
+    if keywords and keywords.casefold() != question.casefold():
+        attempts.append((keywords, scope))
+    if scope == "official_energy" and keywords:
         # Most of Karen's visitors are in Flanders; the answer names the region its source covers.
-        pages = await search_energy_pages(keywords, "flanders_public", max_pages=2)
-    if not pages and scope == "official_energy" and keywords:
-        pages = await search_energy_pages(keywords, "consumer", max_pages=2)
+        attempts.append((keywords, "flanders_public"))
+        attempts.append((keywords, "consumer"))
+    return attempts
+
+
+async def _search_public_pages(question: str, scope: str, start: int = 0) -> list[dict[str, str]]:
+    """Pages from the first search that finds any, beginning at attempt `start`."""
+    pages, _ = await _search_from(question, scope, start)
     return pages
+
+
+async def _search_from(question: str, scope: str, start: int = 0) -> tuple[list[dict[str, str]], int]:
+    """Pages from the first search from `start` that finds any, and the index of the next search to try."""
+    attempts = _search_attempts(question, scope)
+    for index in range(start, len(attempts)):
+        pages = await _search_scope(*attempts[index])
+        if pages:
+            return pages, index + 1
+    return [], len(attempts)
 
 
 def _web_sources(pages: list[dict[str, str]], question: str) -> list[dict[str, str]]:
@@ -702,12 +723,15 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
             selected = [luminus_page_four]
     sources: list[dict[str, str]] = _pdf_sources(selected, question)
     live_source_status = "not-needed"
+    # Where the public search continues when an answer is not sure; None for curated pages and prices.
+    next_search: int | None = 0
 
     web_pages: list[dict[str, str]] = []
 
     # Conditionally fetch live data if it's about electricity prices or Luminus invoices
     if is_electricity_price_question(question):
-        web_pages = await search_energy_pages(
+        next_search = None
+        web_pages = await _search_scope(
             "CREG actuele maandelijkse gemiddelde elektriciteitsprijs België huishouden 3500 kWh totaal factuur",
             "creg",
             max_pages=1,
@@ -721,6 +745,7 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
                 "excerpt": page["content"][:360],
             })
     elif luminus_invoice_question:
+        next_search = None
         page = await fetch_energy_page("luminus_invoice")
         web_pages = [page] if page else [{
             "title": ENERGY_SOURCES["luminus_invoice"][0] + " (gecurateerde uitleg)",
@@ -744,6 +769,7 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
                 "excerpt": _LUMINUS_INVOICE_CURATED_CONTENT,
             })
     elif other_supplier_invoice_question:
+        next_search = None
         # No curated fallback text here: unlike Luminus, these suppliers have
         # no hand-verified knowledge-base passage. A failed live fetch means
         # saying so honestly and pointing to the official page directly,
@@ -784,8 +810,9 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
             fallback = await fetch_energy_page(fallback_key) if fallback_key else None
             if fallback:
                 web_pages = [fallback]
+                _report_step("read", pages=[{"title": fallback["title"], "url": fallback["url"]}])
         if not web_pages:
-            web_pages = await _search_public_pages(question, scope)
+            web_pages, next_search = await _search_from(question, scope)
         live_source_status = "checked" if web_pages else "failed"
         sources.extend(_web_sources(web_pages, question))
 
@@ -799,14 +826,14 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
             "live_source_status": live_source_status,
         }
 
-    searched = live_source_status != "not-needed"
     answer = await _grounded_answer(original_question, selected, web_pages, lang)
-    if _NOT_SURE.search(answer) and not searched:
-        # The knowledge base matched words but not the answer: look on the public sites instead.
-        web_pages = await _search_public_pages(question, _public_search_scope(question))
-        live_source_status = "checked" if web_pages else "failed"
-        if web_pages:
-            selected, sources = [], _web_sources(web_pages, question)
+    if _NOT_SURE.search(answer) and next_search is not None:
+        # The knowledge base or the first pages matched words but not the answer: try the next sites once.
+        scope = _public_search_scope(question)
+        more_pages, _ = await _search_from(question, scope, next_search)
+        if more_pages:
+            web_pages, selected, sources = more_pages, [], _web_sources(more_pages, question)
+            live_source_status = "checked"
             answer = await _grounded_answer(original_question, [], web_pages, lang)
     if _NOT_SURE.search(answer):
         return {"answer": _NO_SOURCE_REPLY[lang], "sources": [], "live_source_status": live_source_status}

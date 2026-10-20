@@ -32,6 +32,7 @@ def main() -> None:
         "luminus_harness/contract_advice.py": repo_root / "luminus_harness" / "contract_advice.py",
         "luminus_harness/feedback.py": repo_root / "luminus_harness" / "feedback.py",
         "luminus_harness/jev.py": repo_root / "luminus_harness" / "jev.py",
+        "luminus_harness/steps.py": repo_root / "luminus_harness" / "steps.py",
         "luminus_harness/market_prices.py": repo_root / "luminus_harness" / "market_prices.py",
         "luminus_harness/perplexity_agent.py": repo_root / "luminus_harness" / "perplexity_agent.py",
         "luminus_harness/petra_tts.py": repo_root / "luminus_harness" / "petra_tts.py",

@@ -122,3 +122,35 @@ async def test_a_searched_answer_that_still_is_not_sure_gets_the_honest_reply(mo
     result = await gemma_answer.answer_energy_question("Hoe vraag ik een nieuwe aansluiting aan?", [])
     assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["nl"]
     assert result["sources"] == []
+
+
+@pytest.mark.asyncio
+async def test_searches_and_pages_read_are_reported_as_steps(monkeypatch):
+    from luminus_harness.steps import answer_steps
+
+    steps = []
+    answer_steps.set(steps.append)
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search([], "grid_operators"))
+    await gemma_answer._search_public_pages("Hoe lees ik mijn digitale meter af?", "official_energy")
+    assert steps == [
+        {"kind": "search", "sites": ["fluvius.be", "sibelga.be", "ores.be", "resa.be"]},
+        {"kind": "read", "pages": [{"title": "grid_operators", "url": "https://www.grid_operators.test/x"}]},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pages_that_do_not_answer_lead_to_the_next_sites(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    calls = []
+
+    async def search(query, scope, max_pages=2):
+        calls.append(scope)
+        return [{"title": scope, "url": f"https://www.{scope}.test/x", "content": "tekst"}] if scope in ("grid_operators", "official_energy") else []
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    answers = iter(["Ik weet het niet zeker.", "Je verlaagt je piek door toestellen te spreiden."])
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: next(answers))
+    result = await gemma_answer.answer_energy_question("Hoe kan ik mijn capaciteitstarief verlagen?", [])
+    assert calls == ["grid_operators", "official_energy"]
+    assert result["answer"] == "Je verlaagt je piek door toestellen te spreiden."
+    assert [source["title"] for source in result["sources"]] == ["official_energy"]
