@@ -55,6 +55,29 @@ const voiceLanguage = (): VoiceLanguage => {
     const codes = listed.map((language) => language.toLowerCase().slice(0, 2))
     return (["nl", "fr", "en"] as const).find((code) => codes.includes(code)) ?? "nl"
 }
+type Turn = { question: string; answer: string }
+// The conversation is kept only in this visitor's browser; PDF answers are never stored or sent along.
+const HISTORY_KEY = "karen-chat-v1"
+const MAX_TURNS = 20
+const SENT_TURNS = 4
+function loadTurns(): Turn[] {
+    try {
+        const saved = JSON.parse(window.localStorage.getItem(HISTORY_KEY) || "[]")
+        return Array.isArray(saved)
+            ? saved.filter((turn) => typeof turn?.question === "string" && typeof turn?.answer === "string").slice(-MAX_TURNS)
+            : []
+    } catch {
+        return []
+    }
+}
+function saveTurns(turns: Turn[]) {
+    try {
+        if (turns.length) window.localStorage.setItem(HISTORY_KEY, JSON.stringify(turns.slice(-MAX_TURNS)))
+        else window.localStorage.removeItem(HISTORY_KEY)
+    } catch {
+        // Private windows or blocked storage: the chat still works, it just isn't kept.
+    }
+}
 const normalizeQuestion = (text: string) => text.trim().toLocaleLowerCase("nl-BE").replace(/[?!.]+$/, "")
 
 const css = `
@@ -82,7 +105,10 @@ const css = `
   .ea-sub { margin:9px 0 20px; color:#69766d; font-size:14px; line-height:1.55; }
   .ea-thread { flex:1; min-height:160px; overflow:auto; padding:4px 0 16px; }
   .ea-question { width:fit-content; max-width:88%; margin:0 0 14px auto; padding:12px 15px; border-radius:16px 16px 4px 16px; color:white; background:#234f38; font-size:13px; line-height:1.5; }
-  .ea-answer { max-width:94%; padding:15px 17px; border:1px solid #e8ece7; border-radius:4px 16px 16px; background:#fbfcfa; font-size:13px; line-height:1.65; white-space:pre-line; }
+  .ea-turn { margin-bottom:16px; }
+  .ea-new { padding:8px 12px; border:1px solid #d6e3d4; border-radius:10px; color:#234f38; background:#f2f7ef; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+  .ea-new:disabled { opacity:.55; cursor:wait; }
+  .ea-answer, .ea-past-answer { max-width:94%; padding:15px 17px; border:1px solid #e8ece7; border-radius:4px 16px 16px; background:#fbfcfa; font-size:13px; line-height:1.65; white-space:pre-line; }
   .ea-state { display:flex; align-items:center; gap:8px; margin:4px 0 12px; color:#68776d; font-size:12px; }
   .ea-dot { width:8px; height:8px; border-radius:50%; background:#55a573; }
   .ea-controls { display:grid; grid-template-columns:minmax(0,1fr) 48px; gap:8px; }
@@ -127,7 +153,7 @@ const css = `
     .ea h1 { font-size:28px; }
     .ea-sub { font-size:15px; }
     .ea-thread { min-height:0; }
-    .ea-question, .ea-answer { max-width:100%; font-size:15px; }
+    .ea-question, .ea-answer, .ea-past-answer { max-width:100%; font-size:15px; }
     .ea-chip { font-size:14px; }
     .ea-composer { position:sticky; bottom:0; z-index:2; margin:0 -16px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #edf0eb; }
     .ea-input { font-size:16px; }
@@ -184,6 +210,9 @@ export default function EnergyAgentConversation({
     const [question, setQuestion] = useState("")
     const [asked, setAsked] = useState("")
     const [reply, setReply] = useState<Reply | null>(null)
+    const [turns, setTurns] = useState<Turn[]>([])
+    const restored = useRef(false)
+    const thread = useRef<HTMLDivElement | null>(null)
     const [status, setStatus] = useState("Klaar om te helpen")
     const [busy, setBusy] = useState(false)
     const [answerError, setAnswerError] = useState("")
@@ -210,6 +239,43 @@ export default function EnergyAgentConversation({
     const petraPlayer = useRef<HTMLAudioElement | null>(null)
     const petraAudioUrlRef = useRef("")
 
+    // Declared before the restore below, so the first run never overwrites the saved chat with an empty one.
+    useEffect(() => {
+        if (!restored.current) return
+        const current = asked && reply && reply.processing !== "local-only" ? [{ question: asked, answer: reply.answer }] : []
+        saveTurns([...turns, ...current])
+    }, [turns, asked, reply])
+    useEffect(() => {
+        setTurns(loadTurns())
+        restored.current = true
+    }, [])
+    useEffect(() => {
+        if (thread.current) thread.current.scrollTop = thread.current.scrollHeight
+    }, [turns, asked, reply, busy])
+    // The exchange on screen moves into the history before a new question or PDF replaces it.
+    function archiveCurrent(): Turn[] {
+        const next = asked && reply && reply.processing !== "local-only"
+            ? [...turns, { question: asked, answer: reply.answer }].slice(-MAX_TURNS)
+            : turns
+        if (next !== turns) setTurns(next)
+        return next
+    }
+    async function newConversation() {
+        clearPetra()
+        if (listening) stopVoice()
+        if (comparisonSessionId && apiEndpoint.trim()) {
+            void fetch(`${endpointFor("comparison-session")}/${encodeURIComponent(comparisonSessionId)}`, { method: "DELETE" }).catch(() => undefined)
+        }
+        setComparisonSessionId("")
+        if (sessionId) await clearPdf()
+        setTurns([])
+        setAsked("")
+        setReply(null)
+        setAnswerError("")
+        setFeedback("idle")
+        setFeedbackOpen(false)
+        setStatus("Klaar om te helpen")
+    }
     useEffect(() => () => {
         // Leaving mid-recording: release the microphone without sending the clip.
         if (recorder.current) recorder.current.onstop = null
@@ -298,6 +364,7 @@ export default function EnergyAgentConversation({
             void fetch(`${endpointFor("comparison-session")}/${encodeURIComponent(comparisonSessionId)}`, { method: "DELETE" }).catch(() => undefined)
             setComparisonSessionId("")
         }
+        archiveCurrent()
         setUploading(true)
         setStatus("PDF wordt op Karen’s backend gelezen…")
         if (previousSession) {
@@ -353,6 +420,9 @@ export default function EnergyAgentConversation({
         // Speak the answer automatically only when the question itself was spoken;
         // typed questions get a "Beluister Karen" button instead.
         const askedByVoice = voiceDraft
+        const history = sessionId || comparisonSessionId
+            ? []
+            : archiveCurrent().slice(-SENT_TURNS).map((turn) => ({ question: turn.question, answer: turn.answer.slice(0, 800) }))
         clearPetra()
         if (listening) stopVoice()
         setAnswerError("")
@@ -370,7 +440,7 @@ export default function EnergyAgentConversation({
                 const response = await fetch(apiEndpoint, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ question: clean, ...(sessionId ? { session_id: sessionId } : {}), ...(comparisonSessionId ? { comparison_session_id: comparisonSessionId } : {}) }),
+                    body: JSON.stringify({ question: clean, ...(sessionId ? { session_id: sessionId } : {}), ...(comparisonSessionId ? { comparison_session_id: comparisonSessionId } : {}), ...(history.length ? { history } : {}) }),
                 })
                 if (!response.ok) {
                     const errorData = (await response.json().catch(() => null)) as { detail?: string } | null
@@ -606,13 +676,15 @@ export default function EnergyAgentConversation({
             <style dangerouslySetInnerHTML={{ __html: css }} />
             <header className="ea-top">
                 <div className="ea-brand"><img className="ea-mark" src={KAREN_LOGO} alt="Karen-logo" /><span><strong>EnergyAgent</strong><br />EEN HELDERE KIJK OP ENERGIE</span></div>
+                {(turns.length > 0 || Boolean(asked)) && <button className="ea-new" type="button" onClick={() => void newConversation()} disabled={busy || uploading}>Nieuw gesprek</button>}
             </header>
             <div className="ea-body">
             <section className="ea-panel ea-main">
-                {!asked && <><div className="ea-kicker">Energy co-pilot</div>
+                {!asked && !turns.length && <><div className="ea-kicker">Energy co-pilot</div>
                 <h1>Praat met Karen.<br />Begrijp je energie.</h1>
                 <p className="ea-sub">Vraag naar je factuur, energieverbruik of verwarming. Karen laat zien waarop haar antwoord steunt.</p></>}
-                <div className="ea-thread" aria-live="polite">
+                <div className="ea-thread" aria-live="polite" ref={thread}>
+                    {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.answer}</div></div>)}
                     {asked && <div className="ea-question">{asked}</div>}
                     {(busy || uploading || listening || transcribing) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
                     {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!)}>Beluister Karen</button>)}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
@@ -629,7 +701,7 @@ export default function EnergyAgentConversation({
                             {feedback === "failed" && <span role="status">Feedback versturen lukte niet. Probeer het later opnieuw.</span>}
                         </div>)}{(sources.length > 0 || Boolean(reply.suggested_sources?.length)) && <a className="ea-jump" href="#ea-sources">Bekijk de bronnen ↓</a>}</>}
                 </div>
-                {!asked && <div className="ea-chips">
+                {!asked && !turns.length && <div className="ea-chips">
                     <button className="ea-chip" onClick={() => void ask(sampleQuestion)}>{sampleQuestion}</button>
                     <button className="ea-chip" onClick={() => void ask("Wat kost stroom vandaag?")}>Wat kost stroom vandaag?</button>
                 </div>}
@@ -645,7 +717,7 @@ export default function EnergyAgentConversation({
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
                 </div>
-                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend.</p>
+                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
             </section>
             <aside className="ea-rail">
                 <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>
