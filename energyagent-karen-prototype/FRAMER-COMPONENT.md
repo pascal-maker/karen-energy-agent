@@ -1,5 +1,15 @@
 # Framer Code Component
 
+## Answers appear while Karen writes, and a backup model — 20 October 2026
+
+The component first posts to `/api/answer-stream`, which takes the same body as `/api/answer`. It answers with JSON lines: `{"delta": "..."}` while Gemma writes, then `{"reply": {...}}` with the same reply `/api/answer` returns, or `{"error": "...", "status": 503}`. The text appears in the chat as it arrives. A backend without the route (404 or 405) gets the plain `/api/answer` call instead. Only the final answer of a sourced energy question streams. Prices, small talk and comparisons arrive whole.
+
+When Gemma is overloaded (429 or 5xx), unreachable or empty, the backend answers the same prompt with an OpenAI model (`KAREN_BACKUP_MODEL`, default `gpt-5-mini`), using the `OPENAI_API_KEY` it already has for transcription. Without that key the Gemma error is shown as before. The footer mentions the backup model.
+
+## Browser voice when Petra is unavailable — 20 October 2026
+
+Petra runs on the Babbeldoos ZeroGPU Space, which has a daily GPU limit per Hugging Face account. When `/api/petra-speech` fails, the component now reads the answer with the browser's own `speechSynthesis` voice in the answer's language (nl-BE, fr-BE or en-GB), preferring an on-device voice. A note says Petra is unavailable and a "Stop voorlezen" button stops the reading. Petra stays the first choice on every answer.
+
 ## Chat history and follow-up questions — 20 October 2026
 
 - The whole conversation stays on screen, and it comes back after a reload. It is stored only in the

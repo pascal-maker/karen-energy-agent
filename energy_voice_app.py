@@ -13,7 +13,7 @@ import os# used to load the environment variables
 import re# used to recognize electricity price questions
 import secrets
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from copy import deepcopy# used to create a deep copy of the state
 from pathlib import Path# used to handle file paths
 from typing import Any# used for type hints
@@ -24,7 +24,7 @@ import numpy as np# used to handle audio data
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from agents import Runner, TResponseInputItem, set_tracing_disabled# used to create the agent
 from agents.voice import AudioInput, VoicePipeline, VoicePipelineConfig, VoiceWorkflowBase# used to create the voice agent
@@ -50,6 +50,7 @@ from luminus_harness.gemma_answer import (
     GemmaAPIError,
     answer_energy_question,
     answer_small_talk,
+    answer_stream,
     standalone_question,
     mentions_energy,
 )
@@ -851,6 +852,56 @@ async def api_delete_comparison_session(comparison_session_id: str, request: Req
 async def api_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
     """Route public comparisons before Gemma; never send PDF sessions externally."""
     _allow_api_request(request)
+    return await _rated_answer(body)
+
+
+@api_app.post("/api/answer-stream")
+async def api_answer_stream(body: AnswerRequest, request: Request) -> StreamingResponse:
+    """The same answer as /api/answer, as JSON lines: the text while it is written, then the full reply.
+
+    Lines are {"delta": text}, then {"reply": {...}} or {"error": detail, "status": code}."""
+    _allow_api_request(request)
+    # Gemma writes from a worker thread. Each piece is queued right there, before the worker
+    # returns, so the text always comes before the reply; the event only wakes the reader.
+    pending: deque[dict[str, Any] | None] = deque()
+    wake = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def push(item: dict[str, Any] | None) -> None:
+        pending.append(item)
+        loop.call_soon_threadsafe(wake.set)
+
+    async def produce() -> None:
+        answer_stream.set(lambda text: push({"delta": text}))
+        try:
+            push({"reply": await _rated_answer(body)})
+        except HTTPException as error:
+            push({"error": error.detail, "status": error.status_code})
+        except Exception:
+            push({"error": "Karen kon deze vraag nu niet beantwoorden. Probeer het opnieuw.", "status": 500})
+        finally:
+            push(None)
+
+    async def lines():
+        # The task gets its own copy of the context, so the stream target stays with this request.
+        task = asyncio.create_task(produce())
+        try:
+            while True:
+                await wake.wait()
+                wake.clear()
+                while pending:
+                    item = pending.popleft()
+                    if item is None:
+                        return
+                    yield json.dumps(item, ensure_ascii=False) + "\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(lines(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+async def _rated_answer(body: AnswerRequest) -> dict[str, Any]:
     reply = await _answer(body)
     # Only public answers can be rated; PDF and offer-comparison replies carry personal inputs.
     if not body.session_id and reply.get("processing") != "local-only" and not reply.get("comparison_status"):
