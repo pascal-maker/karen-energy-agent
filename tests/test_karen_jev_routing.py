@@ -158,12 +158,13 @@ def test_gas_without_gas_cards_stays_on_the_source_path(api, monkeypatch):
     assert ask(api, "Hoeveel kost aardgas per kWh?")["answer"] == "Bestaand antwoord"
 
 
-@pytest.mark.parametrize("choice", ["price", "energy_other"])
+@pytest.mark.parametrize("choice", ["price", "energy_other", "small_talk", "off_topic", "contract_advice"])
 def test_gas_price_questions_get_the_gas_cards_whatever_jev_picks(api, monkeypatch, choice):
     from tests.test_karen_gas_prices import with_gas
 
     route_to(monkeypatch, choice)
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
-    reply = ask(api, "Hey kan je mij de prijs van gas geven")
-    assert reply["processing"] == "market-data" and "Gasprijzen" in reply["answer"]
+    for question in ("Hey kan je mij de prijs van gas geven", "Vertel me eens de gasprijzen"):
+        reply = ask(api, question)
+        assert reply["processing"] == "market-data" and "Gasprijzen" in reply["answer"]
     api[2].assert_not_awaited()
