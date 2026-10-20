@@ -66,7 +66,7 @@ def test_dutch_reply_shows_todays_prices_and_only_verified_suppliers_cheapest_fi
     assert "rond 0u, 3u en 4u" in answer
     assert answer.index("Frank Energie Variabel: 18,7 cent/kWh") < answer.index("Luminus BasicFlex Online: 19,2 cent/kWh")
     assert "Engie" not in answer and "Mega" not in answer
-    assert "vergelijk aanbiedingen" in answer
+    assert "postcode" not in answer, "No comparison pitch the user didn't ask for"
     assert reply["processing"] == "market-data"
     assert [source["url"] for source in reply["sources"]] == [
         "https://www.energy-charts.info/",
@@ -78,7 +78,7 @@ def test_dutch_reply_shows_todays_prices_and_only_verified_suppliers_cheapest_fi
 def test_english_question_gets_an_english_reply():
     reply = market_prices.market_price_reply(market(), market_prices.question_language("look up energy prices"))
     assert reply["answer"].startswith("The Belgian wholesale electricity price (day-ahead) today averages 22.2 cents per kWh")
-    assert "compare offers" in reply["answer"]
+    assert "postcode" not in reply["answer"]
 
 
 def test_an_older_spot_day_is_named_by_its_date():
@@ -178,7 +178,7 @@ def test_french_price_question_gets_a_french_reply():
     assert market_prices.is_market_price_question(question)
     reply = market_prices.market_price_reply(market(), market_prices.question_language(question))
     assert reply["answer"].startswith("Le prix de gros de l'électricité en Belgique")
-    assert "comparer les offres" in reply["answer"]
+    assert "code postal" not in reply["answer"]
 
 
 @pytest.mark.asyncio

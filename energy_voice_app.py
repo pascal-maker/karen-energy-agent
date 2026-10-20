@@ -872,7 +872,7 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
             values = {**extract_inputs(question, "region"), **extract_additional_inputs(question)}
             return _with_petra_speech(await _comparison_sessions.submit(values, None))
         if route in (None, "price"):
-            # A plain price question gets today's prices; the comparison form is only offered.
+            # A plain price question gets today's prices; the comparison form starts only when asked for.
             prices = await answer_market_price_question(question, recognised=route == "price")
             if prices is not None:
                 return _with_petra_speech({**prices, "comparison_session_id": None})
