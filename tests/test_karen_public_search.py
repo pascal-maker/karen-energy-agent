@@ -45,3 +45,80 @@ def test_tariff_words_count_as_energy(question):
 
 def test_cheapest_fixed_gas_contract_is_a_gas_price_question():
     assert market_prices.is_gas_price_question("Wat is het goedkoopste vaste gascontract?")
+
+
+@pytest.mark.parametrize("question", [
+    "Wat doet de VREG?", "Wat is een budgetmeter?", "Is een thuisbatterij interessant?",
+    "Wat kost een laadpaal thuis?", "Hoe lees ik mijn digitale meter af?", "Wat is energiedelen?",
+])
+def test_grid_and_home_energy_words_count_as_energy(question):
+    assert gemma_answer.mentions_energy(question)
+
+
+@pytest.mark.parametrize("question", ["Hoeveel kilometers is Gent?", "Wie wint de Ronde van Vlaanderen?"])
+def test_other_questions_stay_off_topic(question):
+    assert not gemma_answer.mentions_energy(question)
+
+
+def recording_search(calls, hit_scope):
+    async def search(query, scope, max_pages=2):
+        calls.append((query, scope))
+        return [{"title": scope, "url": f"https://www.{scope}.test/x", "content": "tekst"}] if scope == hit_scope else []
+    return search
+
+
+@pytest.mark.asyncio
+async def test_meter_questions_ask_the_grid_operators_first(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search(calls, "grid_operators"))
+    pages = await gemma_answer._search_public_pages("Hoe lees ik mijn digitale meter af?", "official_energy")
+    assert pages and calls == [("lees digitale meter", "grid_operators")]
+
+
+@pytest.mark.asyncio
+async def test_why_prices_rise_asks_the_news_first(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search(calls, "news"))
+    pages = await gemma_answer._search_public_pages("Waarom stijgt de gasprijs?", "official_energy")
+    assert pages and calls == [("stijgt gasprijs", "news")]
+
+
+@pytest.mark.asyncio
+async def test_national_consumer_sites_are_the_last_try(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search(calls, "consumer"))
+    assert await gemma_answer._search_public_pages("Wat kost een laadpaal thuis?", "official_energy")
+    assert [scope for _, scope in calls][-2:] == ["flanders_public", "consumer"]
+
+
+@pytest.mark.asyncio
+async def test_a_knowledge_base_miss_searches_the_public_sites(monkeypatch):
+    from luminus_harness.knowledge import KnowledgeChunk
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    chunk = KnowledgeChunk(page=2, text="Netkosten netkosten worden aangerekend door de netbeheerder via de leverancier.", urls=())
+    monkeypatch.setattr(gemma_answer, "retrieve", lambda *_args, **_kwargs: [chunk])
+    monkeypatch.setattr(gemma_answer, "_strong_local_match", lambda *_: True)
+    calls = []
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search(calls, "flanders_public"))
+    prompts = []
+
+    def generate(prompt, *_args):
+        prompts.append(prompt)
+        return "Ik weet het niet zeker." if len(prompts) == 1 else "Netkosten zijn de kosten van het net."
+
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
+    result = await gemma_answer.answer_energy_question("Wat zijn netkosten?", [chunk])
+    assert result["answer"] == "Netkosten zijn de kosten van het net."
+    assert [source["url"] for source in result["sources"]] == ["https://www.flanders_public.test/x"]
+    assert "Geen passend PDF-fragment gevonden." in prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_a_searched_answer_that_still_is_not_sure_gets_the_honest_reply(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search([], "official_energy"))
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: "Ik weet het niet zeker, de pagina gaat over iets anders.")
+    result = await gemma_answer.answer_energy_question("Hoe vraag ik een nieuwe aansluiting aan?", [])
+    assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["nl"]
+    assert result["sources"] == []
