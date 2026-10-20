@@ -185,7 +185,7 @@ async function main() {
     assert.equal(document.querySelector(".ea-answer").textContent, "Het capaciteitstarief rekent je piek aan.")
     // Karen's work shows as steps while she searches, then as one summary line.
     responses.push({ stream: [
-        { step: { kind: "route", choice: "energy_other", confidence: 0.92, used: true, probabilities: { energy_other: 0.92, price: 0.05, small_talk: 0.01, compare: 0.02 } } },
+        { step: { kind: "route", choice: "energy_other", confidence: 0.9, used: true, probabilities: { energy_other: 0.92, price: 0.05, small_talk: 0.01, compare: 0.02 } } },
         { step: { kind: "search", sites: ["fluvius.be", "sibelga.be", "ores.be", "resa.be"] } },
         { step: { kind: "read", pages: [{ title: "Digitale meter aflezen", url: "https://www.fluvius.be/meter" }] } },
     ], later: [{ delta: "Druk op knop 1." }, { reply: { answer: "Druk op knop 1.", comparison_session_id: null, sources: [] } }] })
