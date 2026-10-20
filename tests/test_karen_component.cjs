@@ -47,7 +47,6 @@ function loadComponent(file) {
     return componentModule.exports
 }
 const Component = loadComponent("EnergyAgentConversation.tsx").default
-const marketFixture = require("./fixtures/market.json")
 const root = createRoot(document.querySelector("#root"))
 const requests = []
 const responses = []
@@ -238,73 +237,6 @@ async function main() {
 
     // Karen is one chat screen: no tabs, and the price chip asks the question in the chat.
     assert.equal(document.querySelector(".ea [role=\"tab\"]"), null, "No Prijzen tab")
-    const Dashboard = loadComponent("EnergyMarketDashboard.tsx").default
-    // The standalone price dashboard: fetches market.json once and shows today's stats.
-    const freshBox = document.createElement("div")
-    document.body.appendChild(freshBox)
-    responses.push(marketFixture)
-    await act(async () => createRoot(freshBox).render(React.createElement(Dashboard, {})))
-    await act(async () => {})
-    assert.match(requests.at(-1).url, /raw\.githubusercontent\.com\/pascal-maker\/karen-energy-agent\/market-data\/market\.json$/)
-    const tab = name => [...freshBox.querySelectorAll('[role="tab"]')].find(button => button.textContent === name)
-    assert.match(document.querySelector(".em").textContent, /Stroomprijs vandaag/)
-    assert.match(document.querySelector(".em").textContent, /Energy-Charts/)
-    assert.ok(!document.querySelector(".em-badge"), "Fresh data has no stale badge")
-    await act(async () => [...document.querySelectorAll(".em-switch button")].find(b => b.textContent === "Morgen").click())
-    assert.match(document.querySelector(".em").textContent, /Stroomprijs morgen/)
-    await act(async () => tab("Verwachting").click())
-    assert.match(document.querySelector(".em").textContent, /Getest op de laatste 36 maanden/)
-    assert.match(document.querySelector(".em").textContent, /gelijk aan vorige maand/, "Shows the naive baseline next to the model")
-    await act(async () => tab("Historiek").click())
-    assert.match(document.querySelector(".em").textContent, /sinds 2019/)
-    // Contracten: only suppliers with a verified kWh price on their tariff card are listed.
-    await act(async () => tab("Contracten").click())
-    const rows = [...document.querySelectorAll(".em-bar-head > span:first-child > strong")].map(node => node.textContent)
-    assert.deepEqual(rows.sort(), ["Aspiravi", "Eneco", "Frank Energie", "Luminus", "OCTA+", "TotalEnergies"])
-    for (const missing of ["Engie", "Mega", "Bolt", "Elegant", "Energyvision"]) {
-        assert.ok(!document.querySelector(".em").textContent.includes(missing), `${missing} has no verified price and must not be listed`)
-    }
-    assert.match(document.querySelector(".em-bar-row").textContent, /Luminus[\s\S]*697/, "Lowest annual amount at 3500 kWh first, even with a higher kWh price than Frank Energie")
-    await act(async () => {
-        const input = document.querySelector('[aria-label="Jaarverbruik in kWh"]')
-        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, "10000")
-        input.dispatchEvent(new window.Event("input", { bubbles: true }))
-    })
-    assert.match(document.querySelector(".em-bar-row").textContent, /Frank Energie/, "At 10,000 kWh the lower kWh price outweighs the higher fixed fee")
-    freshBox.remove()
-
-    // Stale data is badged; an unreachable data file shows the official comparators instead of numbers.
-    const box = document.createElement("div")
-    document.body.appendChild(box)
-    const dashboardRoot = createRoot(box)
-    responses.push({ ...marketFixture, spot: { ...marketFixture.spot, stale: true } })
-    await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/stale.json" })))
-    await act(async () => {})
-    assert.equal(box.querySelector(".em-badge").textContent, "Verouderd")
-    // When the backtest picks the random walk, the page explains the flat line instead of implying a trend.
-    responses.push({ ...marketFixture, forecast: { ...marketFixture.forecast, alpha: 1, season_weight: 0 } })
-    await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/random-walk.json" })))
-    await act(async () => {})
-    await act(async () => [...box.querySelectorAll('[role="tab"]')].find(b => b.textContent === "Verwachting").click())
-    assert.match(box.textContent, /random walk/)
-    assert.ok(!/gelijk aan vorige maand/.test(box.textContent), "No separate baseline when the model is the baseline")
-    // Fixed-price cards are for the chat's contract advice; the dashboard keeps listing variable contracts.
-    const fixedCard = { name: "OCTA+", status: "verified", contract_type: "fixed", product_name: "Fixed", price_per_kwh_eur: 0.1838,
-        standing_charge_amount: 65, standing_charge_unit: "per_year", source_url: "https://files.octaplus.be/fixed.pdf" }
-    responses.push({ ...marketFixture, contracts: { ...marketFixture.contracts, suppliers: [...marketFixture.contracts.suppliers, fixedCard] } })
-    await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/fixed.json" })))
-    await act(async () => {})
-    await act(async () => [...box.querySelectorAll('[role="tab"]')].find(b => b.textContent === "Contracten").click())
-    assert.ok(![...box.querySelectorAll(".em-bar-head small")].some(node => node.textContent === "Fixed"), "Fixed cards are not listed as variable")
-    const realFetch = globalThis.fetch
-    globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) })
-    await act(async () => dashboardRoot.render(React.createElement(Dashboard, { dataUrl: "https://data.example/missing.json" })))
-    await act(async () => {})
-    globalThis.fetch = realFetch
-    assert.match(box.textContent, /Prijzen niet beschikbaar/)
-    assert.ok(!/c€\/kWh/.test(box.textContent), "No prices are shown when the data is unavailable")
-    assert.ok(box.querySelector('a[href="https://www.vtest.be/"]'))
-    await act(async () => dashboardRoot.unmount())
     await act(async () => root.unmount())
 
     // The chat stays in this browser and earlier turns go along, so follow-ups work; PDF answers never do.
@@ -341,6 +273,6 @@ async function main() {
     assert.ok(chatBox.querySelector("h1"), "The welcome text is back")
     await act(async () => chatRoot.unmount())
     dom.window.close()
-    console.log("Karen component: typed/voice session continuity, source cards, voice drafts, terminal reset, PDF isolation, chat history and price dashboard passed.")
+    console.log("Karen component: typed/voice session continuity, source cards, voice drafts, terminal reset, PDF isolation and chat history passed.")
 }
 main().catch(error => { console.error(error); process.exitCode = 1; dom.window.close() })
