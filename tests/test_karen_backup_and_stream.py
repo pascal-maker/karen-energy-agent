@@ -157,3 +157,30 @@ def test_text_written_in_a_worker_thread_arrives_before_the_reply(api, monkeypat
     events = lines(client.post("/api/answer-stream", json={"question": "Tel tot drie over energie"}))
     assert [event.get("delta") for event in events[:3]] == ["Een ", "twee ", "drie."], events
     assert events[3]["reply"]["answer"] == "Een twee drie."
+
+
+@pytest.mark.parametrize("pieces", [
+    ["thoughtGroene stroom is ", "hernieuwbaar."],
+    ["thou", "ght\n", "Groene stroom is ", "hernieuwbaar."],
+    ["  thought Groene stroom is hernieuwbaar."],
+])
+def test_a_leaked_thought_label_never_reaches_the_answer(monkeypatch, pieces):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "urlopen", lambda request, timeout: FakeStream([chunk({"text": piece}) for piece in pieces]))
+    deltas = []
+    text = gemma_answer._generate_gemma("vraag", gemma_answer._SYSTEM_INSTRUCTION, deltas.append)
+    assert text.startswith("Groene stroom") and "".join(deltas) == text
+
+
+def test_short_answers_and_real_words_are_kept():
+    assert gemma_answer._drop_thought_marker("thoughtful advice") == "thoughtful advice"
+    assert gemma_answer._drop_thought_marker("Ja.") == "Ja."
+    assert gemma_answer._drop_thought_marker("thought\nJa.") == "Ja."
+
+
+def test_a_short_streamed_answer_is_not_lost(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "urlopen", lambda request, timeout: FakeStream([chunk({"text": "Ja."})]))
+    deltas = []
+    assert gemma_answer._generate_gemma("vraag", gemma_answer._SYSTEM_INSTRUCTION, deltas.append) == "Ja."
+    assert deltas == ["Ja."]
