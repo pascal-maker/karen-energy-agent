@@ -55,6 +55,14 @@ const voiceLanguage = (): VoiceLanguage => {
     const codes = listed.map((language) => language.toLowerCase().slice(0, 2))
     return (["nl", "fr", "en"] as const).find((code) => codes.includes(code)) ?? "nl"
 }
+// Language of an answer, for the browser voice: Karen answers in the language of the question.
+const answerLanguage = (text: string): VoiceLanguage => {
+    const words = text.toLowerCase().match(/[a-zàâçéèêëîïôûùüÿœ']+/g) || []
+    const count = (list: string[]) => words.filter((word) => list.includes(word)).length
+    const scores = { nl: count(["de", "het", "een", "en", "is", "je", "u", "van", "voor"]), fr: count(["le", "la", "les", "est", "et", "des", "vous", "pour", "une"]), en: count(["the", "is", "and", "you", "your", "for", "of", "to", "a"]) }
+    const best = (Object.keys(scores) as VoiceLanguage[]).sort((a, b) => scores[b] - scores[a])[0]
+    return scores[best] ? best : voiceLanguage()
+}
 type Turn = { question: string; answer: string }
 // The conversation is kept only in this visitor's browser; PDF answers are never stored or sent along.
 const HISTORY_KEY = "karen-chat-v1"
@@ -225,6 +233,7 @@ export default function EnergyAgentConversation({
     const [voiceDraft, setVoiceDraft] = useState(false)
     const [voiceError, setVoiceError] = useState("")
     const [petraBusy, setPetraBusy] = useState(false)
+    const [browserSpeaking, setBrowserSpeaking] = useState(false)
     const [petraError, setPetraError] = useState("")
     const [petraAudioUrl, setPetraAudioUrl] = useState("")
     const [recognition, setRecognition] = useState<SpeechRecognizer | null>(null)
@@ -284,6 +293,7 @@ export default function EnergyAgentConversation({
         petraAbort.current?.abort()
         petraPlayer.current?.pause()
         if (petraAudioUrlRef.current) URL.revokeObjectURL(petraAudioUrlRef.current)
+        window.speechSynthesis?.cancel()
     }, [])
 
     function endpointFor(path: "upload" | "session" | "comparison-session" | "petra-speech" | "transcribe" | "feedback"): string {
@@ -306,9 +316,31 @@ export default function EnergyAgentConversation({
         setPetraAudioUrl("")
         setPetraBusy(false)
         setPetraError("")
+        if (typeof window !== "undefined") window.speechSynthesis?.cancel()
+        setBrowserSpeaking(false)
     }
 
-    async function playPetra(token: string) {
+    // Petra runs on a shared free GPU service with a daily limit; when it fails,
+    // the browser's own voice reads the answer instead. Returns false without one.
+    function speakWithBrowser(text: string): boolean {
+        const synth = window.speechSynthesis
+        if (!synth || typeof SpeechSynthesisUtterance === "undefined") return false
+        const lang = SPEECH_LOCALES[answerLanguage(text)]
+        const voices = synth.getVoices().filter((voice) => voice.lang?.toLowerCase().startsWith(lang.slice(0, 2)))
+        // Prefer voices that run on the device, so the text stays in the browser.
+        const voice = voices.find((item) => item.lang === lang && item.localService) || voices.find((item) => item.localService) || voices.find((item) => item.lang === lang) || voices[0]
+        const utterance = new SpeechSynthesisUtterance(text.replace(/[*#_`]+/g, "").replace(/\s+/g, " ").trim())
+        utterance.lang = lang
+        if (voice) utterance.voice = voice
+        utterance.onend = () => setBrowserSpeaking(false)
+        utterance.onerror = () => setBrowserSpeaking(false)
+        synth.cancel()
+        synth.speak(utterance)
+        setBrowserSpeaking(true)
+        return true
+    }
+
+    async function playPetra(token: string, text: string) {
         clearPetra()
         const controller = new AbortController()
         petraAbort.current = controller
@@ -335,7 +367,9 @@ export default function EnergyAgentConversation({
             }
         } catch {
             if (!controller.signal.aborted) {
-                setPetraError("Karens stem is nu niet beschikbaar. Je kunt het antwoord hierboven lezen.")
+                setPetraError(speakWithBrowser(text)
+                    ? "Petra is nu niet beschikbaar, daarom leest de stem van je browser het antwoord voor."
+                    : "Karens stem is nu niet beschikbaar. Je kunt het antwoord hierboven lezen.")
             }
         } finally {
             if (petraAbort.current === controller) {
@@ -451,7 +485,7 @@ export default function EnergyAgentConversation({
                 if ("comparison_session_id" in data) setComparisonSessionId(data.comparison_session_id || "")
                 setReply(data)
                 if (askedByVoice && !sessionId && data.processing !== "local-only") {
-                    if (data.petra_speech_token) void playPetra(data.petra_speech_token)
+                    if (data.petra_speech_token) void playPetra(data.petra_speech_token, data.answer)
                     else setPetraError("Voor dit antwoord is geen audio beschikbaar. Je kunt het antwoord hierboven lezen.")
                 }
                 setStatus(data.comparison_status === "collecting"
@@ -687,7 +721,7 @@ export default function EnergyAgentConversation({
                     {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.answer}</div></div>)}
                     {asked && <div className="ea-question">{asked}</div>}
                     {(busy || uploading || listening || transcribing) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
-                    {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!)}>Beluister Karen</button>)}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
+                    {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
                         ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>
                         : <div className="ea-feedback">
                             {feedbackOpen ? <>
@@ -717,7 +751,7 @@ export default function EnergyAgentConversation({
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
                 </div>
-                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
+                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
             </section>
             <aside className="ea-rail">
                 <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>

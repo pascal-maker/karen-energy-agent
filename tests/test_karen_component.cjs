@@ -55,6 +55,7 @@ globalThis.fetch = async (url, options) => {
     if (options.method === "DELETE") return { ok: true, json: async () => ({ deleted: true }) }
     assert.ok(responses.length, "Unexpected request")
     const reply = responses.shift()
+    if (reply.status) return { ok: false, status: reply.status, json: async () => ({ detail: "Petra is nu niet beschikbaar." }) }
     if (typeof reply.blob === "function") return { ok: true, blob: reply.blob }
     return { ok: true, json: async () => reply }
 }
@@ -105,7 +106,7 @@ async function main() {
     assert.equal(requests.at(-1).body.comparison_session_id, token)
     assert.equal(document.querySelector(".ea-answer").textContent, success.answer)
     assert.equal(document.querySelector(".ea-rail a").href, success.sources[0].url)
-    assert.equal(spoken.length, 0, "Browser speech synthesis is no longer used; Petra plays only on request")
+    assert.equal(spoken.length, 0, "The browser voice is only a fallback when Petra fails")
     assert.equal(mic().disabled, false)
     responses.push({ answer: "FAQ antwoord", comparison_session_id: null })
     await typed("Waarom verschilt mijn voorschot?")
@@ -163,6 +164,18 @@ async function main() {
     await act(async () => {})
     assert.equal(petraCalls(), petraBefore + 1, "Spoken question: answer is read aloud")
     assert.deepEqual(requests.at(-1).body, { token: "voice-token" })
+
+    // Petra's daily GPU quota can run out: the browser's own voice reads the answer instead.
+    responses.push({ answer: "Het sociaal tarief is een korting.", comparison_session_id: null, petra_speech_token: "busy-token" })
+    responses.push({ status: 503 })
+    await voice("Wat is het sociaal tarief?")
+    await act(async () => {})
+    assert.equal(spoken.at(-1), "Het sociaal tarief is een korting.")
+    assert.match(document.querySelector(".ea-chat, #root").textContent, /Petra is nu niet beschikbaar, daarom leest/)
+    const stop = [...document.querySelectorAll(".ea-voice-play")].find(button => button.textContent === "Stop voorlezen")
+    assert.ok(stop, "A stop button shows while the browser voice reads")
+    await act(async () => stop.click())
+    assert.equal([...document.querySelectorAll(".ea-voice-play")].some(button => button.textContent === "Stop voorlezen"), false)
 
     // No built-in speech recognition (e.g. Chrome on iPhone): record a clip, the backend
     // transcribes it, and the text lands in the input as a draft to check first.

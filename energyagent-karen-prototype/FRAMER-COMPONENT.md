@@ -1,5 +1,9 @@
 # Framer Code Component
 
+## Browser voice when Petra is unavailable — 20 October 2026
+
+Petra runs on the Babbeldoos ZeroGPU Space, which has a daily GPU limit per Hugging Face account. When `/api/petra-speech` fails, the component now reads the answer with the browser's own `speechSynthesis` voice in the answer's language (nl-BE, fr-BE or en-GB), preferring an on-device voice. A note says Petra is unavailable and a "Stop voorlezen" button stops the reading. Petra stays the first choice on every answer.
+
 ## Chat history and follow-up questions — 20 October 2026
 
 - The whole conversation stays on screen, and it comes back after a reload. It is stored only in the
