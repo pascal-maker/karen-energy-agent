@@ -1,5 +1,15 @@
 # Framer Code Component
 
+## Chat history and follow-up questions — 20 October 2026
+
+- The whole conversation stays on screen, and it comes back after a reload. It is stored only in the
+  visitor's browser (`localStorage`, key `karen-chat-v1`, last 20 turns). PDF answers are never stored.
+- "Nieuw gesprek" in the header clears the conversation, the stored copy and any open comparison or PDF session.
+- Each question sends the last four public turns as `history` (answers cut to 800 characters). The backend
+  rewrites a short follow-up such as "en voor gas?" into a question that stands on its own before routing
+  it. No history is sent during a PDF session or an offer comparison.
+- Republish the Framer component to get this.
+
 ## Small talk, and voice in Chrome — 19 October 2026
 
 **Small talk.** "Hallo", "hoe gaat het ermee?", "dankjewel" or "wie ben jij?"

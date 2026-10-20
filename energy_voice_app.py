@@ -50,6 +50,7 @@ from luminus_harness.gemma_answer import (
     GemmaAPIError,
     answer_energy_question,
     answer_small_talk,
+    standalone_question,
     mentions_energy,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
@@ -664,10 +665,17 @@ with gr.Blocks(title="EnergyAgent Karen", css=CSS, theme=gr.themes.Soft()) as gr
     )
 
 
+class HistoryTurn(BaseModel):
+    question: str = Field(max_length=1000)
+    answer: str = Field(max_length=4000)
+
+
 class AnswerRequest(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
     session_id: str | None = Field(default=None, min_length=16, max_length=128)
     comparison_session_id: str | None = Field(default=None, min_length=16, max_length=128)
+    # Earlier public turns from the visitor's own browser, so follow-up questions can be understood.
+    history: list[HistoryTurn] = Field(default_factory=list, max_length=6)
 
 
 class PublicWebAnswerRequest(BaseModel):
@@ -861,7 +869,7 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         result = answer_uploaded_pdf_question(body.question.strip(), session["chunks"])
         return {**result, "processing": "local-only", "filename": session["filename"]}
     if body.comparison_session_id not in _comparison_sessions.sessions:
-        question = body.question.strip()
+        question = await standalone_question(body.question.strip(), [turn.model_dump() for turn in body.history])
         # Jev picks the route when enabled and confident; otherwise the word lists below decide.
         route = await route_question(question)
         if route in (None, "contract_advice"):
