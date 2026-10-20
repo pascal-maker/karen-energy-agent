@@ -30,8 +30,8 @@ TIMEOUT_SECONDS = 4.0
 
 ROUTES = {
     "price": (
-        "Asks what electricity costs right now in general: today's market price or the current or best supplier "
-        "prices per kWh, without giving any personal household details."
+        "Asks what electricity or gas costs right now in general: today's market price or the current or best "
+        "supplier prices per kWh, without giving any personal household details."
     ),
     "compare": (
         "Explicitly asks to compare offers or switch supplier for their own home, or gives their region, postcode "
@@ -42,7 +42,7 @@ ROUTES = {
         "were offered is a good deal."
     ),
     "energy_other": (
-        "Any other energy question, including gas prices, network costs, the capacity tariff (capaciteitstarief), "
+        "Any other energy question, including why prices change, network costs, the capacity tariff (capaciteitstarief), "
         "social tariffs, invoices, advance payments, heating, boilers, premiums, rules, contracts or cancelling."
     ),
     "small_talk": "Only a greeting, thanks, goodbye, how-are-you, or a question about who Karen is.",

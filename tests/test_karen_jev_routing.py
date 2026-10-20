@@ -150,9 +150,20 @@ def test_without_jev_the_word_lists_still_route(api, monkeypatch):
     assert reply["answer"] == comparison.PROMPTS["region"]
 
 
-def test_jev_price_route_still_leaves_gas_to_the_source_path(api, monkeypatch):
+def test_gas_without_gas_cards_stays_on_the_source_path(api, monkeypatch):
     from tests.test_karen_market_prices import market
 
     route_to(monkeypatch, "price")
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
     assert ask(api, "Hoeveel kost aardgas per kWh?")["answer"] == "Bestaand antwoord"
+
+
+@pytest.mark.parametrize("choice", ["price", "energy_other"])
+def test_gas_price_questions_get_the_gas_cards_whatever_jev_picks(api, monkeypatch, choice):
+    from tests.test_karen_gas_prices import with_gas
+
+    route_to(monkeypatch, choice)
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
+    reply = ask(api, "Hey kan je mij de prijs van gas geven")
+    assert reply["processing"] == "market-data" and "Gasprijzen" in reply["answer"]
+    api[2].assert_not_awaited()

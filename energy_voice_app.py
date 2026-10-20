@@ -65,7 +65,7 @@ from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.jev import route_question
-from luminus_harness.market_prices import answer_market_price_question
+from luminus_harness.market_prices import answer_market_price_question, is_gas_price_question
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -871,7 +871,7 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         if route == "compare":
             values = {**extract_inputs(question, "region"), **extract_additional_inputs(question)}
             return _with_petra_speech(await _comparison_sessions.submit(values, None))
-        if route in (None, "price"):
+        if route in (None, "price") or (route == "energy_other" and is_gas_price_question(question)):
             # A plain price question gets today's prices; the comparison form starts only when asked for.
             prices = await answer_market_price_question(question, recognised=route == "price")
             if prices is not None:

@@ -1,10 +1,11 @@
-"""Answer plain price questions from the published market.json.
+"""Answer plain electricity and gas price questions from the published market.json.
 
 The daily `market-daily` workflow already publishes today's Belgian day-ahead
 prices and verified supplier tariff cards for the Prijzen tab. A question like
 "wat zijn de stroomprijzen vandaag?" is answered from that file directly, so
-Karen shows real numbers instead of starting the offer-comparison form. Only
-values present in the file are shown; nothing is estimated or filled in.
+Karen shows real numbers instead of starting the offer-comparison form. Gas
+questions get the verified gas tariff cards. Only values present in the file are
+shown; nothing is estimated or filled in.
 """
 
 from __future__ import annotations
@@ -30,6 +31,10 @@ _PRICE = re.compile(
     re.IGNORECASE,
 )
 _ELECTRICITY = re.compile(r"(?:stroom|elektriciteit|electricit|électricit|energie|énergie|energy|power|kwh)", re.IGNORECASE)
+# Only plain gas and gas-price words; a gasfactuur or gasketel is a different question.
+_GAS = re.compile(r"\b(?:(?:aard)?gas(?:prijs|prijzen|tarief|tarieven)?|gaz)\b", re.IGNORECASE)
+# A gas price list can't answer a boiler question or a "why" question.
+_GAS_ELSEWHERE = re.compile(r"\b(?:\w*ketel\w*|boiler|chaudi[eè]re|waarom|why|pourquoi)\b", re.IGNORECASE)
 # Gas, network costs, social tariffs, invoices, contracts and explicit CREG questions keep their own routes.
 _OTHER_SUBJECT = re.compile(
     r"\b\w*(?:gas|capaciteit|nettarief|netkost|distributie|sociaal|social|injectie|prosument|"
@@ -52,7 +57,7 @@ _DUTCH = re.compile(
 )
 _FRENCH = re.compile(
     r"\b(?:le|la|les|est|quel|quelle|quels|prix|électricité|electricite|aujourd|je|j|mon|ma|mes|un|une|des|du|pour|"
-    r"combien|coûte|coute|fixe|contrat|vous|tu|que|qui|bonjour|ça|c|pourquoi|mieux|dois|prendre|moins|cher|chère|"
+    r"combien|coûte|coute|fixe|contrat|gaz|vous|tu|que|qui|bonjour|ça|c|pourquoi|mieux|dois|prendre|moins|cher|chère|"
     r"facture|acompte|chauffage|chaudière|consommation|merci|avec|sur|pas)\b",
     re.IGNORECASE,
 )
@@ -67,6 +72,20 @@ def is_market_price_question(question: str) -> bool:
         _PRICE.search(text)
         and _ELECTRICITY.search(text)
         and not _OTHER_SUBJECT.search(text)
+        and not _COMPARE.search(text)
+        and not _HOUSEHOLD_INPUT.search(text)
+    )
+
+
+def is_gas_price_question(question: str, *, recognised: bool = False) -> bool:
+    """A general gas-price question that the gas tariff cards can answer."""
+    text = question.strip()
+    other = _OTHER_SUBJECT.search(_GAS.sub(" ", text))
+    return bool(
+        _GAS.search(text)
+        and (recognised or _PRICE.search(text))
+        and not _GAS_ELSEWHERE.search(text)
+        and not other
         and not _COMPARE.search(text)
         and not _HOUSEHOLD_INPUT.search(text)
     )
@@ -104,11 +123,12 @@ async def load_market_data() -> dict[str, Any] | None:
     return data
 
 
-def verified_cards(data: dict[str, Any], contract_type: str = "variable") -> list[dict[str, Any]]:
+def verified_cards(data: dict[str, Any], contract_type: str = "variable", energy: str = "electricity") -> list[dict[str, Any]]:
     """Verified tariff cards with a kWh price, cheapest first. Cards without a contract_type are variable."""
+    key = "gas_suppliers" if energy == "gas" else "suppliers"
     return sorted(
         (
-            card for card in (data.get("contracts") or {}).get("suppliers") or []
+            card for card in (data.get("contracts") or {}).get(key) or []
             if card.get("status") == "verified" and isinstance(card.get("price_per_kwh_eur"), (int, float))
             and card.get("contract_type", "variable") == contract_type
         ),
@@ -121,8 +141,8 @@ def card_label(card: dict[str, Any]) -> str:
     return product if product.casefold().startswith(name.casefold()) else f"{name} {product}".strip()
 
 
-def _cents(value: float, lang: str) -> str:
-    text = f"{value:.1f}"
+def _cents(value: float, lang: str, digits: int = 1) -> str:
+    text = f"{value:.{digits}f}"
     return text if lang == "en" else text.replace(".", ",")  # nl and fr use a decimal comma
 
 
@@ -199,14 +219,7 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         "url": market_source.get("url", "https://www.energy-charts.info/charts/price_spot_market/chart.htm?l=nl&c=BE"),
         "excerpt": f"Gemiddeld {day['avg']} EUR/MWh, min {day['min']}, max {day['max']}.",
     }]
-    for supplier in suppliers + fixed_cards:
-        if supplier.get("source_url"):
-            sources.append({
-                "title": f"Tariefkaart {card_label(supplier)}",
-                "detail": f"Opgehaald {supplier.get('retrieved_at', contracts.get('as_of', ''))}",
-                "url": supplier["source_url"],
-                "excerpt": str(supplier.get("price_per_kwh_note", ""))[:360],
-            })
+    sources += _card_sources(suppliers + fixed_cards, contracts)
     return {
         "answer": "\n".join(lines),
         "sources": sources,
@@ -215,12 +228,59 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
     }
 
 
+def _card_sources(cards: list[dict[str, Any]], contracts: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        {
+            "title": f"Tariefkaart {card_label(card)}",
+            "detail": f"Opgehaald {card.get('retrieved_at', contracts.get('as_of', ''))}",
+            "url": card["source_url"],
+            "excerpt": str(card.get("price_per_kwh_note", ""))[:360],
+        }
+        for card in cards if card.get("source_url")
+    ]
+
+
+def gas_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | None:
+    """Karen's gas reply from the verified gas tariff cards, or None when the file has none."""
+    variable = verified_cards(data, energy="gas")[:MAX_SUPPLIERS]
+    fixed = verified_cards(data, "fixed", energy="gas")[:MAX_FIXED + 1]
+    if not variable and not fixed:
+        return None
+    unit = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
+    lines = [{
+        "en": "Gas prices on the suppliers' current tariff cards in Flanders (energy price incl. 6% VAT, "
+              "without network costs and levies, which add a few cents per kWh):",
+        "fr": "Prix du gaz sur les fiches tarifaires actuelles des fournisseurs en Flandre (prix de l'énergie TVA 6% incl., "
+              "hors coûts de réseau et taxes, qui ajoutent quelques centimes par kWh) :",
+    }.get(lang, "Gasprijzen op de huidige tariefkaarten van leveranciers in Vlaanderen (energieprijs incl. 6% btw, "
+                "zonder netkosten en heffingen, die er nog enkele cent per kWh bijtellen):")]
+    if variable:
+        lines.append({"en": "Variable:", "fr": "Variables :"}.get(lang, "Variabel:"))
+        # Gas prices are close together, so they keep the cards' two decimals.
+        lines += [f"• {card_label(card)}: {_cents(card['price_per_kwh_eur'] * 100, lang, 2)} {unit}" for card in variable]
+    if fixed:
+        lines.append({"en": "Cheapest fixed:", "fr": "Fixes les moins chers :"}.get(lang, "Goedkoopste vaste:"))
+        for card in fixed:
+            months = card.get("duration_months")
+            term = {"en": f" (fixed {months} months)", "fr": f" (fixe {months} mois)"}.get(lang, f" ({months} maanden vast)") if months else ""
+            lines.append(f"• {card_label(card)}: {_cents(card['price_per_kwh_eur'] * 100, lang, 2)} {unit}{term}")
+    return {
+        "answer": "\n".join(lines),
+        "sources": _card_sources(variable + fixed, data.get("contracts") or {}),
+        "live_source_status": "checked",
+        "processing": "market-data",
+    }
+
+
 async def answer_market_price_question(question: str, *, recognised: bool = False) -> dict[str, Any] | None:
     """None when this isn't a general price question or market.json is unavailable.
 
-    `recognised` skips the price-word check when Jev already routed the question here; gas,
-    network-cost and household-detail questions still go elsewhere, since market.json can't answer them.
+    `recognised` skips the price-word check when Jev already routed the question here; network-cost
+    and household-detail questions still go elsewhere, since market.json can't answer them.
     """
+    if is_gas_price_question(question, recognised=recognised):
+        data = await load_market_data()
+        return gas_price_reply(data, question_language(question)) if data is not None else None
     if recognised:
         if _OTHER_SUBJECT.search(question) or _HOUSEHOLD_INPUT.search(question):
             return None
