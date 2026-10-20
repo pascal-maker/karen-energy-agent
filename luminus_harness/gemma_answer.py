@@ -490,6 +490,17 @@ def _generate_backup(prompt: str, system_instruction: str) -> str:
     return text
 
 
+_THOUGHT_MARKER = "thought"
+
+
+def _drop_thought_marker(text: str) -> str:
+    """Gemma sometimes leaks its thinking-channel label as plain text ("thoughtGroene stroom ...")."""
+    text = text.lstrip()
+    if re.match(rf"{_THOUGHT_MARKER}(?=\s|[A-ZÀ-Ý]|$)", text):
+        text = text[len(_THOUGHT_MARKER):].lstrip()
+    return text
+
+
 def _answer_text(payload: Any, separator: str = "\n") -> str:
     """Visible text of one Gemma response or stream chunk, without thought parts."""
     try:
@@ -526,6 +537,7 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
         method="POST",
     )
     streamed: list[str] = []
+    opening = ""
     try:
         with urlopen(request, timeout=45) as response:
             if on_delta:
@@ -534,9 +546,17 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
                     if not line.startswith("data:"):
                         continue
                     piece = _answer_text(json.loads(line[5:]), "")
-                    # Leading whitespace is dropped so the shown text matches the stripped answer.
-                    if piece and not streamed:
-                        piece = piece.lstrip()
+                    if not streamed:
+                        # Hold the opening text until a leaked "thought" marker can be told apart.
+                        opening += piece
+                        if len(opening.lstrip()) <= len(_THOUGHT_MARKER):
+                            continue
+                        piece, opening = _drop_thought_marker(opening), ""
+                    if piece:
+                        streamed.append(piece)
+                        on_delta(piece)
+                if opening:
+                    piece = _drop_thought_marker(opening)
                     if piece:
                         streamed.append(piece)
                         on_delta(piece)
@@ -576,7 +596,7 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
             raise GemmaAPIError("Gemma stopte midden in het antwoord.") from error
         raise GemmaUnavailableError("Gemma kon nu geen verbinding maken.") from error
 
-    text = ("".join(streamed) if on_delta else _answer_text(payload)).strip()
+    text = ("".join(streamed) if on_delta else _drop_thought_marker(_answer_text(payload))).strip()
     if not text:
         raise GemmaUnavailableError("Gemma gaf een leeg antwoord terug.")
     return text
