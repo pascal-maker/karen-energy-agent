@@ -18,7 +18,7 @@ type SpeechRecognizer = {
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognizer; webkitSpeechRecognition?: new () => SpeechRecognizer }
 
 type Source = { title: string; detail?: string; url?: string; excerpt?: string }
-type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_session_id?: string | null; comparison_status?: string; visual?: PriceVisual }
+type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_status?: string; visual?: PriceVisual }
 
 // What Karen does while she answers, shown in the chat as she works.
 const stepSummary = (steps: Step[]) => {
@@ -459,7 +459,6 @@ export default function EnergyAgentConversation({
     const [answerError, setAnswerError] = useState("")
     const [uploading, setUploading] = useState(false)
     const [sessionId, setSessionId] = useState("")
-    const [comparisonSessionId, setComparisonSessionId] = useState("")
     const [uploadName, setUploadName] = useState("")
     const [uploadError, setUploadError] = useState("")
     const [listening, setListening] = useState(false)
@@ -505,10 +504,6 @@ export default function EnergyAgentConversation({
     async function newConversation() {
         clearPetra()
         if (listening) stopVoice()
-        if (comparisonSessionId && apiEndpoint.trim()) {
-            void fetch(`${endpointFor("comparison-session")}/${encodeURIComponent(comparisonSessionId)}`, { method: "DELETE" }).catch(() => undefined)
-        }
-        setComparisonSessionId("")
         if (sessionId) await clearPdf()
         setTurns([])
         setAsked("")
@@ -529,7 +524,7 @@ export default function EnergyAgentConversation({
         window.speechSynthesis?.cancel()
     }, [])
 
-    function endpointFor(path: "answer-stream" | "upload" | "session" | "comparison-session" | "petra-speech" | "transcribe" | "feedback"): string {
+    function endpointFor(path: "answer-stream" | "upload" | "session" | "petra-speech" | "transcribe" | "feedback"): string {
         const url = new URL(apiEndpoint.trim())
         url.pathname = url.pathname.replace(/\/api\/answer\/?$/, `/api/${path}`)
         if (!url.pathname.endsWith(`/api/${path}`)) {
@@ -627,10 +622,6 @@ export default function EnergyAgentConversation({
             return
         }
         const previousSession = sessionId
-        if (comparisonSessionId) {
-            void fetch(`${endpointFor("comparison-session")}/${encodeURIComponent(comparisonSessionId)}`, { method: "DELETE" }).catch(() => undefined)
-            setComparisonSessionId("")
-        }
         archiveCurrent()
         setUploading(true)
         setStatus("PDF wordt op Karen’s backend gelezen…")
@@ -687,9 +678,9 @@ export default function EnergyAgentConversation({
         // Speak the answer automatically only when the question itself was spoken;
         // typed questions get a "Beluister Karen" button instead.
         const askedByVoice = voiceDraft
-        // Every exchange stays in the chat; only public chats send it along as history.
+        // Every exchange stays in the chat; a PDF chat sends none of it along as history.
         const past = archiveCurrent()
-        const history = sessionId || comparisonSessionId
+        const history = sessionId
             ? []
             : past.slice(-SENT_TURNS).map((turn) => ({ question: turn.question, answer: turn.answer.slice(0, 800) }))
         clearPetra()
@@ -711,7 +702,7 @@ export default function EnergyAgentConversation({
                 const request = {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ question: clean, ...(sessionId ? { session_id: sessionId } : {}), ...(comparisonSessionId ? { comparison_session_id: comparisonSessionId } : {}), ...(history.length ? { history } : {}) }),
+                    body: JSON.stringify({ question: clean, ...(sessionId ? { session_id: sessionId } : {}), ...(history.length ? { history } : {}) }),
                 }
                 let response = await fetch(endpointFor("answer-stream"), request)
                 // A backend without the streaming route still answers on the plain one.
@@ -723,15 +714,12 @@ export default function EnergyAgentConversation({
                 const streamed = Boolean(response.headers?.get?.("content-type")?.includes("ndjson") && response.body?.getReader)
                 const data = streamed ? await readAnswerStream(response) : (await response.json()) as Reply
                 if (!data.answer) throw new Error("Het antwoord ontbreekt in de API-respons")
-                if ("comparison_session_id" in data) setComparisonSessionId(data.comparison_session_id || "")
                 setReply(data)
                 if (askedByVoice && !sessionId && data.processing !== "local-only") {
                     if (data.petra_speech_token) void playPetra(data.petra_speech_token, data.answer)
                     else setPetraError("Voor dit antwoord is geen audio beschikbaar. Je kunt het antwoord hierboven lezen.")
                 }
-                setStatus(data.comparison_status === "collecting"
-                    ? "Vergelijking actief · Karen vraagt ontbrekende gegevens"
-                    : data.processing === "local-only"
+                setStatus(data.processing === "local-only"
                     ? "Antwoord uit PDF-passage · op Karen’s backend verwerkt"
                     : data.processing === "small-talk"
                     ? "Antwoord klaar"

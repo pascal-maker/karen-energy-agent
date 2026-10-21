@@ -78,11 +78,9 @@ globalThis.fetch = async (url, options) => {
     if (typeof reply.blob === "function") return { ok: true, blob: reply.blob }
     return { ok: true, json: async () => reply }
 }
-const token = "structured-comparison-session"
-const collecting = { answer: "In welk gewest woon je?", comparison_status: "collecting", comparison_session_id: token, sources: [] }
 const success = {
     answer: "V-test toont dit aanbod.\n\n1. Voorbeeld · Variabel: € 1.234,56 per jaar. Gecontroleerd op 28-09-2026 om 14:00 CEST.",
-    comparison_status: "success", comparison_session_id: null, live_source_status: "checked",
+    live_source_status: "checked",
     sources: [{ title: "Voorbeeld · Variabel", url: "https://www.vlaamsenutsregulator.be/results", detail: "V-test · gecontroleerd 28-09-2026" }],
 }
 const mic = () => document.querySelector(".ea-mic")
@@ -113,44 +111,33 @@ async function main() {
     assert.equal(privacy.open, false, "The privacy details start folded to one line")
     assert.match(privacy.querySelector("summary").textContent, /blijft in deze browser.*Meer over privacy/)
     assert.match(privacy.textContent, /Babbeldoos-stemservice/, "The full privacy text is still there behind the link")
-    responses.push(collecting)
+    responses.push({ answer: "Dit zijn de goedkoopste contracten van vandaag.", processing: "offer-comparison", sources: [] })
     await typed("Vergelijk energieaanbiedingen")
     assert.deepEqual(requests.at(-1).body, { question: "Vergelijk energieaanbiedingen" })
     assert.equal(mic().disabled, false)
-    responses.push({ ...collecting, answer: "Wat is je postcode?" })
-    await voice("Vlaanderen")
-    assert.deepEqual(requests.at(-1).body, { question: "Vlaanderen", comparison_session_id: token })
-    responses.push({ ...collecting, answer: "Ben je prosument? Antwoord ja of nee.", required_information: ["is_prosumer"] })
-    await voice("Postcode 9000, elektriciteit, jaarlijks 3500 kWh")
-    assert.equal(requests.at(-1).body.comparison_session_id, token)
-    const shown = document.body.textContent
-    assert.match(shown, /Vergelijk energieaanbiedingen/, "Earlier comparison questions stay in the chat")
-    assert.match(shown, /In welk gewest woon je\?/, "Earlier comparison answers stay in the chat")
-    assert.match(shown, /Wat is je postcode\?/)
-    assert.equal(mic().disabled, false)
+    responses.push({ answer: "Het capaciteitstarief rekent je piek aan.", sources: [] })
+    await voice("Wat is het capaciteitstarief?")
+    assert.equal(requests.at(-1).body.comparison_session_id, undefined, "No comparison form any more")
+    assert.equal(requests.at(-1).body.history[0].question, "Vergelijk energieaanbiedingen")
     responses.push(success)
     await voice("nee")
-    assert.equal(requests.at(-1).body.comparison_session_id, token)
+    const shown = document.body.textContent
+    assert.match(shown, /Vergelijk energieaanbiedingen/, "Earlier questions stay in the chat")
+    assert.match(shown, /goedkoopste contracten van vandaag/, "Earlier answers stay in the chat")
     assert.equal(document.querySelector(".ea-answer .ea-lead").textContent, "V-test toont dit aanbod.", "The first line leads the answer")
     assert.equal(document.querySelector(".ea-answer .ea-steps li").textContent, "Voorbeeld · Variabel: € 1.234,56 per jaar. Gecontroleerd op 28-09-2026 om 14:00 CEST.", "Numbered lines become steps")
     assert.equal(document.querySelector(".ea-answer .ea-num").textContent, "€ 1.234,56", "Amounts stand out")
     assert.equal(document.querySelector(".ea-rail a").href, success.sources[0].url)
     assert.equal(spoken.length, 0, "The browser voice is only a fallback when Petra fails")
     assert.equal(mic().disabled, false)
-    responses.push({ answer: "FAQ antwoord", comparison_session_id: null })
-    await typed("Waarom verschilt mijn voorschot?")
-    assert.equal(requests.at(-1).body.comparison_session_id, undefined)
-    responses.push(collecting)
-    await typed("Vergelijk gas")
     responses.push({ answer: "Lokale PDF-analyse", session_id: "separate-pdf-session", filename: "bill.pdf", processing: "local-only" })
     await act(async () => {
         const input = document.querySelector('input[type="file"]')
         Object.defineProperty(input, "files", { configurable: true, value: [new window.File(["synthetic"], "bill.pdf", { type: "application/pdf" })] })
         input.dispatchEvent(new window.Event("change", { bubbles: true }))
     })
-    assert.ok(requests.some(r => r.method === "DELETE" && r.url.endsWith(`/api/comparison-session/${token}`)))
     assert.equal(mic().disabled, true, "PDF session must disable external voice")
-    responses.push({ answer: "Verwijder eerst je PDF", comparison_status: "pdf-blocked", comparison_session_id: null, processing: "local-only" })
+    responses.push({ answer: "Verwijder eerst je PDF", comparison_status: "pdf-blocked", processing: "local-only" })
     await typed("Vergelijk gas")
     assert.deepEqual(requests.at(-1).body, { question: "Vergelijk gas", session_id: "separate-pdf-session" })
     await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent === "Verwijder").click())
@@ -165,13 +152,13 @@ async function main() {
     // Petra speaks automatically only after a spoken question; a typed one shows a button.
     const petraCalls = () => requests.filter(r => r.url.endsWith("/api/petra-speech")).length
     const petraBefore = petraCalls()
-    responses.push({ answer: "Getypt antwoord", comparison_session_id: null, petra_speech_token: "typed-token" })
+    responses.push({ answer: "Getypt antwoord", petra_speech_token: "typed-token" })
     await typed("Wat is het capaciteitstarief?")
     assert.equal(petraCalls(), petraBefore, "Typed question: no automatic voice")
     assert.ok([...document.querySelectorAll("button")].some(b => b.textContent === "Beluister Karen"), "Typed question offers the button")
 
     // Public answers can be rated; 👎 asks what went wrong and sends it with the signed token.
-    responses.push({ answer: "Prijsantwoord", comparison_session_id: null, feedback_token: "signed-feedback-token" })
+    responses.push({ answer: "Prijsantwoord", feedback_token: "signed-feedback-token" })
     await typed("wat kost stroom vandaag?")
     await act(async () => document.querySelector('[aria-label="Niet nuttig"]').click())
     await act(async () => {
@@ -185,7 +172,7 @@ async function main() {
     assert.deepEqual(requests.at(-1).body, { feedback_token: "signed-feedback-token", rating: "down", comment: "Geen gasprijs" })
     assert.match(document.querySelector(".ea-chat, #root").textContent, /Bedankt! Karen leert van je feedback\./)
     // Streaming: the text shows while Karen writes it, then the full reply replaces it.
-    responses.push({ stream: [{ delta: "Het capaciteits" }, { delta: "tarief rekent " }], later: [{ delta: "je piek aan." }, { reply: { answer: "Het capaciteitstarief rekent je piek aan.", comparison_session_id: null, sources: [] } }] })
+    responses.push({ stream: [{ delta: "Het capaciteits" }, { delta: "tarief rekent " }], later: [{ delta: "je piek aan." }, { reply: { answer: "Het capaciteitstarief rekent je piek aan.", sources: [] } }] })
     await typed("Wat is het capaciteitstarief?")
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
     assert.ok(requests.at(-1).url.endsWith("/api/answer-stream"))
@@ -198,7 +185,7 @@ async function main() {
         { step: { kind: "route", choice: "energy_other", confidence: 0.9, used: true, probabilities: { energy_other: 0.92, price: 0.05, small_talk: 0.01, compare: 0.02 } } },
         { step: { kind: "search", sites: ["fluvius.be", "sibelga.be", "ores.be", "resa.be"] } },
         { step: { kind: "read", pages: [{ title: "Digitale meter aflezen", url: "https://www.fluvius.be/meter" }] } },
-    ], later: [{ delta: "Druk op knop 1." }, { reply: { answer: "Druk op knop 1.", comparison_session_id: null, sources: [] } }] })
+    ], later: [{ delta: "Druk op knop 1." }, { reply: { answer: "Druk op knop 1.", sources: [] } }] })
     await typed("Hoe lees ik mijn digitale meter af?")
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
     const stage = label => document.querySelector(".ea-flow-stages").children[["Vraag", "Begrijpen", "Zoeken", "Lezen", "Antwoord"].indexOf(label)].dataset.state
@@ -219,14 +206,14 @@ async function main() {
     assert.match(document.querySelector("#root").textContent, /Gemma is tijdelijk overbelast/)
     // An older backend without the streaming route: fall back to the plain answer route.
     responses.push({ status: 404 })
-    responses.push({ answer: "Antwoord van de oude route", comparison_session_id: null })
+    responses.push({ answer: "Antwoord van de oude route" })
     await typed("Wat is een voorschot?")
     assert.ok(requests.at(-1).url.endsWith("/api/answer"))
     assert.equal(document.querySelector(".ea-answer").textContent, "Antwoord van de oude route")
-    responses.push({ answer: "Zonder token", comparison_session_id: null })
+    responses.push({ answer: "Zonder token" })
     await typed("Hoe werkt het capaciteitstarief?")
     assert.equal(document.querySelector(".ea-feedback"), null, "No rating without a feedback token")
-    responses.push({ answer: "Gesproken antwoord", comparison_session_id: null, petra_speech_token: "voice-token" })
+    responses.push({ answer: "Gesproken antwoord", petra_speech_token: "voice-token" })
     responses.push({ blob: async () => new window.Blob(["RIFF"], { type: "audio/wav" }) })
     await voice("Wat is het sociaal tarief?")
     await act(async () => {})
@@ -234,7 +221,7 @@ async function main() {
     assert.deepEqual(requests.at(-1).body, { token: "voice-token" })
 
     // Petra's daily GPU quota can run out: the browser's own voice reads the answer instead.
-    responses.push({ answer: "Het sociaal tarief is een korting.", comparison_session_id: null, petra_speech_token: "busy-token" })
+    responses.push({ answer: "Het sociaal tarief is een korting.", petra_speech_token: "busy-token" })
     responses.push({ status: 503 })
     await voice("Wat is het sociaal tarief?")
     await act(async () => {})
@@ -330,10 +317,10 @@ async function main() {
     let chatRoot = createRoot(chatBox)
     const renderChat = () => act(async () => chatRoot.render(React.createElement(Component, { apiEndpoint: "https://backend.example/api/answer" })))
     await renderChat()
-    responses.push({ answer: "Stroom kost 22 cent.", comparison_session_id: null })
+    responses.push({ answer: "Stroom kost 22 cent." })
     await typed("Wat kost stroom vandaag?")
     assert.equal(requests.at(-1).body.history, undefined, "A first question has no history")
-    responses.push({ answer: "Gas kost 8 cent.", comparison_session_id: null })
+    responses.push({ answer: "Gas kost 8 cent." })
     await typed("en voor gas?")
     assert.deepEqual(requests.at(-1).body, { question: "en voor gas?", history: [{ question: "Wat kost stroom vandaag?", answer: "Stroom kost 22 cent." }] })
     assert.equal(chatBox.querySelector(".ea-past-answer").textContent, "Stroom kost 22 cent.", "The earlier turn stays on screen")
@@ -345,10 +332,10 @@ async function main() {
     await renderChat()
     assert.deepEqual([...chatBox.querySelectorAll(".ea-past-answer")].map(node => node.textContent), ["Stroom kost 22 cent.", "Gas kost 8 cent."])
     assert.equal(chatBox.querySelector("h1"), null, "The welcome text gives way to the restored chat")
-    responses.push({ answer: "Ja.", comparison_session_id: null })
+    responses.push({ answer: "Ja." })
     await typed("en vast?")
     assert.equal(requests.at(-1).body.history.length, 2)
-    responses.push({ answer: "Gasprijzen:\n• A: 7,92 cent/kWh\n• B: 8,35 cent/kWh", comparison_session_id: null, visual: {
+    responses.push({ answer: "Gasprijzen:\n• A: 7,92 cent/kWh\n• B: 8,35 cent/kWh", visual: {
         kind: "prices", lead: "Gasprijzen in Vlaanderen:", unit: "cent/kWh", digits: 2,
         groups: [{ title: "Variabel", items: [{ label: "A", value: 7.92 }, { label: "B", value: 8.35 }] }, { title: "Vast", items: [{ label: "C", value: 8.7, note: "24 mnd vast" }] }],
         day: { title: "Per uur", points: [["00:00", 18], ["01:00", 17], ["02:00", 16], ["03:00", 20]], cheapest_hours: [2], cheap_label: "goedkoopste uren", low: 15.8, high: 20.4 },
@@ -358,7 +345,7 @@ async function main() {
     assert.deepEqual(bars.map(row => [row.querySelector(".ea-bar-value").textContent, row.dataset.best]), [["7,92", "true"], ["8,35", "false"], ["8,70", "true"]], "Price answers become bars, cheapest first per group")
     assert.equal(chatBox.querySelectorAll(".ea-day-cheap").length, 1, "The cheapest hours are marked on the day curve")
     assert.match(chatBox.querySelector(".ea-day-legend").textContent, /15,8–20,4 cent\/kWh/)
-    responses.push({ answer: "Vast is 8,70 cent.", comparison_session_id: null })
+    responses.push({ answer: "Vast is 8,70 cent." })
     await typed("en vast?")
     const pastBars = () => [...chatBox.querySelectorAll(".ea-past-answer")].at(-1).querySelectorAll(".ea-bar-row").length
     assert.equal(pastBars(), 3, "A price chart stays a chart once a follow-up question is asked")

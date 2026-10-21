@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from luminus_harness import comparison_session as comparison
 from luminus_harness import contract_advice, jev, market_prices
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from tests.test_karen_market_prices import market as spot_market
@@ -119,9 +118,7 @@ def test_no_reply_without_a_usable_forecast_or_tariff_cards(data):
 def api(monkeypatch):
     import energy_voice_app as app
 
-    monkeypatch.setattr(app, "_comparison_sessions", comparison.ComparisonSessions())
     monkeypatch.setattr(app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
-    monkeypatch.setattr(comparison, "compare_energy_offers", AsyncMock(side_effect=AssertionError("no offer lookup")))
     hosted = AsyncMock(return_value={"answer": "Bestaand antwoord", "sources": []})
     monkeypatch.setattr(app, "answer_energy_question", hosted)
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
@@ -138,7 +135,6 @@ def ask(api, question):
 def test_api_answers_contract_questions_with_a_decision(api):
     reply = ask(api, "Is een vast contract aan 25 cent per kWh beter dan variabel?")
     assert reply["decision"] == "variable"
-    assert reply["comparison_session_id"] is None
     api[1].assert_not_awaited()
 
 

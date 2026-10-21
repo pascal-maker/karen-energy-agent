@@ -53,23 +53,16 @@ from luminus_harness.gemma_answer import (
     answer_stream,
     standalone_question,
     mentions_energy,
-    small_talk_kind,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
-from luminus_harness.comparison_session import (
-    ComparisonSessions,
-    extract_additional_inputs,
-    extract_inputs,
-    is_offer_comparison_question,
-    pdf_comparison_reply,
-)
+from luminus_harness.comparison_session import is_offer_comparison_question, pdf_comparison_reply
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
-from luminus_harness.market_prices import answer_market_price_question, is_gas_price_question
+from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, is_gas_price_question
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -676,7 +669,7 @@ class HistoryTurn(BaseModel):
 class AnswerRequest(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
     session_id: str | None = Field(default=None, min_length=16, max_length=128)
-    comparison_session_id: str | None = Field(default=None, min_length=16, max_length=128)
+    comparison_session_id: str | None = Field(default=None, min_length=16, max_length=128)  # ignored; sent by older components
     # Earlier public turns from the visitor's own browser, so follow-up questions can be understood.
     history: list[HistoryTurn] = Field(default_factory=list, max_length=6)
 
@@ -712,7 +705,6 @@ api_app.add_middleware(
 
 _api_rate_limiter = SlidingWindowRateLimiter(requests=20, window_seconds=60, max_clients=10_000)
 _upload_sessions: OrderedDict[str, dict[str, Any]] = OrderedDict()
-_comparison_sessions = ComparisonSessions()
 _petra_token_secret = secrets.token_bytes(32)
 _petra_rate_limiter = SlidingWindowRateLimiter(requests=3, window_seconds=60, max_clients=10_000)
 _transcribe_rate_limiter = SlidingWindowRateLimiter(requests=6, window_seconds=60, max_clients=10_000)
@@ -843,13 +835,6 @@ async def api_delete_session(session_id: str, request: Request) -> dict[str, boo
     return {"deleted": True}
 
 
-@api_app.delete("/api/comparison-session/{comparison_session_id}")
-async def api_delete_comparison_session(comparison_session_id: str, request: Request) -> dict[str, bool]:
-    _allow_api_request(request)
-    _comparison_sessions.discard(comparison_session_id)
-    return {"deleted": True}
-
-
 @api_app.post("/api/answer")
 async def api_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
     """Route public comparisons before Gemma; never send PDF sessions externally."""
@@ -915,57 +900,42 @@ async def _rated_answer(body: AnswerRequest) -> dict[str, Any]:
 
 async def _answer(body: AnswerRequest) -> dict[str, Any]:
     if body.session_id:
-        if body.comparison_session_id or is_offer_comparison_question(body.question):
-            _comparison_sessions.discard(body.comparison_session_id)
+        if is_offer_comparison_question(body.question):
             return pdf_comparison_reply()
         session = _get_upload_session(body.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Deze PDF-sessie is verlopen. Upload de PDF opnieuw.")
         result = answer_uploaded_pdf_question(body.question.strip(), session["chunks"])
         return {**result, "processing": "local-only", "filename": session["filename"]}
-    if body.comparison_session_id not in _comparison_sessions.sessions:
-        question = await standalone_question(body.question.strip(), [turn.model_dump() for turn in body.history])
-        # Jev picks the route when enabled and confident; otherwise the word lists below decide.
-        route = await route_question(question)
-        if route in (None, "contract_advice"):
-            advice = await answer_contract_advice(question, recognised=route == "contract_advice")
-            if advice is not None:
-                return _with_petra_speech({**advice, "comparison_session_id": None})
-        if route == "compare":
-            values = {**extract_inputs(question, "region"), **extract_additional_inputs(question)}
-            return _with_petra_speech(await _comparison_sessions.submit(values, None))
-        # Jev sometimes files a gas price question as small talk or another energy question.
-        if route in (None, "price") or (route != "compare" and is_gas_price_question(question)):
-            # A plain price question gets today's prices; the comparison form starts only when asked for.
-            prices = await answer_market_price_question(question, recognised=route == "price")
-            if prices is not None:
-                return _with_petra_speech({**prices, "comparison_session_id": None})
-        if route in ("small_talk", "off_topic") and mentions_energy(question):
-            # Jev sometimes files English or French bill questions as small talk; energy words win.
-            route = "energy_other"
-        if route in ("small_talk", "off_topic"):
-            return _with_petra_speech({**await answer_small_talk(question, route), "comparison_session_id": None})
-        if route == "energy_other":
-            return await _hosted_answer(question, None)
-    if (body.comparison_session_id in _comparison_sessions.sessions and small_talk_kind(body.question)
-            and not is_offer_comparison_question(body.question)):
-        # "Hallo" mid-comparison gets a greeting back, not the next form question; the comparison stays open.
-        small_talk = await answer_small_talk(body.question.strip(), "small_talk")
-        return _with_petra_speech({**small_talk, "comparison_session_id": body.comparison_session_id})
-    comparison = await _comparison_sessions.answer(body.question.strip(), body.comparison_session_id)
-    if comparison is not None:
-        return _with_petra_speech(comparison)
-    return await _hosted_answer(body.question.strip(), body.comparison_session_id)
+    question = await standalone_question(body.question.strip(), [turn.model_dump() for turn in body.history])
+    # Jev picks the route when enabled and confident; otherwise the word lists below decide.
+    route = await route_question(question)
+    if route in (None, "contract_advice"):
+        advice = await answer_contract_advice(question, recognised=route == "contract_advice")
+        if advice is not None:
+            return _with_petra_speech(advice)
+    if route == "compare" or (route is None and is_offer_comparison_question(question)):
+        # No form: today's supplier cards plus the official comparator for a price on the person's own usage.
+        comparison = await answer_offer_comparison(question)
+        if comparison is not None:
+            return _with_petra_speech(comparison)
+    # Jev sometimes files a gas price question as small talk or another energy question.
+    if route in (None, "price") or (route != "compare" and is_gas_price_question(question)):
+        prices = await answer_market_price_question(question, recognised=route == "price")
+        if prices is not None:
+            return _with_petra_speech(prices)
+    if route in ("small_talk", "off_topic") and mentions_energy(question):
+        # Jev sometimes files English or French bill questions as small talk; energy words win.
+        route = "energy_other"
+    if route in ("small_talk", "off_topic"):
+        return _with_petra_speech(await answer_small_talk(question, route))
+    return await _hosted_answer(question if route else body.question.strip())
 
 
-async def _hosted_answer(question: str, comparison_session_id: str | None) -> dict[str, Any]:
+async def _hosted_answer(question: str) -> dict[str, Any]:
     try:
         result = await answer_energy_question(question, BASE_KNOWLEDGE)
-        return _with_petra_speech({
-            **result,
-            "processing": result.get("processing", "hosted-public-knowledge"),
-            "comparison_session_id": comparison_session_id if comparison_session_id in _comparison_sessions.sessions else None,
-        })
+        return _with_petra_speech({**result, "processing": result.get("processing", "hosted-public-knowledge")})
     except GemmaAPIError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 

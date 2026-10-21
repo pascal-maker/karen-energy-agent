@@ -5,7 +5,6 @@ from urllib.error import HTTPError
 import pytest
 from fastapi.testclient import TestClient
 
-from luminus_harness import comparison_session as comparison
 from luminus_harness import gemma_answer
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 
@@ -104,7 +103,6 @@ def test_streamed_gemma_text_arrives_piece_by_piece_without_thoughts(monkeypatch
 def api(monkeypatch):
     import energy_voice_app as app
 
-    monkeypatch.setattr(app, "_comparison_sessions", comparison.ComparisonSessions())
     monkeypatch.setattr(app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
     with TestClient(app.api_app) as client:
         yield app, client

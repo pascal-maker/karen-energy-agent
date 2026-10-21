@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from luminus_harness import comparison_session as comparison
 from luminus_harness import jev, market_prices
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 
@@ -83,9 +82,7 @@ async def test_api_errors_fall_back(monkeypatch, enabled):
 def api(monkeypatch, enabled):
     import energy_voice_app as app
 
-    monkeypatch.setattr(app, "_comparison_sessions", comparison.ComparisonSessions())
     monkeypatch.setattr(app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
-    monkeypatch.setattr(comparison, "compare_energy_offers", AsyncMock(side_effect=AssertionError("no offer lookup")))
     hosted = AsyncMock(return_value={"answer": "Bestaand antwoord", "sources": []})
     monkeypatch.setattr(app, "answer_energy_question", hosted)
     with TestClient(app.api_app) as client:
@@ -112,11 +109,13 @@ def test_jev_price_route_answers_wording_the_word_lists_miss(api, monkeypatch):
     assert ask(api, question)["processing"] == "market-data"
 
 
-def test_jev_compare_route_starts_the_comparison(api, monkeypatch):
+def test_jev_compare_route_gets_the_supplier_cards(api, monkeypatch):
+    from tests.test_karen_market_prices import market
+
     route_to(monkeypatch, "compare")
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
     reply = ask(api, "ik wil overstappen naar een goedkopere leverancier")
-    assert reply["answer"] == f"{comparison.PROMPTS['region']}\n\n{comparison.STOP_HINT}"
-    assert reply["comparison_session_id"] in api[1]._comparison_sessions.sessions
+    assert reply["processing"] == "offer-comparison"
 
 
 def test_jev_off_topic_route_skips_the_source_search(api, monkeypatch):
@@ -146,8 +145,10 @@ def test_jev_energy_route_keeps_price_words_on_the_source_path(api, monkeypatch)
 
 def test_without_jev_the_word_lists_still_route(api, monkeypatch):
     monkeypatch.setenv("KAREN_JEV_ROUTING", "0")
-    reply = ask(api, "Vergelijk aanbiedingen")
-    assert reply["answer"] == f"{comparison.PROMPTS['region']}\n\n{comparison.STOP_HINT}"
+    from tests.test_karen_market_prices import market
+
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
+    assert ask(api, "Vergelijk aanbiedingen")["processing"] == "offer-comparison"
 
 
 def test_gas_without_gas_cards_stays_on_the_source_path(api, monkeypatch):
