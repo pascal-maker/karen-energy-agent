@@ -226,6 +226,10 @@ const css = `
   .ea-mic:disabled { opacity:.5; cursor:not-allowed; }
   .ea-button:disabled { opacity:.55; cursor:wait; }
   .ea-foot { margin:9px 0 0; color:#7b877e; font-size:10px; line-height:1.5; }
+  .ea-privacy summary { margin:9px 0 0; color:#7b877e; font-size:10px; line-height:1.5; list-style:none; cursor:pointer; }
+  .ea-privacy summary::-webkit-details-marker { display:none; }
+  .ea-privacy summary span { color:#234f38; text-decoration:underline; text-underline-offset:2px; }
+  .ea-privacy[open] summary span { display:none; }
   .ea-rail { display:flex; flex-direction:column; gap:12px; }
   .ea-card { padding:18px; border:1px solid #e2e7df; border-radius:20px; background:#fff; }
   .ea-card h2 { margin:0 0 5px; font-size:13px; }
@@ -262,7 +266,7 @@ const css = `
     .ea-chip { font-size:14px; }
     .ea-composer { position:sticky; bottom:0; z-index:2; margin:0 -16px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #edf0eb; }
     .ea-input { font-size:16px; }
-    .ea-foot { font-size:12px; }
+    .ea-foot, .ea-privacy summary { font-size:12px; }
     .ea-jump { display:inline-block; margin-top:10px; color:#234f38; font-size:14px; font-weight:600; }
     .ea-rail { display:grid; gap:12px; padding:16px 16px 28px; border-top:8px solid #f6f7f3; }
     .ea-card { padding:16px; }
@@ -897,7 +901,10 @@ export default function EnergyAgentConversation({
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
                 </div>
-                <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma (of een OpenAI-model als Gemma overbelast is) en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
+                <details className="ea-privacy">
+                    <summary>Je gesprek blijft in deze browser. Publieke vragen gaan naar Gemma en officiële bronnen. <span>Meer over privacy</span></summary>
+                    <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma (of een OpenAI-model als Gemma overbelast is) en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
+                </details>
             </section>
             <aside className="ea-rail">
                 <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>
