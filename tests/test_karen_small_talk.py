@@ -95,3 +95,39 @@ async def test_energy_question_without_sources_still_says_so(monkeypatch):
     chunks = [KnowledgeChunk(page=1, text="Iets over isolatiepremies.", urls=(), source="faq.pdf")]
     result = await gemma_answer.answer_energy_question("Welke premie krijg ik voor een warmtepomp in Wallonië?", chunks)
     assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["nl"]
+
+
+@pytest.mark.asyncio
+async def test_concept_question_without_sources_gets_a_marked_general_explanation(monkeypatch):
+    async def no_pages(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", no_pages)
+    def generate(prompt, system_instruction=None, *_):
+        if system_instruction is gemma_answer._SEARCH_TRANSLATION_INSTRUCTION:
+            return "Wat zijn zonnepanelen?"
+        assert system_instruction is gemma_answer._GENERAL_INSTRUCTION
+        return "Solar panels turn sunlight into electricity.\n- **Roof:** They usually sit on the roof."
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
+    result = await gemma_answer.answer_energy_question("what are solar panels", [])
+    assert result["processing"] == "general-knowledge"
+    assert result["sources"] == [] and result["answer"].startswith("Solar panels turn sunlight")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", ["Een zonnepaneel levert 400 Wp.", "I cannot answer this question with the provided information."])
+async def test_general_explanation_with_numbers_or_a_refusal_falls_back(monkeypatch, reply):
+    async def no_pages(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", no_pages)
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_: reply)
+    result = await gemma_answer.answer_energy_question("Wat zijn zonnepanelen?", [])
+    assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["nl"]
+
+
+def test_a_leaked_refusal_counts_as_not_sure():
+    assert gemma_answer._NOT_SURE.search("I cannot answer this question with the provided information.")
+    assert gemma_answer._NOT_SURE.search("I am sorry, but I don't know for sure.")
