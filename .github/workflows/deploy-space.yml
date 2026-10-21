@@ -14,7 +14,7 @@ on:
       - energy_voice_space/**
       - scripts/upload_energy_voice_space.py
       - energie_agent_kennisbasis_luminus_elegant_eneco.pdf
-      - energyagent-karen-prototype/assets/**
+      - energyagent-karen-prototype/**
 
 permissions:
   contents: read
@@ -46,6 +46,13 @@ jobs:
           python-version: "3.12"
 
       - run: pip install "huggingface_hub>=0.30,<1"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build the Karen component the Framer site loads
+        run: sh energyagent-karen-prototype/remote/build.sh
 
       - name: Upload backend files to the Space
         env:

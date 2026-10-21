@@ -1,5 +1,13 @@
 # Framer Code Component
 
+## Framer loads the latest Karen by itself — 21 October 2026
+
+`KarenLoader.tsx` is the code that goes in Framer now. Paste it once into the code file that holds `EnergyAgentConversation`, replacing everything, and publish. It keeps the same name and properties, so the instances on `/` and `/live-demo` keep their Backend URL.
+
+The loader imports `/karen-component.js` from the backend's address (the Hugging Face Space when the Backend URL is empty). The deploy workflow builds that file from `EnergyAgentConversation.tsx` with `remote/build.sh` on every merge to main, so a merged change reaches the site after the Space restarts, without pasting code or republishing. The bundle uses the site's own React through `globalThis.__KAREN_REACT__`. Browsers ask for a fresh copy at most every five minutes.
+
+To build it locally: `sh energyagent-karen-prototype/remote/build.sh` (writes `build/karen-component.js`; set `ESBUILD` to use a local esbuild instead of `npx`).
+
 ## Karen shows her work: route, search, pages — 20 October 2026
 
 While she answers, the chat draws Karen's route in five stages: Vraag, Begrijpen, Zoeken, Lezen and Antwoord. Under it you see Jev's three most likely routes as bars with percentages (when Jev routing is on), the sites she searches as chips that light up when a page from them is read, and the pages she reads as links. When the answer is done, one line stays: "Jev: Energievraag 92% · Karen zocht één keer en las 2 pagina's."
