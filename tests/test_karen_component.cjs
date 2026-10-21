@@ -109,6 +109,10 @@ async function voice(question) {
 }
 async function main() {
     await act(async () => root.render(React.createElement(Component, { apiEndpoint: "https://backend.example/api/answer", sampleQuestion: "sample" })))
+    const privacy = document.querySelector(".ea-privacy")
+    assert.equal(privacy.open, false, "The privacy details start folded to one line")
+    assert.match(privacy.querySelector("summary").textContent, /blijft in deze browser.*Meer over privacy/)
+    assert.match(privacy.textContent, /Babbeldoos-stemservice/, "The full privacy text is still there behind the link")
     responses.push(collecting)
     await typed("Vergelijk energieaanbiedingen")
     assert.deepEqual(requests.at(-1).body, { question: "Vergelijk energieaanbiedingen" })
