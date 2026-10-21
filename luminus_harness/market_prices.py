@@ -192,7 +192,10 @@ def _day_label(day: str, lang: str) -> str:
 def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | None:
     """Karen's reply from market.json, or None when the file has no usable spot day."""
     spot = data.get("spot") or {}
-    day = spot.get("today") or {}
+    # The daily job runs in the evening, so after midnight its "tomorrow" is today.
+    today = datetime.now(BRUSSELS).date().isoformat()
+    later = spot.get("tomorrow") or {}
+    day = later if later.get("date") == today and (spot.get("today") or {}).get("date") != today else spot.get("today") or {}
     if spot.get("unit") != "EUR/MWh" or not all(isinstance(day.get(key), (int, float)) for key in ("avg", "min", "max")):
         return None
     # EUR/MWh divided by 10 is eurocent per kWh.

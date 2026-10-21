@@ -230,3 +230,15 @@ def test_price_replies_carry_a_chart_with_hourly_prices_and_cheapest_first_bars(
         {"label": "Frank Energie Variabel", "value": 18.7}, {"label": "Luminus BasicFlex Online", "value": 19.2},
     ]}]
     assert "day" not in market_prices.market_price_reply(market(), "nl")["visual"], "No curve without points"
+
+
+def test_after_midnight_the_evening_runs_tomorrow_is_today():
+    from datetime import date, timedelta
+
+    yesterday = (date.fromisoformat(TODAY) - timedelta(days=1)).isoformat()
+    data = market(date=yesterday, avg=100.0, min=90.0, max=110.0)
+    data["spot"]["tomorrow"] = {"date": TODAY, "avg": 221.97, "min": 176.11, "max": 297.93, "cheapest_hours": [1]}
+    answer = market_prices.market_price_reply(data, "nl")["answer"]
+    assert "vandaag gemiddeld 22,2 cent" in answer and "rond 1u" in answer
+    data["spot"]["tomorrow"]["date"] = "2099-01-01"
+    assert f"op {yesterday} gemiddeld 10,0 cent" in market_prices.market_price_reply(data, "nl")["answer"]
