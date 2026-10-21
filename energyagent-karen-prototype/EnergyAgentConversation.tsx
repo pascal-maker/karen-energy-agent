@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { addPropertyControls, ControlType } from "framer"
 
 type SpeechResult = { transcript: string }
@@ -18,7 +18,7 @@ type SpeechRecognizer = {
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognizer; webkitSpeechRecognition?: new () => SpeechRecognizer }
 
 type Source = { title: string; detail?: string; url?: string; excerpt?: string }
-type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_session_id?: string | null; comparison_status?: string }
+type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_session_id?: string | null; comparison_status?: string; visual?: PriceVisual }
 
 // What Karen does while she answers, shown in the chat as she works.
 const stepSummary = (steps: Step[]) => {
@@ -89,6 +89,97 @@ function KarenFlow({ steps, writing }: { steps: Step[]; writing: boolean }) {
     </div>
 }
 
+// Prices Karen read from the market data, drawn as a day curve and bars next to the answer.
+type PriceVisual = {
+    kind: "prices"
+    lead: string
+    unit: string
+    digits?: number
+    groups: { title: string; items: { label: string; value: number; note?: string }[] }[]
+    day?: { title: string; points: [string, number][]; cheapest_hours: number[]; cheap_label: string; low: number; high: number }
+}
+const formatNumber = (value: number, unit: string, digits = 1) => {
+    const text = value.toFixed(digits)
+    return unit.startsWith("cents") ? text : text.replace(".", ",")
+}
+
+// Amounts, percentages and prices stand out in the text; **bold** from the model becomes bold.
+const AMOUNT = /(€\s?\d[\d.,]*|\d[\d.,]*\s?(?:%|(?:cent\/kWh|c€\/kWh|cents?|euro|EUR|kWh|MWh|kW)\b))/
+function inline(text: string): ReactNode[] {
+    return text.split(/(\*\*[^*]+\*\*)/g).flatMap((part, index) => /^\*\*[^*]+\*\*$/.test(part)
+        ? [<strong key={index}>{part.slice(2, -2)}</strong>]
+        : part.split(AMOUNT).map((piece, inner) => inner % 2 ? <span className="ea-num" key={`${index}-${inner}`}>{piece}</span> : piece))
+}
+
+type Block = { kind: "p"; text: string } | { kind: "points" | "steps"; items: string[] }
+// An answer as a short lead, points as cards and numbered steps; a one-paragraph answer stays plain text.
+function FormattedAnswer({ text }: { text: string }) {
+    const blocks: Block[] = []
+    for (const raw of text.split("\n")) {
+        const line = raw.trim()
+        if (!line) continue
+        const step = line.match(/^\d+[.)]\s+(.+)$/)
+        const point = line.match(/^[-*•]\s+(.+)$/)
+        const kind = step ? "steps" : point ? "points" : "p"
+        const body = step ? step[1] : point ? point[1] : line
+        const last = blocks[blocks.length - 1]
+        if (kind !== "p" && last && last.kind === kind) last.items.push(body)
+        else blocks.push(kind === "p" ? { kind, text: body } : { kind, items: [body] })
+    }
+    if (blocks.length <= 1 && (!blocks[0] || blocks[0].kind === "p")) return <>{inline(text)}</>
+    return <div className="ea-rich">
+        {blocks.map((block, index) => block.kind === "p"
+            ? <p key={index} className={index === 0 ? "ea-lead" : undefined}>{inline(block.text)}</p>
+            : block.kind === "steps"
+                ? <ol key={index} className="ea-steps">{block.items.map((item, inner) => <li key={inner}>{inline(item)}</li>)}</ol>
+                : <ul key={index} className="ea-points">{block.items.map((item, inner) => {
+                    const labelled = item.match(/^\*\*([^*]+?)\*\*:?\s*(.*)$/)
+                    return <li key={inner}>{labelled
+                        ? <><strong>{labelled[1].replace(/:$/, "")}</strong><span>{inline(labelled[2])}</span></>
+                        : inline(item)}</li>
+                })}</ul>)}
+    </div>
+}
+
+function DayCurve({ day, unit }: { day: NonNullable<PriceVisual["day"]>; unit: string }) {
+    const values = day.points.map((point) => point[1])
+    const low = Math.min(...values), high = Math.max(...values)
+    const width = 300, top = 6, bottom = 70
+    const x = (index: number) => (index / (day.points.length - 1)) * width
+    const y = (value: number) => bottom - (high === low ? 0.5 : (value - low) / (high - low)) * (bottom - top)
+    const line = day.points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(point[1]).toFixed(1)}`).join(" ")
+    const cheap = day.points.map((point, index) => ({ index, hour: parseInt(point[0], 10) })).filter((point) => day.cheapest_hours.includes(point.hour))
+    return <figure className="ea-day">
+        <figcaption>{day.title}</figcaption>
+        <svg viewBox={`0 0 ${width} 76`} role="img" aria-label={`${day.title}: ${formatNumber(day.low ?? low, unit)} – ${formatNumber(day.high ?? high, unit)} ${unit}`}>
+            <path d={`${line} L${width},${bottom} L0,${bottom} Z`} className="ea-day-area" />
+            <path d={line} className="ea-day-line" />
+            {cheap.map((point) => <circle key={point.index} cx={x(point.index)} cy={y(day.points[point.index][1])} r="3.5" className="ea-day-cheap" />)}
+        </svg>
+        <div className="ea-day-axis"><span>{day.points[0][0]}</span><span>12:00</span><span>{day.points[day.points.length - 1][0]}</span></div>
+        <div className="ea-day-legend">
+            {cheap.length > 0 && <span><i />{day.cheap_label}</span>}
+            <span>{formatNumber(day.low ?? low, unit)}–{formatNumber(day.high ?? high, unit)} {unit}</span>
+        </div>
+    </figure>
+}
+
+function PriceChart({ visual }: { visual: PriceVisual }) {
+    const max = Math.max(...visual.groups.flatMap((group) => group.items.map((item) => item.value)))
+    return <div className="ea-viz">
+        <p className="ea-lead">{inline(visual.lead)}</p>
+        {visual.day && <DayCurve day={visual.day} unit={visual.unit} />}
+        {visual.groups.map((group) => <div className="ea-bars" key={group.title}>
+            <h4>{group.title} <small>{visual.unit}</small></h4>
+            {group.items.map((item, index) => <div className="ea-bar-row" key={item.label} data-best={index === 0}>
+                <span className="ea-bar-label">{item.label}{item.note && <small>{item.note}</small>}</span>
+                <span className="ea-bar-track"><span style={{ width: `${(item.value / max) * 100}%` }} /></span>
+                <span className="ea-bar-value">{formatNumber(item.value, visual.unit, visual.digits)}</span>
+            </div>)}
+        </div>)}
+    </div>
+}
+
 type Props = {
     apiEndpoint: string
     sampleQuestion: string
@@ -132,16 +223,21 @@ const answerLanguage = (text: string): VoiceLanguage => {
     const best = (Object.keys(scores) as VoiceLanguage[]).sort((a, b) => scores[b] - scores[a])[0]
     return scores[best] ? best : voiceLanguage()
 }
-type Turn = { question: string; answer: string }
+type Turn = { question: string; answer: string; visual?: PriceVisual }
 // The conversation is kept only in this visitor's browser; PDF answers are never stored or sent along.
 const HISTORY_KEY = "karen-chat-v1"
 const MAX_TURNS = 20
 const SENT_TURNS = 4
+const isPriceVisual = (value: any): value is PriceVisual => value?.kind === "prices" && typeof value.lead === "string" && typeof value.unit === "string"
+    && Array.isArray(value.groups) && value.groups.every((group: any) => Array.isArray(group?.items) && group.items.every((item: any) => typeof item?.label === "string" && typeof item?.value === "number"))
+    && (value.day === undefined || (Array.isArray(value.day.points) && value.day.points.length > 1 && Array.isArray(value.day.cheapest_hours)))
 function loadTurns(): Turn[] {
     try {
         const saved = JSON.parse(window.localStorage.getItem(HISTORY_KEY) || "[]")
         return Array.isArray(saved)
             ? saved.filter((turn) => typeof turn?.question === "string" && typeof turn?.answer === "string").slice(-MAX_TURNS)
+                // A stored chart is only drawn again when it still has the shape this version draws.
+                .map((turn) => isPriceVisual(turn.visual) ? turn : { question: turn.question, answer: turn.answer })
             : []
     } catch {
         return []
@@ -186,6 +282,36 @@ const css = `
   .ea-new { padding:8px 12px; border:1px solid #d6e3d4; border-radius:10px; color:#234f38; background:#f2f7ef; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
   .ea-new:disabled { opacity:.55; cursor:wait; }
   .ea-answer, .ea-past-answer { max-width:94%; padding:15px 17px; border:1px solid #e8ece7; border-radius:4px 16px 16px; background:#fbfcfa; font-size:13px; line-height:1.65; white-space:pre-line; }
+  .ea-rich { white-space:normal; }
+  .ea-rich p { margin:0 0 8px; }
+  .ea-lead { margin:0 0 10px!important; color:#1e2b23; font-size:14px; font-weight:600; line-height:1.5; }
+  .ea-num { padding:0 4px; border-radius:5px; color:#234f38; background:#e6f1e7; font-weight:650; white-space:nowrap; }
+  .ea-points { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin:0 0 8px; padding:0; list-style:none; }
+  .ea-points li { padding:10px 12px; border:1px solid #e3ebe2; border-radius:12px; background:white; }
+  .ea-points li strong { display:block; margin-bottom:2px; color:#234f38; }
+  .ea-steps { display:grid; gap:8px; margin:0 0 8px; padding:0; list-style:none; counter-reset:ea-step; }
+  .ea-steps li { position:relative; padding-left:32px; counter-increment:ea-step; }
+  .ea-steps li::before { content:counter(ea-step); position:absolute; left:0; top:0; display:grid; place-items:center; width:22px; height:22px; border-radius:50%; color:white; background:#55a573; font-size:11px; font-weight:700; }
+  .ea-viz { white-space:normal; }
+  .ea-day { margin:0 0 14px; padding:12px; border:1px solid #e3ebe2; border-radius:12px; background:white; }
+  .ea-day figcaption, .ea-bars h4 { margin:0 0 8px; color:#4f6156; font-size:11px; font-weight:650; text-transform:uppercase; letter-spacing:.06em; }
+  .ea-bars h4 small { font-weight:500; text-transform:none; letter-spacing:0; }
+  .ea-day svg { display:block; width:100%; height:auto; overflow:visible; }
+  .ea-day-area { fill:#55a5731f; }
+  .ea-day-line { fill:none; stroke:#55a573; stroke-width:2; stroke-linejoin:round; }
+  .ea-day-cheap { fill:#234f38; stroke:white; stroke-width:1.5; }
+  .ea-day-axis, .ea-day-legend { display:flex; justify-content:space-between; gap:8px; color:#7d8b82; font-size:10px; }
+  .ea-day-legend { margin-top:6px; font-size:11px; }
+  .ea-day-legend i { display:inline-block; width:8px; height:8px; margin-right:5px; border-radius:50%; background:#234f38; }
+  .ea-bars { margin:0 0 12px; }
+  .ea-bar-row { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(60px,1fr) 3.4em; gap:10px; align-items:center; padding:5px 0; font-size:12px; }
+  .ea-bar-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ea-bar-label small { margin-left:6px; color:#7d8b82; }
+  .ea-bar-track { height:8px; border-radius:4px; background:#edf2ec; overflow:hidden; }
+  .ea-bar-track span { display:block; height:100%; border-radius:4px; background:#b9cdbd; animation:ea-grow .6s ease-out both; transform-origin:left; }
+  .ea-bar-value { text-align:right; font-variant-numeric:tabular-nums; }
+  .ea-bar-row[data-best="true"] { color:#234f38; font-weight:650; }
+  .ea-bar-row[data-best="true"] .ea-bar-track span { background:#55a573; }
   .ea-state { display:flex; align-items:center; gap:8px; margin:4px 0 12px; color:#68776d; font-size:12px; }
   .ea-dot { width:8px; height:8px; border-radius:50%; background:#55a573; }
   .ea-flow { max-width:94%; margin:4px 0 14px; padding:14px 14px 12px; border:1px solid #e3ebe2; border-radius:14px; background:linear-gradient(180deg,#f5f9f3,#fbfcfa); }
@@ -215,7 +341,7 @@ const css = `
   .ea-flow-done { margin:-4px 0 12px; color:#8a978e; font-size:11px; }
   @keyframes ea-pop { from { opacity:0; transform:translateY(4px) scale(.96); } to { opacity:1; transform:none; } }
   @keyframes ea-ring { 0% { box-shadow:0 0 0 3px #f6f9f4, 0 0 0 3px #55a57366; } 100% { box-shadow:0 0 0 3px #f6f9f4, 0 0 0 11px #55a57300; } }
-  @media (prefers-reduced-motion: reduce) { .ea-jev-bar span, .ea-site, .ea-page, .ea-flow-stages li[data-state="active"]::before { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { .ea-jev-bar span, .ea-bar-track span, .ea-site, .ea-page, .ea-flow-stages li[data-state="active"]::before { animation:none; } }
   .ea-controls { display:grid; grid-template-columns:minmax(0,1fr) 48px; gap:8px; }
   .ea-input { min-width:0; height:48px; padding:0 14px; border:1px solid #dfe5de; border-radius:14px; outline:none; color:#27372c; background:white; font:inherit; font-size:13px; }
   .ea-input:focus { border-color:#72a584; box-shadow:0 0 0 3px #72a58420; }
@@ -267,6 +393,9 @@ const css = `
     .ea-composer { position:sticky; bottom:0; z-index:2; margin:0 -16px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #edf0eb; }
     .ea-input { font-size:16px; }
     .ea-foot, .ea-privacy summary { font-size:12px; }
+    .ea-bar-row { grid-template-columns:minmax(0,1fr) 3.4em; row-gap:4px; padding:6px 0; font-size:14px; }
+    .ea-bar-label { grid-column:1 / -1; white-space:normal; }
+    .ea-lead { font-size:16px; }
     .ea-jump { display:inline-block; margin-top:10px; color:#234f38; font-size:14px; font-weight:600; }
     .ea-rail { display:grid; gap:12px; padding:16px 16px 28px; border-top:8px solid #f6f7f3; }
     .ea-card { padding:16px; }
@@ -355,7 +484,7 @@ export default function EnergyAgentConversation({
     // Declared before the restore below, so the first run never overwrites the saved chat with an empty one.
     useEffect(() => {
         if (!restored.current) return
-        const current = asked && reply && reply.processing !== "local-only" ? [{ question: asked, answer: reply.answer }] : []
+        const current = asked && reply && reply.processing !== "local-only" ? [{ question: asked, answer: reply.answer, ...(reply.visual ? { visual: reply.visual } : {}) }] : []
         saveTurns([...turns, ...current])
     }, [turns, asked, reply])
     useEffect(() => {
@@ -368,7 +497,7 @@ export default function EnergyAgentConversation({
     // The exchange on screen moves into the history before a new question or PDF replaces it.
     function archiveCurrent(): Turn[] {
         const next = asked && reply && reply.processing !== "local-only"
-            ? [...turns, { question: asked, answer: reply.answer }].slice(-MAX_TURNS)
+            ? [...turns, { question: asked, answer: reply.answer, ...(reply.visual ? { visual: reply.visual } : {}) }].slice(-MAX_TURNS)
             : turns
         if (next !== turns) setTurns(next)
         return next
@@ -865,13 +994,13 @@ export default function EnergyAgentConversation({
                 <h1>Praat met Karen.<br />Begrijp je energie.</h1>
                 <p className="ea-sub">Vraag naar je factuur, energieverbruik of verwarming. Karen laat zien waarop haar antwoord steunt.</p></>}
                 <div className="ea-thread" aria-live="polite" ref={thread}>
-                    {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.answer}</div></div>)}
+                    {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.visual?.kind === "prices" && turn.visual.groups?.length ? <PriceChart visual={turn.visual} /> : <FormattedAnswer text={turn.answer} />}</div></div>)}
                     {asked && <div className="ea-question">{asked}</div>}
                     {busy && steps.length > 0 && <KarenFlow steps={steps} writing={Boolean(draft)} />}
                     {(busy || uploading || listening || transcribing) && !draft && !(busy && steps.length > 0) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
                     {!busy && steps.length > 0 && reply && <p className="ea-flow-done">{stepSummary(steps)}</p>}
-                    {busy && draft && <div className="ea-answer">{draft}</div>}
-                    {reply && <><div className="ea-answer">{reply.answer}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
+                    {busy && draft && <div className="ea-answer"><FormattedAnswer text={draft} /></div>}
+                    {reply && <><div className="ea-answer">{reply.visual?.kind === "prices" && reply.visual.groups?.length ? <PriceChart visual={reply.visual} /> : <FormattedAnswer text={reply.answer} />}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
                         ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>
                         : <div className="ea-feedback">
                             {feedbackOpen ? <>

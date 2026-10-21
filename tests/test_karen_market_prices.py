@@ -218,3 +218,15 @@ async def test_french_energy_question_searches_in_dutch_and_answers_in_french(mo
     )
     assert result["answer"] == "Votre acompte est une estimation."
     assert searched and "voorschot" in searched[0]
+
+
+def test_price_replies_carry_a_chart_with_hourly_prices_and_cheapest_first_bars():
+    points = [[f"{hour:02d}:{minute:02d}", 200.0 + hour] for hour in range(24) for minute in (0, 15, 30, 45)]
+    visual = market_prices.market_price_reply(market(points=points), "nl")["visual"]
+    assert visual["kind"] == "prices" and visual["lead"].startswith("De groothandelsprijs")
+    assert visual["day"]["points"][:2] == [["00:00", 20.0], ["01:00", 20.1]], "Quarter hours become hourly cents per kWh"
+    assert len(visual["day"]["points"]) == 24 and visual["day"]["cheapest_hours"] == [0, 3, 4]
+    assert visual["groups"] == [{"title": "Variabel", "items": [
+        {"label": "Frank Energie Variabel", "value": 18.7}, {"label": "Luminus BasicFlex Online", "value": 19.2},
+    ]}]
+    assert "day" not in market_prices.market_price_reply(market(), "nl")["visual"], "No curve without points"

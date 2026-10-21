@@ -87,3 +87,10 @@ def test_api_answers_gas_price_from_the_cards(api, monkeypatch):  # noqa: F811
 def test_api_gas_question_without_cards_keeps_the_source_path(api, monkeypatch):  # noqa: F811
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
     assert ask(api, "wat is de gasprijs vandaag")["answer"] == "Bestaand antwoord"
+
+
+def test_gas_replies_carry_bars_with_the_fixed_term():
+    visual = market_prices.gas_price_reply(with_gas())["visual"]
+    assert [group["title"] for group in visual["groups"]] == ["Variabel", "Vast"]
+    assert all(item["value"] < 20 for group in visual["groups"] for item in group["items"])
+    assert any(item.get("note", "").endswith("mnd vast") for item in visual["groups"][1]["items"])

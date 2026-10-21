@@ -154,3 +154,21 @@ async def test_pages_that_do_not_answer_lead_to_the_next_sites(monkeypatch):
     assert calls == ["grid_operators", "official_energy"]
     assert result["answer"] == "Je verlaagt je piek door toestellen te spreiden."
     assert [source["title"] for source in result["sources"]] == ["official_energy"]
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_search_reuses_the_pages_but_not_an_empty_result(monkeypatch):
+    from luminus_harness import gemma_answer
+
+    calls = []
+    results = [[], [{"title": "Energiedelen", "url": "https://www.fluvius.be/energiedelen", "content": "x"}]]
+
+    async def search(query, scope, max_pages=2):
+        calls.append(query)
+        return results[min(len(calls) - 1, 1)]
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    assert await gemma_answer._search_scope("Wat is energiedelen?", "official_energy") == []
+    first = await gemma_answer._search_scope("Wat is energiedelen?", "official_energy")
+    again = await gemma_answer._search_scope("wat is  ENERGIEDELEN?", "official_energy")
+    assert first == again and len(calls) == 2, "The empty result was retried, the found pages were reused"
