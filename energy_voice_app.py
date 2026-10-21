@@ -1038,6 +1038,21 @@ async def api_transcribe(
     return {"text": text[:1000]}
 
 
+KAREN_COMPONENT_JS = REPO_ROOT / "build" / "karen-component.js"
+
+
+@api_app.get("/karen-component.js", include_in_schema=False)
+async def karen_component() -> Response:
+    """Serve the chat component that KarenLoader.tsx imports on the Framer site."""
+    if not KAREN_COMPONENT_JS.is_file():
+        raise HTTPException(status_code=404, detail="Karen component is not built.")
+    return Response(
+        KAREN_COMPONENT_JS.read_bytes(),
+        media_type="text/javascript",
+        headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=60"},
+    )
+
+
 @api_app.get("/", include_in_schema=False)
 async def home() -> RedirectResponse:
     return RedirectResponse(url="/ui/")

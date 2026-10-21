@@ -39,6 +39,10 @@ def main() -> None:
         "luminus_harness/transcribe.py": repo_root / "luminus_harness" / "transcribe.py",
         "luminus_harness/voice_agent.py": repo_root / "luminus_harness" / "voice_agent.py",
     }
+    component = repo_root / "build" / "karen-component.js"
+    if not component.is_file():
+        raise SystemExit("Run energyagent-karen-prototype/remote/build.sh first: build/karen-component.js is missing.")
+    file_map["build/karen-component.js"] = component
     operations = [
         CommitOperationAdd(path_in_repo=remote, path_or_fileobj=local)
         for remote, local in file_map.items()
