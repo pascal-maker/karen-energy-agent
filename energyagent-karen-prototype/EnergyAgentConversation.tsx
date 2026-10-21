@@ -687,9 +687,11 @@ export default function EnergyAgentConversation({
         // Speak the answer automatically only when the question itself was spoken;
         // typed questions get a "Beluister Karen" button instead.
         const askedByVoice = voiceDraft
+        // Every exchange stays in the chat; only public chats send it along as history.
+        const past = archiveCurrent()
         const history = sessionId || comparisonSessionId
             ? []
-            : archiveCurrent().slice(-SENT_TURNS).map((turn) => ({ question: turn.question, answer: turn.answer.slice(0, 800) }))
+            : past.slice(-SENT_TURNS).map((turn) => ({ question: turn.question, answer: turn.answer.slice(0, 800) }))
         clearPetra()
         if (listening) stopVoice()
         setAnswerError("")

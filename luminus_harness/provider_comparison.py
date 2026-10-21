@@ -66,7 +66,9 @@ def validate_extra_inputs(inputs: dict[str, Any]) -> str | None:
     if all(name in inputs for name in ("annual_consumption_kwh", "annual_day_consumption_kwh", "annual_night_consumption_kwh")):
         total = inputs["annual_day_consumption_kwh"] + inputs["annual_night_consumption_kwh"]
         if not math.isclose(total, inputs["annual_consumption_kwh"], abs_tol=0.01, rel_tol=0):
-            return "Het dag- en nachtverbruik samen wijkt af van je opgegeven jaarverbruik. Geef de juiste jaarcijfers voor dag en nacht."
+            return (f"Je dag- en nachtverbruik samen wijkt af van je jaarverbruik: {inputs['annual_day_consumption_kwh']:g} + "
+                    f"{inputs['annual_night_consumption_kwh']:g} = {total:g} kWh, maar je gaf {inputs['annual_consumption_kwh']:g} kWh per jaar op. "
+                    f"Geef je dag- en nachtverbruik opnieuw, samen {inputs['annual_consumption_kwh']:g} kWh.")
     return None
 
 

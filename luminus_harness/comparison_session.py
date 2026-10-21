@@ -159,7 +159,12 @@ def is_comparison_followup(question: str, pending: str | None) -> bool:
     return len(words) <= 16 and all(word in allowed for word in words)
 
 
+STOP_HINT = "Typ ‘stop’ om de vergelijking te stoppen."
+
+
 def _reply(answer: str, status: str, session_id: str | None = None, **extra) -> dict:
+    if status == "collecting":
+        answer = f"{answer}\n\n{STOP_HINT}"
     return {
         "answer": answer, "sources": [], "suggested_sources": [],
         "processing": "regional-offer-comparison", "comparison_status": status,
