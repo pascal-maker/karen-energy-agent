@@ -342,3 +342,43 @@ async def answer_market_price_question(question: str, *, recognised: bool = Fals
     if data is None:
         return None
     return market_price_reply(data, question_language(question))
+
+
+_COMPARATORS = {
+    "flanders": ("V-test (Vlaamse Nutsregulator)", "https://www.vtest.be/"),
+    "brussels": ("BruSim (BRUGEL)", "https://brugel.brussels/nl_BE/outils/brusim-2"),
+    "wallonia": ("CompaCWaPE (CWaPE)", "https://www.compacwape.be/"),
+}
+_COMPARATOR_REGION = (
+    ("brussels", re.compile(r"\b(?:brussel|bruxelles|brussels)\b", re.IGNORECASE)),
+    ("wallonia", re.compile(r"\b(?:walloni[eë]|wallonie|wallonia|waals\w*)\b", re.IGNORECASE)),
+)
+_COMPARISON_LEAD = {
+    "nl": "Dit zijn de goedkoopste contracten van vandaag. Wat jij precies betaalt, hangt af van je verbruik: reken het na op {name}.",
+    "en": "These are today's cheapest contracts. What you pay depends on your usage: check it on {name}.",
+    "fr": "Voici les contrats les moins chers du jour. Ce que tu paies dépend de ta consommation : vérifie-le sur {name}.",
+}
+
+
+async def answer_offer_comparison(question: str) -> dict[str, Any] | None:
+    """A comparison question gets today's supplier cards and the official comparator, no form."""
+    data = await load_market_data()
+    if data is None:
+        return None
+    lang = question_language(question)
+    gas = bool(_GAS.search(question))
+    reply = gas_price_reply(data, lang) if gas else market_price_reply(data, lang)
+    if reply is None:
+        return None
+    region = next((name for name, pattern in _COMPARATOR_REGION if pattern.search(question)), "flanders")
+    name, url = _COMPARATORS[region]
+    lead = _COMPARISON_LEAD.get(lang, _COMPARISON_LEAD["nl"]).format(name=name)
+    visual = {key: value for key, value in reply["visual"].items() if key != "day"}
+    visual["lead"] = lead
+    return {
+        **reply,
+        "answer": f"{lead}\n{reply['answer']}",
+        "visual": visual,
+        "suggested_sources": [{"title": name, "url": url, "detail": "Officiële vergelijker · zelf je verbruik invullen"}],
+        "processing": "offer-comparison",
+    }

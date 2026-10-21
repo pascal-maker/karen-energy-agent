@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from luminus_harness import comparison_session as comparison
 from luminus_harness import gemma_answer, market_prices
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 
@@ -95,10 +94,7 @@ def test_missing_spot_values_give_no_reply():
 def api(monkeypatch):
     import energy_voice_app as app
 
-    monkeypatch.setattr(app, "_comparison_sessions", comparison.ComparisonSessions())
     monkeypatch.setattr(app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
-    lookup = AsyncMock(side_effect=AssertionError("A price question must not start the offer lookup"))
-    monkeypatch.setattr(comparison, "compare_energy_offers", lookup)
     hosted = AsyncMock(return_value={"answer": "Bestaand antwoord", "sources": []})
     monkeypatch.setattr(app, "answer_energy_question", hosted)
     with TestClient(app.api_app) as client:
@@ -116,8 +112,6 @@ def test_price_question_gets_prices_instead_of_the_comparison_form(api, monkeypa
     reply = ask(api, "zoek de beste energieprijzen")
     assert "22,2 cent per kWh" in reply["answer"]
     assert "postcode" not in reply["answer"].split("\n")[0]
-    assert reply["comparison_session_id"] is None
-    assert not api[1]._comparison_sessions.sessions
     api[2].assert_not_awaited()
 
 
@@ -126,12 +120,28 @@ def test_unavailable_market_data_falls_back_to_the_existing_route(api):
     assert reply["answer"] == "Bestaand antwoord"
 
 
-def test_an_active_comparison_is_not_interrupted(api, monkeypatch):
-    load = AsyncMock(return_value=market())
-    monkeypatch.setattr(market_prices, "load_market_data", load)
-    token = ask(api, "Vergelijk gas")["comparison_session_id"]
-    ask(api, "wat kost stroom", token)
-    load.assert_not_awaited()
+def test_comparison_question_gets_supplier_cards_and_the_comparator(api, monkeypatch):
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
+    reply = ask(api, "Vergelijk stroomleveranciers")
+    assert reply["processing"] == "offer-comparison"
+    assert reply["answer"].startswith("Dit zijn de goedkoopste contracten van vandaag.")
+    assert reply["visual"]["lead"].endswith("V-test (Vlaamse Nutsregulator).")
+    assert reply["visual"]["groups"] and "day" not in reply["visual"]
+    assert reply["suggested_sources"][0]["url"] == "https://www.vtest.be/"
+    assert "comparison_session_id" not in reply and "feedback_token" in reply
+    api[2].assert_not_awaited()
+
+
+def test_comparison_in_brussels_points_to_brusim(api, monkeypatch):
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
+    reply = ask(api, "goedkoopste energieleverancier in Brussel")
+    assert reply["suggested_sources"][0]["title"] == "BruSim (BRUGEL)"
+
+
+def test_an_old_comparison_token_is_ignored(api, monkeypatch):
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
+    reply = ask(api, "wat kost stroom", "x" * 40)
+    assert reply["processing"] == "market-data"
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,9 @@
 # Framer Code Component
 
+## No comparison form — 21 October 2026
+
+"Vergelijk leveranciers" and similar questions no longer start a form (region, postcode, usage, meter). Karen answers right away with today's cheapest variable and fixed contracts as bars, and points to the official comparator for a price on the person's own usage: V-test, or BruSim / CompaCWaPE when Brussels or Wallonia is named. `/api/comparison-session` is gone and `comparison_session_id` in a request is ignored.
+
 ## Framer loads the latest Karen by itself — 21 October 2026
 
 `KarenLoader.tsx` is the code that goes in Framer now. Paste it once into the code file that holds `EnergyAgentConversation`, replacing everything, and publish. It keeps the same name and properties, so the instances on `/` and `/live-demo` keep their Backend URL.

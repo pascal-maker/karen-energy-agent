@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from luminus_harness import comparison_session as comparison
 from luminus_harness import feedback
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 
@@ -15,9 +14,7 @@ def api(monkeypatch, tmp_path):
 
     monkeypatch.setenv("KAREN_FEEDBACK_DIR", str(tmp_path))
     monkeypatch.delenv("HF_TOKEN", raising=False)
-    monkeypatch.setattr(app, "_comparison_sessions", comparison.ComparisonSessions())
     monkeypatch.setattr(app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
-    monkeypatch.setattr(comparison, "compare_energy_offers", AsyncMock(side_effect=AssertionError("no offer lookup")))
     monkeypatch.setattr(app, "answer_energy_question", AsyncMock(return_value={"answer": "Publiek antwoord", "sources": []}))
     with TestClient(app.api_app) as client:
         yield client, tmp_path / "feedback.jsonl"
@@ -37,13 +34,6 @@ def test_public_answer_can_be_rated_with_its_token(api):
     assert record["question"] == "Hoe werkt het capaciteitstarief?"
     assert record["answer"] == "Publiek antwoord"
     assert record["processing"] == "hosted-public-knowledge"
-
-
-def test_comparison_answers_get_no_token(api):
-    client, _ = api
-    reply = client.post("/api/answer", json={"question": "Vergelijk aanbiedingen"}).json()
-    assert reply["comparison_status"] == "collecting"
-    assert "feedback_token" not in reply
 
 
 @pytest.mark.parametrize("token", ["x" * 60, feedback.sign_feedback("q", "a", "p")[:-8] + "AAAAAAAA"])
