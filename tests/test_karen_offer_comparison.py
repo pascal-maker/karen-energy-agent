@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from luminus_harness import comparison_session as comparison
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
+from luminus_harness.provider_comparison import validate_extra_inputs
 
 
 def result(status="success"):
@@ -410,3 +411,24 @@ def test_ambiguous_meter_and_unprompted_split_are_not_inferred(api):
     assert "annual_day_consumption_kwh" not in state.inputs
     assert "annual_night_consumption_kwh" not in state.inputs
     assert api[2].await_count == 1
+
+
+def test_greeting_mid_comparison_gets_a_greeting_and_keeps_the_comparison(api, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    token = ask(api, "Vergelijk gas")["comparison_session_id"]
+    reply = ask(api, "hallo karen", token)
+    assert reply["processing"] == "small-talk"
+    assert reply["comparison_session_id"] == token
+    assert api[1]._comparison_sessions.sessions[token].inputs == {"energy_type": "gas"}
+    assert ask(api, "Vlaanderen", token)["comparison_status"] == "collecting"
+
+
+def test_form_questions_say_how_to_stop(api):
+    reply = ask(api, "Vergelijk gas")
+    assert reply["answer"].endswith(comparison.STOP_HINT)
+
+
+def test_day_night_mismatch_names_the_numbers():
+    error = validate_extra_inputs({"annual_consumption_kwh": 3500, "annual_day_consumption_kwh": 100,
+                                   "annual_night_consumption_kwh": 2000})
+    assert "100 + 2000 = 2100 kWh" in error and "3500 kWh" in error

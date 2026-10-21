@@ -123,6 +123,10 @@ async function main() {
     responses.push({ ...collecting, answer: "Ben je prosument? Antwoord ja of nee.", required_information: ["is_prosumer"] })
     await voice("Postcode 9000, elektriciteit, jaarlijks 3500 kWh")
     assert.equal(requests.at(-1).body.comparison_session_id, token)
+    const shown = document.body.textContent
+    assert.match(shown, /Vergelijk energieaanbiedingen/, "Earlier comparison questions stay in the chat")
+    assert.match(shown, /In welk gewest woon je\?/, "Earlier comparison answers stay in the chat")
+    assert.match(shown, /Wat is je postcode\?/)
     assert.equal(mic().disabled, false)
     responses.push(success)
     await voice("nee")

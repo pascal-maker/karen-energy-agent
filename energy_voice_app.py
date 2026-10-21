@@ -53,6 +53,7 @@ from luminus_harness.gemma_answer import (
     answer_stream,
     standalone_question,
     mentions_energy,
+    small_talk_kind,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
@@ -946,6 +947,11 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
             return _with_petra_speech({**await answer_small_talk(question, route), "comparison_session_id": None})
         if route == "energy_other":
             return await _hosted_answer(question, None)
+    if (body.comparison_session_id in _comparison_sessions.sessions and small_talk_kind(body.question)
+            and not is_offer_comparison_question(body.question)):
+        # "Hallo" mid-comparison gets a greeting back, not the next form question; the comparison stays open.
+        small_talk = await answer_small_talk(body.question.strip(), "small_talk")
+        return _with_petra_speech({**small_talk, "comparison_session_id": body.comparison_session_id})
     comparison = await _comparison_sessions.answer(body.question.strip(), body.comparison_session_id)
     if comparison is not None:
         return _with_petra_speech(comparison)
