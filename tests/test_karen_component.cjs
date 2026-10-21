@@ -127,7 +127,9 @@ async function main() {
     responses.push(success)
     await voice("nee")
     assert.equal(requests.at(-1).body.comparison_session_id, token)
-    assert.equal(document.querySelector(".ea-answer").textContent, success.answer)
+    assert.equal(document.querySelector(".ea-answer .ea-lead").textContent, "V-test toont dit aanbod.", "The first line leads the answer")
+    assert.equal(document.querySelector(".ea-answer .ea-steps li").textContent, "Voorbeeld · Variabel: € 1.234,56 per jaar. Gecontroleerd op 28-09-2026 om 14:00 CEST.", "Numbered lines become steps")
+    assert.equal(document.querySelector(".ea-answer .ea-num").textContent, "€ 1.234,56", "Amounts stand out")
     assert.equal(document.querySelector(".ea-rail a").href, success.sources[0].url)
     assert.equal(spoken.length, 0, "The browser voice is only a fallback when Petra fails")
     assert.equal(mic().disabled, false)
@@ -342,6 +344,16 @@ async function main() {
     responses.push({ answer: "Ja.", comparison_session_id: null })
     await typed("en vast?")
     assert.equal(requests.at(-1).body.history.length, 2)
+    responses.push({ answer: "Gasprijzen:\n• A: 7,92 cent/kWh\n• B: 8,35 cent/kWh", comparison_session_id: null, visual: {
+        kind: "prices", lead: "Gasprijzen in Vlaanderen:", unit: "cent/kWh", digits: 2,
+        groups: [{ title: "Variabel", items: [{ label: "A", value: 7.92 }, { label: "B", value: 8.35 }] }, { title: "Vast", items: [{ label: "C", value: 8.7, note: "24 mnd vast" }] }],
+        day: { title: "Per uur", points: [["00:00", 18], ["01:00", 17], ["02:00", 16], ["03:00", 20]], cheapest_hours: [2], cheap_label: "goedkoopste uren", low: 15.8, high: 20.4 },
+    } })
+    await typed("wat is de gasprijs")
+    const bars = [...chatBox.querySelectorAll(".ea-answer .ea-bar-row")]
+    assert.deepEqual(bars.map(row => [row.querySelector(".ea-bar-value").textContent, row.dataset.best]), [["7,92", "true"], ["8,35", "false"], ["8,70", "true"]], "Price answers become bars, cheapest first per group")
+    assert.equal(chatBox.querySelectorAll(".ea-day-cheap").length, 1, "The cheapest hours are marked on the day curve")
+    assert.match(chatBox.querySelector(".ea-day-legend").textContent, /15,8–20,4 cent\/kWh/)
     await act(async () => [...chatBox.querySelectorAll("button")].find(b => b.textContent === "Nieuw gesprek").click())
     assert.equal(window.localStorage.getItem("karen-chat-v1"), null, "Nieuw gesprek clears the stored chat")
     assert.equal(chatBox.querySelector(".ea-past-answer"), null)

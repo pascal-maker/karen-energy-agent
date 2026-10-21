@@ -152,6 +152,36 @@ def _join(items: list[str], lang: str) -> str:
     return ", ".join(items[:-1]) + {"en": " and ", "fr": " et "}.get(lang, " en ") + items[-1]
 
 
+# Labels for the chart the chat draws next to a price answer.
+_VISUAL_LABELS = {
+    "nl": {"variable": "Variabel", "fixed": "Vast", "day": "Groothandelsprijs per uur", "unit": "cent/kWh", "months": "{} mnd vast", "cheap": "goedkoopste uren"},
+    "en": {"variable": "Variable", "fixed": "Fixed", "day": "Wholesale price per hour", "unit": "cents/kWh", "months": "{} months fixed", "cheap": "cheapest hours"},
+    "fr": {"variable": "Variable", "fixed": "Fixe", "day": "Prix de gros par heure", "unit": "c€/kWh", "months": "fixe {} mois", "cheap": "heures les moins chères"},
+}
+
+
+def _hourly_cents(points: Any) -> list[list[Any]]:
+    """Quarter-hour EUR/MWh points as hourly averages in eurocent per kWh: [["14:00", 21.3], ...]."""
+    hours: dict[str, list[float]] = {}
+    for point in points or []:
+        if isinstance(point, (list, tuple)) and len(point) == 2 and isinstance(point[1], (int, float)):
+            hours.setdefault(f"{str(point[0])[:2]}:00", []).append(point[1] / 10)
+    return [[hour, round(sum(values) / len(values), 2)] for hour, values in sorted(hours.items())]
+
+
+def _visual_group(kind: str, cards: list[dict[str, Any]], lang: str, digits: int) -> dict[str, Any]:
+    labels = _VISUAL_LABELS.get(lang, _VISUAL_LABELS["nl"])
+    items = []
+    for card in cards:
+        months = card.get("duration_months") if kind == "fixed" else None
+        items.append({
+            "label": card_label(card),
+            "value": round(card["price_per_kwh_eur"] * 100, digits),
+            **({"note": labels["months"].format(months)} if months else {}),
+        })
+    return {"title": labels[kind], "items": items}
+
+
 def _day_label(day: str, lang: str) -> str:
     today = datetime.now(BRUSSELS).date().isoformat()
     if day == today:
@@ -220,8 +250,20 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         "excerpt": f"Gemiddeld {day['avg']} EUR/MWh, min {day['min']}, max {day['max']}.",
     }]
     sources += _card_sources(suppliers + fixed_cards, contracts)
+    labels = _VISUAL_LABELS.get(lang, _VISUAL_LABELS["nl"])
+    visual: dict[str, Any] = {
+        "kind": "prices", "lead": lines[0], "unit": labels["unit"], "digits": 1,
+        "groups": [_visual_group(kind, cards, lang, 1) for kind, cards in (("variable", suppliers), ("fixed", fixed_cards)) if cards],
+    }
+    hourly = _hourly_cents(day.get("points"))
+    if len(hourly) >= 6:
+        visual["day"] = {
+            "title": f"{labels['day']} · {day.get('date', '')}", "points": hourly, "cheapest_hours": hours, "cheap_label": labels["cheap"],
+            "low": round(day["min"] / 10, 1), "high": round(day["max"] / 10, 1),
+        }
     return {
         "answer": "\n".join(lines),
+        "visual": visual,
         "sources": sources,
         "live_source_status": "checked",
         "processing": "market-data",
@@ -266,6 +308,13 @@ def gas_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | 
             lines.append(f"• {card_label(card)}: {_cents(card['price_per_kwh_eur'] * 100, lang, 2)} {unit}{term}")
     return {
         "answer": "\n".join(lines),
+        "visual": {
+            "kind": "prices", "unit": unit, "digits": 2,
+            "lead": {"en": "Gas prices in Flanders (energy price incl. 6% VAT, without network costs and levies):",
+                     "fr": "Prix du gaz en Flandre (prix de l'énergie TVA 6% incl., hors coûts de réseau et taxes) :",
+                     }.get(lang, "Gasprijzen in Vlaanderen (energieprijs incl. 6% btw, zonder netkosten en heffingen):"),
+            "groups": [_visual_group(kind, cards, lang, 2) for kind, cards in (("variable", variable), ("fixed", fixed)) if cards],
+        },
         "sources": _card_sources(variable + fixed, data.get("contracts") or {}),
         "live_source_status": "checked",
         "processing": "market-data",
