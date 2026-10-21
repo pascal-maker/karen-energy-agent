@@ -223,16 +223,21 @@ const answerLanguage = (text: string): VoiceLanguage => {
     const best = (Object.keys(scores) as VoiceLanguage[]).sort((a, b) => scores[b] - scores[a])[0]
     return scores[best] ? best : voiceLanguage()
 }
-type Turn = { question: string; answer: string }
+type Turn = { question: string; answer: string; visual?: PriceVisual }
 // The conversation is kept only in this visitor's browser; PDF answers are never stored or sent along.
 const HISTORY_KEY = "karen-chat-v1"
 const MAX_TURNS = 20
 const SENT_TURNS = 4
+const isPriceVisual = (value: any): value is PriceVisual => value?.kind === "prices" && typeof value.lead === "string" && typeof value.unit === "string"
+    && Array.isArray(value.groups) && value.groups.every((group: any) => Array.isArray(group?.items) && group.items.every((item: any) => typeof item?.label === "string" && typeof item?.value === "number"))
+    && (value.day === undefined || (Array.isArray(value.day.points) && value.day.points.length > 1 && Array.isArray(value.day.cheapest_hours)))
 function loadTurns(): Turn[] {
     try {
         const saved = JSON.parse(window.localStorage.getItem(HISTORY_KEY) || "[]")
         return Array.isArray(saved)
             ? saved.filter((turn) => typeof turn?.question === "string" && typeof turn?.answer === "string").slice(-MAX_TURNS)
+                // A stored chart is only drawn again when it still has the shape this version draws.
+                .map((turn) => isPriceVisual(turn.visual) ? turn : { question: turn.question, answer: turn.answer })
             : []
     } catch {
         return []
@@ -479,7 +484,7 @@ export default function EnergyAgentConversation({
     // Declared before the restore below, so the first run never overwrites the saved chat with an empty one.
     useEffect(() => {
         if (!restored.current) return
-        const current = asked && reply && reply.processing !== "local-only" ? [{ question: asked, answer: reply.answer }] : []
+        const current = asked && reply && reply.processing !== "local-only" ? [{ question: asked, answer: reply.answer, ...(reply.visual ? { visual: reply.visual } : {}) }] : []
         saveTurns([...turns, ...current])
     }, [turns, asked, reply])
     useEffect(() => {
@@ -492,7 +497,7 @@ export default function EnergyAgentConversation({
     // The exchange on screen moves into the history before a new question or PDF replaces it.
     function archiveCurrent(): Turn[] {
         const next = asked && reply && reply.processing !== "local-only"
-            ? [...turns, { question: asked, answer: reply.answer }].slice(-MAX_TURNS)
+            ? [...turns, { question: asked, answer: reply.answer, ...(reply.visual ? { visual: reply.visual } : {}) }].slice(-MAX_TURNS)
             : turns
         if (next !== turns) setTurns(next)
         return next
@@ -989,7 +994,7 @@ export default function EnergyAgentConversation({
                 <h1>Praat met Karen.<br />Begrijp je energie.</h1>
                 <p className="ea-sub">Vraag naar je factuur, energieverbruik of verwarming. Karen laat zien waarop haar antwoord steunt.</p></>}
                 <div className="ea-thread" aria-live="polite" ref={thread}>
-                    {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer"><FormattedAnswer text={turn.answer} /></div></div>)}
+                    {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.visual?.kind === "prices" && turn.visual.groups?.length ? <PriceChart visual={turn.visual} /> : <FormattedAnswer text={turn.answer} />}</div></div>)}
                     {asked && <div className="ea-question">{asked}</div>}
                     {busy && steps.length > 0 && <KarenFlow steps={steps} writing={Boolean(draft)} />}
                     {(busy || uploading || listening || transcribing) && !draft && !(busy && steps.length > 0) && <div className="ea-state"><span className="ea-dot" />{status}</div>}

@@ -7,6 +7,7 @@ import contextvars
 import json
 import os
 import re
+import time
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -203,9 +204,25 @@ def _search_keywords(question: str) -> str:
     return " ".join(words)
 
 
+# Pages found for a search stay a few hours, so a question asked again (as in a demo) skips the
+# slowest step. Empty results are not kept: they are often a passing Browserbase hiccup.
+_SEARCH_CACHE: dict[tuple[str, str, int], tuple[float, list[dict[str, str]]]] = {}
+_SEARCH_CACHE_SECONDS = 6 * 3600
+_SEARCH_CACHE_SIZE = 200
+
+
 async def _search_scope(query: str, scope: str, max_pages: int = 2) -> list[dict[str, str]]:
     _report_step("search", sites=ENERGY_SOURCE_SCOPES.get(scope, []))
-    pages = await search_energy_pages(query, scope, max_pages=max_pages)
+    key = (" ".join(query.casefold().split()), scope, max_pages)
+    cached = _SEARCH_CACHE.get(key)
+    if cached and time.monotonic() - cached[0] < _SEARCH_CACHE_SECONDS:
+        pages = cached[1]
+    else:
+        pages = await search_energy_pages(query, scope, max_pages=max_pages)
+        if pages:
+            if len(_SEARCH_CACHE) >= _SEARCH_CACHE_SIZE:
+                _SEARCH_CACHE.pop(min(_SEARCH_CACHE, key=lambda item: _SEARCH_CACHE[item][0]))
+            _SEARCH_CACHE[key] = (time.monotonic(), pages)
     if pages:
         _report_step("read", pages=[{"title": page["title"], "url": page["url"]} for page in pages])
     return pages
