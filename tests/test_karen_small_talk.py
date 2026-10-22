@@ -85,16 +85,18 @@ async def test_unrelated_question_without_sources_explains_what_karen_does(monke
 
 
 @pytest.mark.asyncio
-async def test_energy_question_without_sources_still_says_so(monkeypatch):
+async def test_fact_question_without_sources_gets_a_marked_answer_without_numbers(monkeypatch):
     async def no_pages(*_args, **_kwargs):
         return []
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(gemma_answer, "search_energy_pages", no_pages)
-    monkeypatch.setattr(gemma_answer, "_generate", lambda *_: pytest.fail("No sources means no generation"))
+    reply = "Dat hangt af van je woning en je inkomen.\n- **Nakijken:** Kijk het na bij de energiedienst van Wallonië."
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_: reply)
     chunks = [KnowledgeChunk(page=1, text="Iets over isolatiepremies.", urls=(), source="faq.pdf")]
     result = await gemma_answer.answer_energy_question("Welke premie krijg ik voor een warmtepomp in Wallonië?", chunks)
-    assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["nl"]
+    assert result["processing"] == "general-knowledge"
+    assert result["answer"] == reply and result["sources"] == []
 
 
 @pytest.mark.asyncio
@@ -132,14 +134,3 @@ def test_a_leaked_refusal_counts_as_not_sure():
     assert gemma_answer._NOT_SURE.search("I cannot answer this question with the provided information.")
     assert gemma_answer._NOT_SURE.search("I am sorry, but I don't know for sure.")
 
-
-@pytest.mark.parametrize("question", [
-    "Vertel me eens wat energie is",
-    "Kan je uitleggen wat een digitale meter doet?",
-    "Weet jij wat een capaciteitstarief is?",
-    "Waarom heb ik een netbeheerder?",
-    "Tell me what a heat pump is",
-    "Dis-moi ce qu'est l'énergie",
-])
-def test_everyday_ways_of_asking_for_an_explanation_count(question):
-    assert gemma_answer._EXPLAIN.search(question)

@@ -159,9 +159,10 @@ async def test_english_energy_question_without_sources_admits_it_does_not_know(m
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(gemma_answer, "search_energy_pages", no_pages)
     def generate(prompt, system_instruction=None):
-        # Only the Dutch search translation may run; no sources means no answer generation.
-        assert system_instruction is gemma_answer._SEARCH_TRANSLATION_INSTRUCTION
-        return "Wat is de warmtepomppremie in Wallonië?"
+        if system_instruction is gemma_answer._SEARCH_TRANSLATION_INSTRUCTION:
+            return "Wat is de warmtepomppremie in Wallonië?"
+        # An unsourced answer that names an amount is never shown.
+        return "The premium is 3,000 euro."
 
     monkeypatch.setattr(gemma_answer, "_generate", generate)
     result = await gemma_answer.answer_energy_question("What is the heat pump subsidy in Wallonia?", [])
