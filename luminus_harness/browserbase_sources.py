@@ -315,6 +315,9 @@ async def search_energy_pages(
     for result in results[:max(1, min(max_pages, 3))]:# used to iterate over the results
         content = await asyncio.to_thread(_fetch, result["url"])# used to fetch the content
         if not is_usable_web_content(content):# used to check if the content is not empty
+            if isinstance(content, str) and content.startswith(("Browserbase", "De live bronpagina", "De bronpagina")):
+                print(f"Browserbase fetch failed ({result['url']}): {content}", flush=True)
+                report_step("search_error", message=content)
             continue
         pages.append({
             "title": result["title"],# used to get the title
