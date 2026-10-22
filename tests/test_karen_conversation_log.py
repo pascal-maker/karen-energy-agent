@@ -99,3 +99,14 @@ def test_failed_upload_keeps_the_batch(monkeypatch, tmp_path):
     monkeypatch.setattr(huggingface_hub, "HfApi", Broken)
     assert conversation_log.flush() is False
     assert [record["id"] for record in conversation_log.pending_records()] == ["a"]
+
+
+def test_queued_records_are_flushed_when_the_server_stops(monkeypatch, tmp_path):
+    registered = []
+    monkeypatch.setenv("KAREN_FEEDBACK_DIR", str(tmp_path))
+    monkeypatch.setattr(conversation_log, "_pending", [])
+    monkeypatch.setattr(conversation_log, "_flusher", None)
+    monkeypatch.setattr(conversation_log.threading, "Thread", lambda **_: type("T", (), {"start": lambda self: None})())
+    monkeypatch.setattr(conversation_log.atexit, "register", registered.append)
+    conversation_log.store_log_record({"id": "a", "created_at": "2026-10-22T19:00:00+00:00"})
+    assert registered == [conversation_log.flush]
