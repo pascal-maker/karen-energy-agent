@@ -13,6 +13,7 @@ earlier batches.
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
@@ -100,6 +101,8 @@ def store_log_record(record: dict[str, Any]) -> None:
             # A quiet hour after a burst still reaches the dataset.
             _flusher = threading.Thread(target=_flush_regularly, name="karen-log-flush", daemon=True)
             _flusher.start()
+            # A Space restart stops the server normally: write what is still queued first.
+            atexit.register(flush)
         due = len(_pending) >= FLUSH_RECORDS or time.monotonic() - _last_flush >= FLUSH_SECONDS
     if due:
         flush()
