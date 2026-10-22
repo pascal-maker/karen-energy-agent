@@ -228,7 +228,11 @@ def _search(query: str, scope: str) -> list[dict[str, str]] | str:# used to sear
             return "Browserbase Search heeft geen beschikbare quota."
         if error.code == 429:
             return "Browserbase Search is tijdelijk bezet; probeer later opnieuw."
-        return f"Browserbase Search gaf HTTP {error.code}."
+        try:
+            detail = error.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            detail = ""
+        return f"Browserbase Search gaf HTTP {error.code}." + (f" {detail}" if detail else "")
     except (TimeoutError, URLError, json.JSONDecodeError): # used to handle errors
         return "Browserbase Search kon nu geen verbinding maken."
     results = payload.get("results", []) if isinstance(payload, dict) else []
@@ -245,6 +249,10 @@ def _search(query: str, scope: str) -> list[dict[str, str]] | str:# used to sear
             "title": str(result.get("title", "Energiebron"))[:200],# used to get the title
             "url": url,
         })
+    if results and not safe_results:
+        # Results came back, but none from the allowed sites: say so instead of a silent "no source".
+        hosts = sorted({urlparse(str(result.get("url", ""))).hostname or "?" for result in results if isinstance(result, dict)})
+        return f"Browserbase Search gaf {len(results)} resultaten, geen op de toegelaten sites ({', '.join(hosts[:5])})."
     return safe_results[:3]# used to return the results
 
 
