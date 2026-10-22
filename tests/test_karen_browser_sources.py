@@ -59,3 +59,15 @@ async def test_curated_source_returns_page_only_after_successful_fetch(monkeypat
         "url": "https://www.luminus.be/nl/prive/energie/energiefactuur-uitgelegd/",
         "content": "Een voorschot is een maandelijkse inschatting.",
     }
+
+
+def test_search_with_only_off_site_results_says_so(monkeypatch) -> None:
+    import io
+    import json as json_module
+    from luminus_harness import browserbase_sources
+
+    payload = {"results": [{"title": "Elders", "url": "https://example.com/zonnepanelen"}]}
+    monkeypatch.setenv("BROWSERBASE_API_KEY", "test")
+    monkeypatch.setattr(browserbase_sources, "urlopen", lambda *_args, **_kwargs: io.BytesIO(json_module.dumps(payload).encode()))
+    result = browserbase_sources._search("zonnepanelen", "official_energy")
+    assert result == "Browserbase Search gaf 1 resultaten, geen op de toegelaten sites (example.com)."
