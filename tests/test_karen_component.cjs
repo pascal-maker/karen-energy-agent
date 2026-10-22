@@ -109,7 +109,7 @@ async function main() {
     await act(async () => root.render(React.createElement(Component, { apiEndpoint: "https://backend.example/api/answer", sampleQuestion: "sample" })))
     const privacy = document.querySelector(".ea-privacy")
     assert.equal(privacy.open, false, "The privacy details start folded to one line")
-    assert.match(privacy.querySelector("summary").textContent, /blijft in deze browser.*Meer over privacy/)
+    assert.match(privacy.querySelector("summary").textContent, /anoniem bewaard.*Meer over privacy/)
     assert.match(privacy.textContent, /Babbeldoos-stemservice/, "The full privacy text is still there behind the link")
     responses.push({ answer: "Dit zijn de goedkoopste contracten van vandaag.", processing: "offer-comparison", sources: [] })
     await typed("Vergelijk energieaanbiedingen")

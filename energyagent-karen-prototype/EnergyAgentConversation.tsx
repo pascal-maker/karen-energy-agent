@@ -618,17 +618,17 @@ export default function EnergyAgentConversation({
         setVoiceDraft(false)
         setUploadError("")
         if (!apiEndpoint.trim()) {
-            setUploadError("Verbind eerst Karen’s backend om een PDF te analyseren.")
+            setUploadError("Verbind eerst Karen’s backend om je factuur te analyseren.")
             return
         }
         if (file.size > 15 * 1024 * 1024) {
-            setUploadError("Kies een PDF kleiner dan 15 MB.")
+            setUploadError("Kies een bestand kleiner dan 15 MB.")
             return
         }
         const previousSession = sessionId
         archiveCurrent()
         setUploading(true)
-        setStatus("PDF wordt op Karen’s backend gelezen…")
+        setStatus(file.type.startsWith("image/") ? "Foto wordt op Karen’s backend gelezen…" : "PDF wordt op Karen’s backend gelezen…")
         if (previousSession) {
             void fetch(`${endpointFor("session")}/${encodeURIComponent(previousSession)}`, { method: "DELETE" }).catch(() => undefined)
         }
@@ -646,7 +646,7 @@ export default function EnergyAgentConversation({
             setUploadName(data.filename || file.name)
             setAsked(`Eerste analyse · ${data.filename || file.name}`)
             setReply(data)
-            setStatus("PDF verwerkt op Karen’s backend · geen externe modelverwerking")
+            setStatus("Factuur verwerkt op Karen’s backend · geen externe modelverwerking")
         } catch (error) {
             setSessionId("")
             setUploadName("")
@@ -1027,14 +1027,14 @@ export default function EnergyAgentConversation({
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
                 </div>
                 <details className="ea-privacy">
-                    <summary>Je gesprek blijft in deze browser. Publieke vragen gaan naar Gemma en officiële bronnen. <span>Meer over privacy</span></summary>
-                    <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma (of een OpenAI-model als Gemma overbelast is) en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek wordt alleen in deze browser bewaard, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het.</p>
+                    <summary>Vragen en antwoorden worden anoniem bewaard om Karen te verbeteren. Publieke vragen gaan naar Gemma en officiële bronnen. <span>Meer over privacy</span></summary>
+                    <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma (of een OpenAI-model als Gemma overbelast is) en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek staat in deze browser, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het. Om Karen te verbeteren bewaart de beheerder publieke vragen en antwoorden zonder naam of account; e-mailadressen, rekening- en EAN-nummers in een vraag worden eerst onleesbaar gemaakt. Vragen over je eigen factuur worden niet bewaard.</p>
                 </details>
             </section>
             <aside className="ea-rail">
-                <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB en 30 pagina’s.</p>
-                    <label className="ea-upload" data-disabled={uploading || busy || listening}>Kies een PDF
-                        <input type="file" accept="application/pdf,.pdf" aria-label="Upload je energiefactuur als PDF" disabled={uploading || busy || listening} onChange={(event) => { void uploadPdf(event.target.files?.[0]); event.target.value = "" }} />
+                <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF of foto naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB.</p>
+                    <label className="ea-upload" data-disabled={uploading || busy || listening}>Kies een PDF of foto
+                        <input type="file" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp" aria-label="Upload je energiefactuur als PDF of foto" disabled={uploading || busy || listening} onChange={(event) => { void uploadPdf(event.target.files?.[0]); event.target.value = "" }} />
                     </label>
                     {uploadName && <p style={{ marginTop: 8 }}>Sessie actief · {uploadName}<button type="button" onClick={() => void clearPdf()} disabled={uploading || busy} style={{ marginLeft: 8 }}>Verwijder</button></p>}
                     {uploadError && <p role="alert" style={{ marginTop: 8, color: "#a13333" }}>{uploadError}</p>}
