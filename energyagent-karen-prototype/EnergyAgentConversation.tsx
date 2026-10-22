@@ -27,7 +27,8 @@ const stepSummary = (steps: Step[]) => {
     const searches = steps.filter((step) => step.kind === "search").length
     if (!searches) return `${jev}.`
     const pages = steps.reduce((total, step) => total + (step.kind === "read" ? step.pages.length : 0), 0)
-    const read = pages === 0 ? "vond geen bruikbare pagina" : `las ${pages === 1 ? "één pagina" : `${pages} pagina's`}`
+    const failed = steps.some((step) => step.kind === "search_error")
+    const read = pages === 0 ? (failed ? "de zoekdienst gaf een fout" : "vond geen bruikbare pagina") : `las ${pages === 1 ? "één pagina" : `${pages} pagina's`}`
     const search = `Karen zocht ${searches === 1 ? "één keer" : `${searches} keer`} en ${read}.`
     return jev ? `${jev} · ${search}` : search
 }
@@ -35,6 +36,7 @@ type Step =
     | { kind: "route"; choice: string; confidence: number; probabilities: Record<string, number>; used: boolean }
     | { kind: "search"; sites: string[] }
     | { kind: "read"; pages: { title: string; url: string }[] }
+    | { kind: "search_error"; message: string }
 // Jev's routes, in the words a visitor reads.
 const ROUTE_LABELS: Record<string, string> = {
     price: "Prijsvraag", compare: "Aanbiedingen vergelijken", contract_advice: "Vast of variabel",
@@ -64,6 +66,7 @@ function KarenFlow({ steps, writing }: { steps: Step[]; writing: boolean }) {
         ? "Schrijft het antwoord…"
         : last.kind === "search" ? `Zoekt op ${siteList(last.sites)}…`
         : last.kind === "read" ? `Leest ${last.pages.map((page) => page.title).join(", ")}`
+        : last.kind === "search_error" ? "Zoeken lukt nu niet · Karen probeert verder"
         : last.used ? `Jev herkent: ${ROUTE_LABELS[last.choice] || last.choice}` : "Jev twijfelt · Karen kiest zelf de route"
     const ranked = route && route.kind === "route"
         ? Object.entries(route.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3)
@@ -352,6 +355,7 @@ const css = `
   .ea-mic:disabled { opacity:.5; cursor:not-allowed; }
   .ea-button:disabled { opacity:.55; cursor:wait; }
   .ea-foot { margin:9px 0 0; color:#7b877e; font-size:10px; line-height:1.5; }
+  .ea-tag { display:inline-block; margin:10px 0 0; padding:3px 9px; border-radius:999px; background:#eef1ec; color:#5d6b61; font-size:11px; }
   .ea-privacy summary { margin:9px 0 0; color:#7b877e; font-size:10px; line-height:1.5; list-style:none; cursor:pointer; }
   .ea-privacy summary::-webkit-details-marker { display:none; }
   .ea-privacy summary span { color:#234f38; text-decoration:underline; text-underline-offset:2px; }
@@ -721,6 +725,8 @@ export default function EnergyAgentConversation({
                 }
                 setStatus(data.processing === "local-only"
                     ? "Antwoord uit PDF-passage · op Karen’s backend verwerkt"
+                    : data.processing === "general-knowledge"
+                    ? "Antwoord klaar · algemene uitleg zonder bron"
                     : data.processing === "small-talk"
                     ? "Antwoord klaar"
                     : data.live_source_status === "failed"
@@ -990,7 +996,7 @@ export default function EnergyAgentConversation({
                     {(busy || uploading || listening || transcribing) && !draft && !(busy && steps.length > 0) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
                     {!busy && steps.length > 0 && reply && <p className="ea-flow-done">{stepSummary(steps)}</p>}
                     {busy && draft && <div className="ea-answer"><FormattedAnswer text={draft} /></div>}
-                    {reply && <><div className="ea-answer">{reply.visual?.kind === "prices" && reply.visual.groups?.length ? <PriceChart visual={reply.visual} /> : <FormattedAnswer text={reply.answer} />}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
+                    {reply && <><div className="ea-answer">{reply.visual?.kind === "prices" && reply.visual.groups?.length ? <PriceChart visual={reply.visual} /> : <FormattedAnswer text={reply.answer} />}{reply.processing === "general-knowledge" && <p className="ea-tag">Algemene uitleg · geen bron gevonden</p>}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
                         ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>
                         : <div className="ea-feedback">
                             {feedbackOpen ? <>

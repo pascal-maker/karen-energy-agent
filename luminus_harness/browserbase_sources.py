@@ -11,6 +11,7 @@ from collections import OrderedDict
 from urllib.parse import urlparse# used to parse URLs
 from urllib.error import HTTPError, URLError# used to handle errors
 from urllib.request import Request, urlopen# used to make requests
+from .steps import report_step
 
 
 ENERGY_SOURCES = {
@@ -303,7 +304,12 @@ async def search_energy_pages(
     import asyncio
 
     results = await asyncio.to_thread(_search, query, scope)# used to search for the content
-    if isinstance(results, str) or not results:# used to check if the results are not empty
+    if isinstance(results, str):
+        # A failing search service (quota, key) shows in the log and the stream, not as a silent "no source".
+        print(f"Browserbase search failed ({scope}): {results}", flush=True)
+        report_step("search_error", message=results)
+        return []
+    if not results:# used to check if the results are not empty
         return []
     pages: list[dict[str, str]] = []
     for result in results[:max(1, min(max_pages, 3))]:# used to iterate over the results

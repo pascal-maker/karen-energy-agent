@@ -110,7 +110,7 @@ async def test_no_named_supplier_does_not_default_to_luminus(monkeypatch) -> Non
         return []
 
     monkeypatch.setattr(gemma_answer, "search_energy_pages", search_pages)
-    monkeypatch.setattr(gemma_answer, "_generate", lambda _prompt: "Algemene uitleg.")
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_: "Algemene uitleg.")
 
     result = await gemma_answer.answer_energy_question("Wat is een jaarafrekening?", [page_four])
 
