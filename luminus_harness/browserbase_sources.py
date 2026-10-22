@@ -11,6 +11,7 @@ from collections import OrderedDict
 from urllib.parse import urlparse# used to parse URLs
 from urllib.error import HTTPError, URLError# used to handle errors
 from urllib.request import Request, urlopen# used to make requests
+from html.parser import HTMLParser
 from .steps import report_step
 
 
@@ -161,6 +162,45 @@ def _is_trusted_energy_url(url: str) -> bool:# used to check if the url is trust
     )
 
 
+class _PageText(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.hidden = 0
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self.hidden += 1
+
+    def handle_endtag(self, tag) -> None:
+        if tag in {"script", "style", "noscript", "svg"} and self.hidden:
+            self.hidden -= 1
+
+    def handle_data(self, data) -> None:
+        if not self.hidden and data.strip():
+            self.parts.append(data.strip())
+
+
+def _fetch_direct(url: str) -> str:
+    """Read an allowlisted public page without Browserbase; empty on any failure."""
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; KarenEnergyAgent/1.0)", "Accept": "text/html"})
+    try:
+        with urlopen(request, timeout=15) as response:
+            final_url = response.geturl() if hasattr(response, "geturl") else url
+            if not _is_trusted_energy_url(final_url) or "html" not in response.headers.get("Content-Type", "html"):
+                return ""
+            html = response.read(2_000_000).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+    parser = _PageText()
+    try:
+        parser.feed(html)
+    except Exception:
+        return ""
+    text = re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
+    return text if len(text) > 200 else ""
+
+
 def _fetch(url: str) -> str:# used to fetch the content of the url
     if not _is_trusted_energy_url(url):# used to check if the url is trusted
         return "Deze URL valt buiten de goedgekeurde lijst met energiebronnen."
@@ -184,12 +224,18 @@ def _fetch(url: str) -> str:# used to fetch the content of the url
             payload = json.loads(response.read().decode("utf-8", errors="replace"))# used to parse the response
     except HTTPError as error:# used to handle errors
         if error.code in (401, 403):# used to handle errors
-            return "Browserbase heeft deze sleutel geweigerd. Controleer BROWSERBASE_API_KEY."
-        if error.code == 402:# used to handle errors
-            return "Browserbase Fetch kon niet uitvoeren: het account heeft geen beschikbare quota."
-        if error.code == 429:# used to handle errors
-            return "Browserbase Fetch is tijdelijk bezet; probeer deze bron later opnieuw."
-        return f"Browserbase Fetch gaf HTTP {error.code}; gebruik de zichtbare bronlink voor controle."# used to handle errors
+            failure = "Browserbase heeft deze sleutel geweigerd. Controleer BROWSERBASE_API_KEY."
+        elif error.code == 402:# used to handle errors
+            failure = "Browserbase Fetch kon niet uitvoeren: het account heeft geen beschikbare quota."
+        elif error.code == 429:# used to handle errors
+            failure = "Browserbase Fetch is tijdelijk bezet; probeer deze bron later opnieuw."
+        else:
+            failure = f"Browserbase Fetch gaf HTTP {error.code}; gebruik de zichtbare bronlink voor controle."# used to handle errors
+        # The page itself is public and on the allowlist, so read it directly when Browserbase can't.
+        content = _fetch_direct(url)
+        if not content:
+            return failure
+        payload = {"content": content}
     except (TimeoutError, URLError, json.JSONDecodeError):# used to handle errors
         return "De live bronpagina kon nu niet worden opgehaald. Gebruik de zichtbare bronlink voor controle."
     content = payload.get("content", "") if isinstance(payload, dict) else ""# used to get the content
@@ -204,6 +250,29 @@ def _fetch(url: str) -> str:# used to fetch the content of the url
     return content
 
 
+# Browserbase Search rejects a query longer than 200 characters.
+_SEARCH_QUERY_LIMIT = 200
+_MIN_QUESTION_CHARS = 80
+
+
+def _scoped_queries(query: str, domains: list[str]) -> list[str]:
+    """Split the site filter over several searches so each query fits Browserbase's limit."""
+    query = " ".join(query.split())
+    groups: list[list[str]] = [[]]
+    for domain in domains:
+        candidate = groups[-1] + [domain]
+        if groups[-1] and len(" OR ".join(f"site:{d}" for d in candidate)) > _SEARCH_QUERY_LIMIT - _MIN_QUESTION_CHARS - 1:
+            groups.append([domain])
+        else:
+            groups[-1] = candidate
+    queries = []
+    for group in groups:
+        site_filter = " OR ".join(f"site:{d}" for d in group)
+        room = _SEARCH_QUERY_LIMIT - len(site_filter) - 1
+        queries.append(query[:room].rstrip() + " " + site_filter)
+    return queries
+
+
 def _search(query: str, scope: str) -> list[dict[str, str]] | str:# used to search for the content
     api_key = os.getenv("BROWSERBASE_API_KEY", "").strip()
     if not api_key:# used to check if the API key is not empty
@@ -211,7 +280,20 @@ def _search(query: str, scope: str) -> list[dict[str, str]] | str:# used to sear
     domains = ENERGY_SOURCE_SCOPES.get(scope)# used to get the domains
     if not domains:# used to check if the domains are not empty
         return "Onbekende zoekscope. Kies een goedgekeurde energieleverancier of regulator."
-    scoped_query = query[:350] + " " + " OR ".join(f"site:{domain}" for domain in domains)# used to scope the query
+    found: list[dict[str, str]] = []
+    error = ""
+    for scoped_query in _scoped_queries(query, domains):
+        results = _search_once(scoped_query, api_key)
+        if isinstance(results, str):
+            error = error or results
+            continue
+        found.extend(result for result in results if result["url"] not in {seen["url"] for seen in found})
+        if len(found) >= 3:
+            break
+    return found[:3] if found else error or []
+
+
+def _search_once(scoped_query: str, api_key: str) -> list[dict[str, str]] | str:
     request = Request(
         "https://api.browserbase.com/v1/search",# used to search for the content
         data=json.dumps({"query": scoped_query, "numResults": 5}).encode("utf-8"),# used to encode the query

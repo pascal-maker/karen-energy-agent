@@ -71,3 +71,38 @@ def test_search_with_only_off_site_results_says_so(monkeypatch) -> None:
     monkeypatch.setattr(browserbase_sources, "urlopen", lambda *_args, **_kwargs: io.BytesIO(json_module.dumps(payload).encode()))
     result = browserbase_sources._search("zonnepanelen", "official_energy")
     assert result == "Browserbase Search gaf 1 resultaten, geen op de toegelaten sites (example.com)."
+
+
+def test_every_search_query_fits_browserbase_limit() -> None:
+    long_question = "Hoe werkt het sociaal tarief voor elektriciteit en aardgas in Vlaanderen? " * 6
+    for domains in browserbase_sources.ENERGY_SOURCE_SCOPES.values():
+        queries = browserbase_sources._scoped_queries(long_question, domains)
+        assert all(len(query) <= 200 for query in queries)
+        assert all(query.startswith("Hoe werkt het sociaal tarief") for query in queries)
+        assert all(f"site:{domain}" in " ".join(queries) for domain in domains)
+
+
+def test_fetch_reads_page_directly_when_browserbase_has_no_quota(monkeypatch) -> None:
+    import io
+    from urllib.error import HTTPError
+
+    url = "https://www.creg.be/nl/a-z-index/verbrekingsvergoeding"
+    html = "<html><script>x()</script><p>" + "Sinds 2012 betaal je geen verbrekingsvergoeding. " * 10 + "</p></html>"
+
+    class Page(io.BytesIO):
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        def geturl(self):
+            return url
+
+    def fake_urlopen(request, timeout):
+        if "browserbase" in request.full_url:
+            raise HTTPError(request.full_url, 402, "Payment Required", {}, None)
+        return Page(html.encode())
+
+    monkeypatch.setenv("BROWSERBASE_API_KEY", "test")
+    monkeypatch.setattr(browserbase_sources, "urlopen", fake_urlopen)
+    browserbase_sources._PAGE_CACHE.clear()
+    content = browserbase_sources._fetch(url)
+    assert content.startswith("Sinds 2012 betaal je geen verbrekingsvergoeding.")
+    assert "x()" not in content
