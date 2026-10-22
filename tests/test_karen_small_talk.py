@@ -131,3 +131,15 @@ async def test_general_explanation_with_numbers_or_a_refusal_falls_back(monkeypa
 def test_a_leaked_refusal_counts_as_not_sure():
     assert gemma_answer._NOT_SURE.search("I cannot answer this question with the provided information.")
     assert gemma_answer._NOT_SURE.search("I am sorry, but I don't know for sure.")
+
+
+@pytest.mark.parametrize("question", [
+    "Vertel me eens wat energie is",
+    "Kan je uitleggen wat een digitale meter doet?",
+    "Weet jij wat een capaciteitstarief is?",
+    "Waarom heb ik een netbeheerder?",
+    "Tell me what a heat pump is",
+    "Dis-moi ce qu'est l'énergie",
+])
+def test_everyday_ways_of_asking_for_an_explanation_count(question):
+    assert gemma_answer._EXPLAIN.search(question)

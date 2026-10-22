@@ -183,9 +183,10 @@ _NOT_SURE = re.compile(
 )
 # Concept questions Karen may explain from general knowledge when no source is found.
 _EXPLAIN = re.compile(
-    r"\b(?:wat (?:is|zijn|betekent|doet)|hoe werk(?:t|en)|leg\w* (?:me |eens )?uit|uitleg|verschil|"
-    r"what (?:is|are|does)|how (?:does|do)\b.*\bwork|explain|difference|"
-    r"qu'est-ce que|c'est quoi|comment fonctionne|expliqu\w*|différence)\b",
+    r"\b(?:wat (?:is|zijn|betekent|doet)|wat (?:\w+ ){1,4}(?:is|zijn|betekent|doet)|vertel\w*|waarom|hoe werk(?:t|en)|"
+    r"hoe zit|leg\w* (?:me |eens )?uit|uitleg|verschil|"
+    r"what (?:is|are|does)|what (?:\w+ ){1,4}(?:is|are|means)|tell me|why|how (?:does|do)\b.*\bwork|explain|difference|"
+    r"qu'est-ce que|c'est quoi|dis-moi|pourquoi|comment fonctionne|expliqu\w*|différence)\b",
     re.IGNORECASE,
 )
 # Amounts, premiums and rules change and differ per region: those still need a source.
