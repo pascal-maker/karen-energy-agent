@@ -172,3 +172,16 @@ async def test_a_repeated_search_reuses_the_pages_but_not_an_empty_result(monkey
     first = await gemma_answer._search_scope("Wat is energiedelen?", "official_energy")
     again = await gemma_answer._search_scope("wat is  ENERGIEDELEN?", "official_energy")
     assert first == again and len(calls) == 2, "The empty result was retried, the found pages were reused"
+
+
+@pytest.mark.asyncio
+async def test_failing_fetch_is_reported_as_a_search_error(monkeypatch):
+    from luminus_harness import browserbase_sources
+    from luminus_harness.steps import answer_steps
+
+    steps = []
+    answer_steps.set(steps.append)
+    monkeypatch.setattr(browserbase_sources, "_search", lambda *_: [{"title": "CREG", "url": "https://www.creg.be/x"}])
+    monkeypatch.setattr(browserbase_sources, "_fetch", lambda _url: "Browserbase Fetch kon niet uitvoeren: het account heeft geen beschikbare quota.")
+    assert await browserbase_sources.search_energy_pages("capaciteitstarief", "official_energy") == []
+    assert steps == [{"kind": "search_error", "message": "Browserbase Fetch kon niet uitvoeren: het account heeft geen beschikbare quota."}]
