@@ -55,11 +55,14 @@ from luminus_harness.gemma_answer import (
     mentions_energy,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
+from luminus_harness.photo_invoice import PhotoUnavailable, chunks_from_text, is_image_upload, ocr_image
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from luminus_harness.comparison_session import is_offer_comparison_question, pdf_comparison_reply
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
+from luminus_harness.conversation_log import build_log_record, load_recent, store_log_record
+from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
 from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, is_gas_price_question
@@ -792,17 +795,39 @@ async def api_health() -> dict[str, str]:
 
 @api_app.post("/api/upload")
 async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
-    """Analyze a visitor PDF locally and keep its chunks in a bounded session store."""
+    """Analyze a visitor PDF or bill photo locally and keep its chunks in a bounded session store."""
     _allow_api_request(request)
     declared_length = request.headers.get("content-length", "")
     if declared_length.isdigit() and int(declared_length) > MAX_PDF_BYTES + 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Kies een PDF kleiner dan 15 MB.")
+        raise HTTPException(status_code=413, detail="Kies een bestand kleiner dan 15 MB.")
     filename = Path(file.filename or "upload.pdf").name
-    if not filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=415, detail="Upload een PDF-bestand.")
-    pdf_data = await file.read(MAX_PDF_BYTES + 1)
-    if len(pdf_data) > MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="Kies een PDF kleiner dan 15 MB.")
+    data = await file.read(MAX_PDF_BYTES + 1)
+    if len(data) > MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="Kies een bestand kleiner dan 15 MB.")
+    photo = is_image_upload(filename, file.content_type or "", data)
+    if photo:
+        chunks = await _photo_chunks(data, filename)
+    elif filename.lower().endswith(".pdf"):
+        chunks = _pdf_chunks(data, filename)
+    else:
+        raise HTTPException(status_code=415, detail="Upload een PDF of een foto (JPG of PNG) van je factuur.")
+    if sum(len(chunk.text) for chunk in chunks) > MAX_PDF_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="Dit bestand bevat meer tekst dan één sessie kan verwerken.")
+    analysis = analyze_invoice_chunks(chunks)
+    if photo:
+        analysis["answer"] = analysis["answer"].replace("uit de PDF", "van de foto").replace(" (PDF-pagina 1)", "")
+    session_id = _store_upload_session(chunks, analysis, filename)
+    return {
+        "session_id": session_id,
+        "filename": filename,
+        "answer": analysis["answer"],
+        "facts": analysis["facts"],
+        "sources": analysis["sources"],
+        "processing": "local-only",
+    }
+
+
+def _pdf_chunks(pdf_data: bytes, filename: str) -> list[KnowledgeChunk]:
     try:
         page_count = pdf_page_count(pdf_data)
         if page_count > MAX_PDF_PAGES:
@@ -813,19 +838,21 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
     except Exception as error:
         raise HTTPException(status_code=400, detail="Ik kon deze PDF niet lezen.") from error
     if not chunks:
-        raise HTTPException(status_code=422, detail="Ik vond geen selecteerbare tekst in deze PDF.")
-    if sum(len(chunk.text) for chunk in chunks) > MAX_PDF_TEXT_CHARS:
-        raise HTTPException(status_code=413, detail="Deze PDF bevat meer tekst dan één sessie kan verwerken.")
-    analysis = analyze_invoice_chunks(chunks)
-    session_id = _store_upload_session(chunks, analysis, filename)
-    return {
-        "session_id": session_id,
-        "filename": filename,
-        "answer": analysis["answer"],
-        "facts": analysis["facts"],
-        "sources": analysis["sources"],
-        "processing": "local-only",
-    }
+        raise HTTPException(status_code=422, detail="Ik vond geen selecteerbare tekst in deze PDF. Een foto van je factuur kan ook.")
+    return chunks
+
+
+async def _photo_chunks(image_data: bytes, filename: str) -> list[KnowledgeChunk]:
+    try:
+        text = await asyncio.wait_for(asyncio.to_thread(ocr_image, image_data), timeout=90)
+    except PhotoUnavailable as error:
+        raise HTTPException(status_code=503, detail="Foto's lezen lukt nu niet. Upload je factuur als PDF.") from error
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Ik kon deze foto niet lezen. Probeer een scherpe foto, recht van boven.") from error
+    chunks = chunks_from_text(text, source=filename)
+    if sum(len(chunk.text) for chunk in chunks) < 40:
+        raise HTTPException(status_code=422, detail="Ik kon geen tekst op deze foto lezen. Probeer een scherpe foto, recht van boven, met goed licht.")
+    return chunks
 
 
 @api_app.delete("/api/session/{session_id}")
@@ -891,10 +918,28 @@ async def api_answer_stream(body: AnswerRequest, request: Request) -> StreamingR
 
 
 async def _rated_answer(body: AnswerRequest) -> dict[str, Any]:
-    reply = await _answer(body)
-    # Only public answers can be rated; PDF and offer-comparison replies carry personal inputs.
+    # Collect the steps for the owner's log while still passing them on to a stream.
+    steps: list[dict[str, Any]] = []
+    forward = answer_steps.get()
+
+    def collect(step: dict[str, Any]) -> None:
+        steps.append(step)
+        if forward:
+            forward(step)
+
+    reset = answer_steps.set(collect)
+    started = time.monotonic()
+    try:
+        reply = await _answer(body)
+    finally:
+        answer_steps.reset(reset)
+    # Only public answers can be rated or logged; PDF and offer-comparison replies carry personal inputs.
     if not body.session_id and reply.get("processing") != "local-only" and not reply.get("comparison_status"):
-        reply["feedback_token"] = sign_feedback(body.question.strip(), reply.get("answer", ""), str(reply.get("processing", "")))
+        record = build_log_record(body.question.strip(), reply, steps, time.monotonic() - started)
+        await asyncio.to_thread(store_log_record, record)
+        reply["feedback_token"] = sign_feedback(
+            body.question.strip(), reply.get("answer", ""), str(reply.get("processing", "")), record["id"]
+        )
     return reply
 
 
@@ -1012,6 +1057,41 @@ async def api_transcribe(
     if not text:
         raise HTTPException(status_code=422, detail="Ik hoorde geen vraag in de opname.")
     return {"text": text[:1000]}
+
+
+def _check_admin(request: Request) -> None:
+    """The owner's pages: HTTP basic auth with KAREN_ADMIN_KEY as password; hidden when no key is set."""
+    key = os.getenv("KAREN_ADMIN_KEY", "").strip()
+    if not key:
+        raise HTTPException(status_code=404, detail="Not Found")
+    header = request.headers.get("authorization", "")
+    password = ""
+    if header.lower().startswith("basic "):
+        try:
+            password = base64.b64decode(header[6:]).decode("utf-8").partition(":")[2]
+        except Exception:
+            password = ""
+    if not hmac.compare_digest(password.encode("utf-8"), key.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Wachtwoord nodig.", headers={"WWW-Authenticate": 'Basic realm="Karen"'})
+
+
+@api_app.get("/admin", include_in_schema=False)
+async def admin_overview(request: Request, days: int = 7) -> Response:
+    _check_admin(request)
+    days = max(1, min(days, 90))
+    conversations, feedback = await asyncio.to_thread(load_recent, days)
+    return Response(render_admin_page(conversations, feedback, days), media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
+
+
+@api_app.get("/admin/conversations.csv", include_in_schema=False)
+async def admin_conversations_csv(request: Request, days: int = 7) -> Response:
+    _check_admin(request)
+    conversations, feedback = await asyncio.to_thread(load_recent, max(1, min(days, 90)))
+    return Response(
+        conversations_csv(conversations, feedback),
+        media_type="text/csv; charset=utf-8",
+        headers={"Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="karen-gesprekken.csv"'},
+    )
 
 
 KAREN_COMPONENT_JS = REPO_ROOT / "build" / "karen-component.js"

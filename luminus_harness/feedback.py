@@ -37,9 +37,9 @@ class FeedbackError(ValueError):
     pass
 
 
-def sign_feedback(question: str, answer: str, processing: str) -> str:
+def sign_feedback(question: str, answer: str, processing: str, log_id: str = "") -> str:
     payload = json.dumps(
-        {"q": question[:1000], "a": answer[:4000], "p": processing, "exp": int(time.time()) + TOKEN_TTL_SECONDS},
+        {"q": question[:1000], "a": answer[:4000], "p": processing, "l": log_id, "exp": int(time.time()) + TOKEN_TTL_SECONDS},
         ensure_ascii=False, separators=(",", ":"),
     ).encode("utf-8")
     signature = hmac.new(_secret, payload, hashlib.sha256).digest()
@@ -75,6 +75,7 @@ def build_record(token: str, rating: str, comment: str | None) -> dict[str, Any]
         "question": data["q"],
         "answer": data["a"],
         "processing": data["p"],
+        "log_id": data.get("l", ""),
     }
 
 

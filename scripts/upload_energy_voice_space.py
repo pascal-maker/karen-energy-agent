@@ -18,6 +18,7 @@ def main() -> None:
     file_map = {
         "README.md": repo_root / "energy_voice_space" / "README.md",
         "requirements.txt": repo_root / "requirements" / "energy-voice-demo.txt",
+        "packages.txt": repo_root / "energy_voice_space" / "packages.txt",
         "energy_voice_app.py": repo_root / "energy_voice_app.py",
         "energie_agent_kennisbasis_luminus_elegant_eneco.pdf": repo_root / "energie_agent_kennisbasis_luminus_elegant_eneco.pdf",
         "energyagent-karen-prototype/assets/karen-donna-style-avatar.png": repo_root / "energyagent-karen-prototype" / "assets" / "karen-donna-style-avatar.png",
@@ -30,6 +31,9 @@ def main() -> None:
         "luminus_harness/comparison_session.py": repo_root / "luminus_harness" / "comparison_session.py",
         "luminus_harness/contract_advice.py": repo_root / "luminus_harness" / "contract_advice.py",
         "luminus_harness/feedback.py": repo_root / "luminus_harness" / "feedback.py",
+        "luminus_harness/conversation_log.py": repo_root / "luminus_harness" / "conversation_log.py",
+        "luminus_harness/admin_page.py": repo_root / "luminus_harness" / "admin_page.py",
+        "luminus_harness/photo_invoice.py": repo_root / "luminus_harness" / "photo_invoice.py",
         "luminus_harness/jev.py": repo_root / "luminus_harness" / "jev.py",
         "luminus_harness/steps.py": repo_root / "luminus_harness" / "steps.py",
         "luminus_harness/market_prices.py": repo_root / "luminus_harness" / "market_prices.py",
