@@ -8,6 +8,7 @@ from luminus_harness.contract_check import answer_contract_check, contract_check
     ("Hoe check ik mijn energiecontract?", "check"),
     ("Hoe kijk ik mijn energiecontract na?", "check"),
     ("Betaal ik te veel voor stroom?", "check"),
+    ("Hoeveel gezinnen betalen te veel voor energie?", "check"),
     ("Moet ik overstappen van energieleverancier?", "check"),
     ("Wat is de CREG-scan?", "creg_scan"),
     ("Zijn sjoemelkortingen verboden?", "sjoemelkorting"),

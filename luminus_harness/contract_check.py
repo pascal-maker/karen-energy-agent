@@ -61,7 +61,7 @@ _TOPICS = (
         r"(?:check\w*|controle\w*|nakijk\w*|na\s+te\s+kijken|nagaan|onder\s+de\s+loep).{0,40}(?:energie)?contract"
         r"|kijk\s+ik\s+\w+\s+(?:energie)?contract\s+na"
         r"|(?:energie)?contract\w*.{0,30}(?:check\w*|controle\w*|nakijk\w*|nagaan)"
-        r"|betaal\s+ik\s+(?:\w+\s+)?te\s+veel|te\s+veel\s+(?:betalen|betaal)"
+        r"|(?:betaal\s+ik|betalen|betaal\s+je|betaalt)\s+(?:\w+\s+){0,2}te\s+veel|te\s+veel\s+(?:betalen|betaal)"
         r"|moet\s+ik\s+(?:\w+\s+){0,2}(?:over\s*stappen|overstappen|wisselen|veranderen)(?:\s+van\s+(?:energie)?leverancier)?\s*\??$",
         re.IGNORECASE,
     )),
