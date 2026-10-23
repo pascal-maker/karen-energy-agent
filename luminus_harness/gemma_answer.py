@@ -158,7 +158,7 @@ _ENERGY_TOPIC = re.compile(
     r"netbeheerder|\w*premie\w*|isolatie|energieleverancier\w*|"
     r"verbruik|creg|brugel|cwape|v.test|brusim|vreg|fluvius|sibelga|ores|(?:budget|digitale\s|slimme\s|gas|elektriciteits|stroom)?meters?|meterstand\w*|aansluiting\w*|"
     r"stroompanne|stroomonderbreking|stroomstoring|\w*batterij\w*|laadpa\w*|laadstation\w*|groene stroom|"
-    r"energiedelen|leverancier\w*|energiecontract\w*|"
+    r"energiedelen|leverancier\w*|energiecontract\w*|sjoemelkorting\w*|welkomstkorting\w*|vaste vergoeding|"
     # English and French: a non-Dutch energy question must not be answered as off-topic.
     r"bills?|invoices?|advance payments?|boilers?|meter readings?|smart meters?|tariffs?|"
     r"énergie\w*|électricité|gaz|chauffage|chaudières?|factures?|acomptes?|consommation|compteurs?|pompe à chaleur|"
@@ -357,6 +357,14 @@ async def answer_small_talk(question: str, route: str) -> dict[str, Any]:
     return await _answer_small_talk(question, kind)
 
 
+# The CREG rule as it read on creg.be/nl/a-z-index/verbrekingsvergoeding when last checked by hand.
+CREG_CANCELLATION_CHECKED = (
+    "Voor consumenten, zelfstandigen en kleine bedrijven is de verbrekingsvergoeding afgeschaft. "
+    "Zij kunnen hun contract op gelijk welk moment stopzetten."
+)
+CREG_CANCELLATION_CHECKED_ON = "gecontroleerd op 23 okt 2026"
+
+
 def _is_cancellation_question(question: str) -> bool:
     normalized = question.casefold()
     # Other Luminus services and payment mandates have different cancellation rules.
@@ -427,6 +435,7 @@ async def _answer_cancellation_question(question: str) -> dict[str, Any]:
     sources: list[dict[str, str]] = []
     suggested_sources: list[dict[str, str]] = []
     excerpts: dict[str, str] = {}
+    live_failed = False
     for key, page in zip(keys, pages):
         excerpt = None
         if page:
@@ -443,6 +452,17 @@ async def _answer_cancellation_question(question: str) -> dict[str, Any]:
             # so a successfully fetched page becomes a suggested source below
             # instead of a claimed excerpt -- never regex-guess a quote that
             # has not actually been confirmed on the live page.
+        if key == "creg_cancellation" and not page:
+            # The live fetch failed (not a changed page): fall back to the sentence checked by hand.
+            title, url = ENERGY_SOURCES[key]
+            excerpts[key] = CREG_CANCELLATION_CHECKED
+            live_failed = True
+            sources.append({
+                "title": title, "url": url,
+                "detail": f"Live ophalen lukte nu niet · zin {CREG_CANCELLATION_CHECKED_ON}",
+                "excerpt": CREG_CANCELLATION_CHECKED,
+            })
+            continue
         if excerpt and page:
             excerpts[key] = excerpt
             sources.append({
@@ -480,7 +500,7 @@ async def _answer_cancellation_question(question: str) -> dict[str, Any]:
         answer += "Bij welke leverancier zit je? Dan kan de juiste opzegprocedure worden opgezocht."
     return {
         "answer": answer, "sources": sources, "suggested_sources": suggested_sources,
-        "live_source_status": "failed" if suggested_sources else "checked",
+        "live_source_status": "failed" if suggested_sources or live_failed else "checked",
         "processing": "verified-public-sources",
     }
 

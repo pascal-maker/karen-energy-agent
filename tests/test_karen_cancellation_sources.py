@@ -76,7 +76,7 @@ async def test_source_markdown_does_not_hide_verified_passages(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("content", [None, "Cookies en navigatie", "Er kan een verbrekingsvergoeding gelden."])
+@pytest.mark.parametrize("content", ["Cookies en navigatie", "Er kan een verbrekingsvergoeding gelden."])
 async def test_failed_or_unsubstantiated_fetch_never_asserts_the_rule(monkeypatch, content):
     async def fetch(key):
         return page(key, content) if content else None
@@ -149,8 +149,8 @@ def test_answer_api_preserves_verified_processing_and_suggested_sources(monkeypa
     result = response.json()
     assert result["processing"] == "verified-public-sources"
     assert result["live_source_status"] == "failed"
-    assert result["sources"] == []
-    assert result["suggested_sources"][0]["url"] == ENERGY_SOURCES["creg_cancellation"][1]
+    assert result["sources"][0]["excerpt"] == gemma_answer.CREG_CANCELLATION_CHECKED
+    assert result["sources"][0]["url"] == ENERGY_SOURCES["creg_cancellation"][1]
 
 
 def test_suggested_links_render_separately_and_escape_source_text():
@@ -164,3 +164,16 @@ def test_suggested_links_render_separately_and_escape_source_text():
     assert "Zelf raadplegen · niet als bewijs gebruikt" in rendered
     assert "CREG &lt;script&gt;" in rendered
     assert "javascript:" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_failed_creg_fetch_falls_back_to_the_hand_checked_rule(monkeypatch):
+    async def fetch(key):
+        return None
+
+    monkeypatch.setattr(gemma_answer, "fetch_energy_page", fetch)
+    monkeypatch.setattr(gemma_answer, "_generate", forbid_generation)
+    result = await gemma_answer.answer_energy_question("Wat is een verbrekingsvergoeding?", [])
+    assert "zonder verbrekingsvergoeding" in result["answer"]
+    assert result["sources"][0]["excerpt"] == gemma_answer.CREG_CANCELLATION_CHECKED
+    assert "Live ophalen lukte nu niet" in result["sources"][0]["detail"]

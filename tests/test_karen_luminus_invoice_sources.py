@@ -208,6 +208,7 @@ async def test_aspiravi_has_no_cancellation_source_and_never_leaks_another_suppl
 
     assert "aspiravi_help" not in calls
     assert not any("luminus.be" in source.get("url", "") for source in result["sources"] + result["suggested_sources"])
-    assert result["sources"] == []
+    from luminus_harness.browserbase_sources import ENERGY_SOURCES
+    assert [source["url"] for source in result["sources"]] == [ENERGY_SOURCES["creg_cancellation"][1]]
     assert "nog geen officiële bron geregistreerd" in result["answer"]
 

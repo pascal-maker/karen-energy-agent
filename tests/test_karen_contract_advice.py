@@ -171,7 +171,7 @@ def test_fixed_cards_do_not_move_the_variable_reference():
 def test_without_a_price_karen_compares_with_the_cheapest_fixed_card():
     reply = contract_advice.contract_advice_reply("vast of variabel?", with_fixed_cards(market()))
     assert "decision" in reply
-    assert "goedkoopste vaste contract op de huidige tariefkaarten, OCTA+ Fixed aan 18,4 cent/kWh" in reply["answer"]
+    assert "goedkoopste contract met een prijs die 1 jaar vastligt op de huidige tariefkaarten, OCTA+ Fixed aan 18,4 cent/kWh" in reply["answer"]
     assert reply["sources"][-1]["url"] == "https://files.octaplus.be/fixed.pdf"
 
 
@@ -192,3 +192,14 @@ def test_price_reply_lists_fixed_cards_separately():
     assert "• Energyvision 3 jaar vast: 13,6 cent/kWh" in fixed_part
     assert "• OCTA+ Fixed: 18,4 cent/kWh" in fixed_part
     assert "Eneco Fix" not in fixed_part
+
+
+def test_a_cheaper_multi_year_card_is_named_and_explained():
+    data = with_fixed_cards(market())
+    data["contracts"]["suppliers"].append(
+        {"name": "Energyvision", "status": "verified", "contract_type": "fixed", "product_name": "Goedkope stroom 3 jaar vast",
+         "duration_months": 36, "price_per_kwh_eur": 0.136}
+    )
+    answer = contract_advice.contract_advice_reply("vast of variabel?", data)["answer"]
+    assert "OCTA+ Fixed aan 18,4 cent/kWh" in answer
+    assert "goedkoper aan 13,6 cent/kWh, maar die prijs ligt 3 jaar vast" in answer
