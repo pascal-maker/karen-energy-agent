@@ -30,6 +30,7 @@ def main() -> None:
         "luminus_harness/rate_limit.py": repo_root / "luminus_harness" / "rate_limit.py",
         "luminus_harness/comparison_session.py": repo_root / "luminus_harness" / "comparison_session.py",
         "luminus_harness/contract_advice.py": repo_root / "luminus_harness" / "contract_advice.py",
+        "luminus_harness/contract_check.py": repo_root / "luminus_harness" / "contract_check.py",
         "luminus_harness/feedback.py": repo_root / "luminus_harness" / "feedback.py",
         "luminus_harness/conversation_log.py": repo_root / "luminus_harness" / "conversation_log.py",
         "luminus_harness/admin_page.py": repo_root / "luminus_harness" / "admin_page.py",

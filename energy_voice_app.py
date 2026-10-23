@@ -60,6 +60,7 @@ from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from luminus_harness.comparison_session import is_offer_comparison_question, pdf_comparison_reply
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
+from luminus_harness.contract_check import answer_contract_check
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.conversation_log import build_log_record, load_recent, store_log_record
 from luminus_harness.admin_page import conversations_csv, render_admin_page
@@ -959,6 +960,10 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         advice = await answer_contract_advice(question, recognised=route == "contract_advice")
         if advice is not None:
             return _with_petra_speech(advice)
+    # Checking or switching a contract: hand-checked steps and rules, whatever route Jev picked.
+    check = answer_contract_check(question)
+    if check is not None:
+        return _with_petra_speech(check)
     if route == "compare" or (route is None and is_offer_comparison_question(question)):
         # No form: today's supplier cards plus the official comparator for a price on the person's own usage.
         comparison = await answer_offer_comparison(question)

@@ -134,13 +134,26 @@ def _fixed_card_note(compared: dict[str, Any] | None, cheapest: dict[str, Any] |
     """Which fixed card Karen compared with, or a tip when a verified card beats the offered price."""
     if compared is not None:
         label, cents = card_label(compared), _cents(compared["price_per_kwh_eur"] * 100, lang)
-        return {
-            "en": f"I compared with the cheapest fixed contract on today's tariff cards, {label} at {cents} cents/kWh. "
+        note = {
+            "en": f"I compared with the cheapest contract whose price is fixed for 1 year on today's tariff cards, {label} at {cents} cents/kWh. "
                   "Were you offered a different price? Tell me and I'll work it out again.",
-            "fr": f"J'ai comparé avec le contrat fixe le moins cher des fiches tarifaires actuelles, {label} à {cents} c€/kWh. "
+            "fr": f"J'ai comparé avec le contrat le moins cher à prix fixe pendant 1 an des fiches tarifaires actuelles, {label} à {cents} c€/kWh. "
                   "On vous a proposé un autre prix ? Dites-le-moi et je refais le calcul.",
-        }.get(lang, f"Ik vergeleek met het goedkoopste vaste contract op de huidige tariefkaarten, {label} aan {cents} cent/kWh. "
+        }.get(lang, f"Ik vergeleek met het goedkoopste contract met een prijs die 1 jaar vastligt op de huidige tariefkaarten, {label} aan {cents} cent/kWh. "
                     "Kreeg je een andere prijs aangeboden? Zeg het, dan reken ik het opnieuw uit.")
+        if cheapest is not None and cheapest is not compared and cheapest["price_per_kwh_eur"] < compared["price_per_kwh_eur"]:
+            # A cheaper card fixed for longer is listed elsewhere in the chat; say why it wasn't the benchmark.
+            other, other_cents = card_label(cheapest), _cents(cheapest["price_per_kwh_eur"] * 100, lang)
+            months = cheapest.get("duration_months")
+            years = f"{months // 12}" if isinstance(months, int) and months % 12 == 0 else None
+            note += " " + {
+                "en": f"{other} is cheaper at {other_cents} cents/kWh, but its price is fixed for "
+                      f"{years + ' years' if years else 'a different period'}, so it isn't a like-for-like comparison.",
+                "fr": f"{other} est moins cher à {other_cents} c€/kWh, mais son prix est fixé pour "
+                      f"{years + ' ans' if years else 'une autre durée'}, donc la comparaison n'est pas équivalente.",
+            }.get(lang, f"{other} is goedkoper aan {other_cents} cent/kWh, maar die prijs ligt "
+                        f"{years + ' jaar' if years else 'een andere periode'} vast, dus dat is geen vergelijking op gelijke voet.")
+        return note
     if cheapest is not None and cheapest["price_per_kwh_eur"] * 100 < fixed - 0.5:
         label, cents = card_label(cheapest), _cents(cheapest["price_per_kwh_eur"] * 100, lang)
         return {
