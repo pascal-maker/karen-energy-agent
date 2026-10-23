@@ -382,3 +382,19 @@ async def answer_offer_comparison(question: str) -> dict[str, Any] | None:
         "suggested_sources": [{"title": name, "url": url, "detail": "Officiële vergelijker · zelf je verbruik invullen"}],
         "processing": "offer-comparison",
     }
+
+
+def today_summary(data: dict[str, Any], now: datetime | None = None) -> dict[str, Any] | None:
+    """The wholesale price this hour and today's cheapest hours, for Karen's greeting."""
+    now = now or datetime.now(BRUSSELS)
+    today = now.date().isoformat()
+    spot = data.get("spot") or {}
+    day = next((d for d in (spot.get("today") or {}, spot.get("tomorrow") or {}) if d.get("date") == today), None)
+    if day is None or spot.get("unit") != "EUR/MWh":
+        return None
+    hourly = dict(_hourly_cents(day.get("points")))
+    current = hourly.get(f"{now.hour:02d}:00")
+    if current is None:
+        return None
+    later = sorted((h for h in day.get("cheapest_hours") or [] if isinstance(h, int) and h >= now.hour))
+    return {"date": today, "hour": now.hour, "now_cents": current, "cheapest_hour": later[0] if later else None}

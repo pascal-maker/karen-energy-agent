@@ -44,10 +44,6 @@ pip install -r requirements/energy-voice-demo.txt pytest pydantic httpx
 PYTHONPATH=. pytest -q tests
 ```
 
-**Known gap:** `energy_voice_app.py` imports `luminus_harness/perplexity_agent.py`,
-which has not been committed yet. Until it is added, the app does not start and
-the tests that import it fail.
-
 ## Deployment
 
 The backend runs as a Hugging Face Space; see `energy_voice_space/README.md` for

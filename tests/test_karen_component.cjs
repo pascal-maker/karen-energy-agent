@@ -51,6 +51,8 @@ const root = createRoot(document.querySelector("#root"))
 const requests = []
 const responses = []
 globalThis.fetch = async (url, options) => {
+    // The greeting's price is asked once when Karen opens; it is not part of a conversation.
+    if (String(url).endsWith("/api/today")) return { ok: true, json: async () => ({ hour: 9, now_cents: 8.37, cheapest_hour: 14 }) }
     requests.push({ url, method: options.method, body: typeof options.body === "string" ? JSON.parse(options.body) : options.body })
     if (options.method === "DELETE") return { ok: true, json: async () => ({ deleted: true }) }
     assert.ok(responses.length, "Unexpected request")
@@ -111,6 +113,8 @@ async function main() {
     assert.equal(privacy.open, false, "The privacy details start folded to one line")
     assert.match(privacy.querySelector("summary").textContent, /anoniem bewaard.*Meer over privacy/)
     assert.match(privacy.textContent, /Babbeldoos-stemservice/, "The full privacy text is still there behind the link")
+    assert.match(document.querySelector(".ea-today").textContent, /kost nu 8,4 cent\/kWh, het goedkoopst vandaag om 14u/, "Karen greets with today's price")
+    assert.equal(document.querySelectorAll(".ea-chip").length, 3, "Three example questions under the greeting")
     responses.push({ answer: "Dit zijn de goedkoopste contracten van vandaag.", processing: "offer-comparison", sources: [] })
     await typed("Vergelijk energieaanbiedingen")
     assert.deepEqual(requests.at(-1).body, { question: "Vergelijk energieaanbiedingen" })
@@ -127,7 +131,7 @@ async function main() {
     assert.equal(document.querySelector(".ea-answer .ea-lead").textContent, "V-test toont dit aanbod.", "The first line leads the answer")
     assert.equal(document.querySelector(".ea-answer .ea-steps li").textContent, "Voorbeeld · Variabel: € 1.234,56 per jaar. Gecontroleerd op 28-09-2026 om 14:00 CEST.", "Numbered lines become steps")
     assert.equal(document.querySelector(".ea-answer .ea-num").textContent, "€ 1.234,56", "Amounts stand out")
-    assert.equal(document.querySelector(".ea-rail a").href, success.sources[0].url)
+    assert.equal(document.querySelector(".ea-sources a").href, success.sources[0].url)
     assert.equal(spoken.length, 0, "The browser voice is only a fallback when Petra fails")
     assert.equal(mic().disabled, false)
     responses.push({ answer: "Lokale PDF-analyse", session_id: "separate-pdf-session", filename: "bill.pdf", processing: "local-only" })

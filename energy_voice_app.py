@@ -66,7 +66,7 @@ from luminus_harness.conversation_log import build_log_record, load_recent, stor
 from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
-from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, is_gas_price_question
+from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, is_gas_price_question, load_market_data, today_summary
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -792,6 +792,15 @@ async def api_health() -> dict[str, str]:
         "answer_model": os.getenv("GEMMA_MODEL", "gemma-4-26b-a4b-it"),
         "uploaded_pdf_processing": "local-only",
     }
+
+
+@api_app.get("/api/today")
+async def api_today(request: Request) -> Response:
+    """The wholesale price this hour and the next cheap hour, for Karen's greeting; empty when unknown."""
+    _allow_api_request(request)
+    data = await load_market_data()
+    summary = today_summary(data) if data else None
+    return Response(json.dumps(summary or {}), media_type="application/json", headers={"Cache-Control": "public, max-age=300"})
 
 
 @api_app.post("/api/upload")
