@@ -253,3 +253,24 @@ def test_after_midnight_the_evening_runs_tomorrow_is_today():
     assert "vandaag gemiddeld 22,2 cent" in answer and "rond 1u" in answer
     data["spot"]["tomorrow"]["date"] = "2099-01-01"
     assert f"op {yesterday} gemiddeld 10,0 cent" in market_prices.market_price_reply(data, "nl")["answer"]
+
+
+def test_today_summary_gives_this_hours_price_and_the_next_cheap_hour():
+    points = [[f"{hour:02d}:{minute:02d}", 80.0 + hour] for hour in range(24) for minute in (0, 15, 30, 45)]
+    data = market(points=points, cheapest_hours=[3, 14, 15])
+    now = datetime.fromisoformat(f"{TODAY}T09:20:00").replace(tzinfo=market_prices.BRUSSELS)
+    assert market_prices.today_summary(data, now) == {"date": TODAY, "hour": 9, "now_cents": 8.9, "cheapest_hour": 14}
+    late = now.replace(hour=20)
+    assert market_prices.today_summary(data, late)["cheapest_hour"] is None
+    assert market_prices.today_summary(market(), now) is None, "No quarter-hour points, no price to show"
+
+
+def test_api_today_returns_the_summary_or_nothing(api, monkeypatch):
+    import energy_voice_app as app
+
+    points = [[f"{hour:02d}:00", 100.0] for hour in range(24)]
+    monkeypatch.setattr(app, "load_market_data", AsyncMock(return_value=market(points=points)))
+    body = api[0].get("/api/today").json()
+    assert body["now_cents"] == 10.0 and body["date"] == TODAY
+    monkeypatch.setattr(app, "load_market_data", AsyncMock(return_value=None))
+    assert api[0].get("/api/today").json() == {}

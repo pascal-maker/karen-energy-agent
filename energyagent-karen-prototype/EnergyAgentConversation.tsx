@@ -209,6 +209,8 @@ const demoReply: Reply = {
     ],
 }
 
+type Today = { hour: number; now_cents: number; cheapest_hour: number | null }
+const formatCents = (cents: number) => cents.toLocaleString("nl-BE", { maximumFractionDigits: 1 })
 const DEMO_QUESTION = "Waarom verschilt mijn voorschot van mijn jaarafrekening?"
 // Speech follows the browser's languages: Dutch whenever it is listed, else French or English, else Dutch.
 const SPEECH_LOCALES = { nl: "nl-BE", fr: "fr-BE", en: "en-GB" } as const
@@ -262,23 +264,54 @@ const css = `
   .ea { width:100%; height:100%; min-height:590px; display:flex; flex-direction:column; gap:14px; padding:18px; color:#1e2b23; background:#f6f7f3; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
   .ea-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .ea-top .ea-brand { padding:0; border:0; }
-  .ea-body { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:16px; }
-  .ea-composer { background:#fff; }
-  .ea-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 12px; }
-  .ea-chip { min-height:40px; padding:8px 12px; border:1px solid #d6e3d4; border-radius:12px; color:#234f38; background:#f2f7ef; font:inherit; font-size:13px; text-align:left; cursor:pointer; }
-  .ea-upload { display:inline-flex; align-items:center; justify-content:center; min-height:44px; margin-top:12px; padding:0 14px; border:1px dashed #9bc294; border-radius:12px; color:#234f38; background:#f4f8f2; font-size:13px; font-weight:600; cursor:pointer; }
-  .ea-upload input { position:absolute; width:1px; height:1px; opacity:0; }
-  .ea-upload[data-disabled="true"] { opacity:.5; cursor:not-allowed; }
-  .ea-jump { display:none; }
+  .ea-body { flex:1; min-height:0; display:flex; justify-content:center; }
+  .ea-main { display:flex; flex-direction:column; width:100%; max-width:780px; min-height:0; }
+  .ea-hello { display:flex; align-items:flex-start; gap:12px; margin:24px 0 16px; }
+  .ea-hello-face { flex:none; width:44px; height:44px; border-radius:50%; object-fit:cover; background:#183d2c; }
+  .ea-hello-bubble { max-width:560px; padding:16px 18px; border:1px solid #e3ebe2; border-radius:4px 18px 18px; background:#fff; font-size:14px; line-height:1.55; }
+  .ea-hello-bubble p { margin:6px 0 0; color:#4f6156; }
+  .ea h1 { margin:0; font-size:20px; line-height:1.25; letter-spacing:-.02em; }
+  .ea-today { padding-top:8px; border-top:1px solid #eef2ec; color:#234f38!important; }
+  .ea-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 16px 56px; }
+  .ea-chip { min-height:38px; padding:8px 12px; border:1px solid #d6e3d4; border-radius:999px; color:#234f38; background:#fff; font:inherit; font-size:13px; text-align:left; cursor:pointer; }
+  .ea-chip:hover { background:#f2f7ef; }
+  .ea-composer { padding:10px 0 4px; background:#f6f7f3; }
+  .ea-controls { display:flex; align-items:center; gap:4px; padding:5px; border:1px solid #dfe5de; border-radius:18px; background:#fff; box-shadow:0 2px 10px #1e2b230d; }
+  .ea-controls:focus-within { border-color:#72a584; box-shadow:0 0 0 3px #72a58420; }
+  .ea-input { flex:1; min-width:0; height:42px; padding:0 6px; border:0; outline:none; color:#27372c; background:transparent; font:inherit; font-size:14px; }
+  .ea-attach, .ea-mic { position:relative; flex:none; display:grid; place-items:center; width:40px; height:40px; border:0; border-radius:12px; color:#56705f; background:transparent; cursor:pointer; }
+  .ea-attach:hover, .ea-mic:hover { background:#f2f7ef; color:#234f38; }
+  .ea-attach svg, .ea-mic svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .ea-attach input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+  .ea-attach[data-disabled="true"] { opacity:.45; cursor:not-allowed; }
+  .ea-mic[data-listening="true"] { color:white; background:#a84639; }
+  .ea-mic[data-listening="true"] svg { fill:currentColor; }
+  .ea-mic:disabled { opacity:.45; cursor:not-allowed; }
+  .ea-button { flex:none; display:grid; place-items:center; width:42px; height:42px; border:0; border-radius:13px; color:white; background:#234f38; font-size:18px; cursor:pointer; }
+  .ea-button:hover { background:#173d29; }
+  .ea-pill { display:flex; align-items:center; gap:8px; width:fit-content; margin:0 0 8px; padding:6px 8px 6px 12px; border:1px solid #d6e3d4; border-radius:999px; color:#234f38; background:#eef6ef; font-size:12px; }
+  .ea-pill button { padding:3px 9px; border:1px solid #c9d9c8; border-radius:999px; color:#234f38; background:#fff; font:inherit; font-size:11px; cursor:pointer; }
+  .ea-sources { margin-top:12px; padding-top:10px; border-top:1px solid #edf0eb; white-space:normal; }
+  .ea-source-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 6px; }
+  .ea-source-row > span:first-child { margin-right:2px; color:#7d8b82; font-size:11px; }
+  .ea-source { max-width:100%; padding:3px 9px; border:1px solid #d6e3d4; border-radius:999px; color:#234f38; background:#fff; font-size:11px; text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ea-source-more { color:#5d6b61; border-style:dashed; }
+  .ea-passages summary { color:#56705f; font-size:11px; cursor:pointer; }
+  .ea-excerpt { margin:8px 0 0!important; padding:8px 10px; border-left:2px solid #9bc294; border-radius:0 9px 9px 0; color:#48594d; background:#f2f7ef; font-size:12px; }
+  .ea-excerpt small { display:block; margin-top:4px; color:#7d8b82; font-size:10px; }
+  .ea-actions { display:flex; align-items:center; gap:4px; margin:6px 0 4px; }
+  .ea-voice-play, .ea-feedback button { padding:5px 9px; border:0; border-radius:9px; color:#56705f; background:transparent; font:inherit; font-size:12px; cursor:pointer; }
+  .ea-voice-play::before { content:"▶ "; font-size:9px; }
+  .ea-voice-play:hover, .ea-feedback button:hover { background:#eef2ec; color:#234f38; }
+  .ea-voice-play:disabled, .ea-feedback button:disabled { opacity:.6; cursor:wait; }
+  .ea-feedback { display:flex; align-items:center; gap:2px; }
+  .ea-feedback-open { flex-wrap:wrap; gap:6px; max-width:94%; margin:4px 0 8px; }
+  .ea-feedback-open button { border:1px solid #d7e2d5; background:#fff; }
+  .ea-feedback textarea { flex-basis:100%; min-height:54px; padding:8px 10px; border:1px solid #d7e2d5; border-radius:10px; font:inherit; font-size:12px; resize:vertical; }
   .ea-body[hidden] { display:none!important; }
-  .ea-panel { min-width:0; border:1px solid #e2e7df; border-radius:20px; background:#fff; }
-  .ea-main { display:flex; flex-direction:column; padding:24px; }
   .ea-brand { display:flex; align-items:center; gap:10px; padding-bottom:18px; border-bottom:1px solid #e8ece7; color:#637168; font-size:12px; }
   .ea-mark { display:block; width:38px; height:38px; border:1px solid #e5e9df; border-radius:50%; object-fit:cover; background:#183d2c; }
   .ea-brand strong { color:#23342a; font-size:14px; }
-  .ea-kicker { margin:27px 0 7px; color:#4b805e; font-size:10px; font-weight:750; letter-spacing:.11em; text-transform:uppercase; }
-  .ea h1 { margin:0; font-size:clamp(23px,3vw,34px); line-height:1.12; letter-spacing:-.04em; }
-  .ea-sub { margin:9px 0 20px; color:#69766d; font-size:14px; line-height:1.55; }
   .ea-thread { flex:1; min-height:160px; overflow:auto; padding:4px 0 16px; }
   .ea-question { width:fit-content; max-width:88%; margin:0 0 14px auto; padding:12px 15px; border-radius:16px 16px 4px 16px; color:white; background:#234f38; font-size:13px; line-height:1.5; }
   .ea-turn { margin-bottom:16px; }
@@ -345,14 +378,8 @@ const css = `
   @keyframes ea-pop { from { opacity:0; transform:translateY(4px) scale(.96); } to { opacity:1; transform:none; } }
   @keyframes ea-ring { 0% { box-shadow:0 0 0 3px #f6f9f4, 0 0 0 3px #55a57366; } 100% { box-shadow:0 0 0 3px #f6f9f4, 0 0 0 11px #55a57300; } }
   @media (prefers-reduced-motion: reduce) { .ea-jev-bar span, .ea-bar-track span, .ea-site, .ea-page, .ea-flow-stages li[data-state="active"]::before { animation:none; } }
-  .ea-controls { display:grid; grid-template-columns:minmax(0,1fr) 48px; gap:8px; }
-  .ea-input { min-width:0; height:48px; padding:0 14px; border:1px solid #dfe5de; border-radius:14px; outline:none; color:#27372c; background:white; font:inherit; font-size:13px; }
   .ea-input:focus { border-color:#72a584; box-shadow:0 0 0 3px #72a58420; }
-  .ea-button { display:grid; place-items:center; height:48px; border:0; border-radius:14px; color:white; background:#234f38; font-size:19px; cursor:pointer; }
   .ea-button:hover { background:#173d29; }
-  .ea-mic { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; margin:0 0 8px; padding:0 14px; border:1px solid #c9d9c8; border-radius:13px; color:#234f38; background:#f4f8f2; font:inherit; font-size:12px; font-weight:650; cursor:pointer; }
-  .ea-mic[data-listening="true"] { color:white; background:#a84639; border-color:#a84639; }
-  .ea-mic:disabled { opacity:.5; cursor:not-allowed; }
   .ea-button:disabled { opacity:.55; cursor:wait; }
   .ea-foot { margin:9px 0 0; color:#7b877e; font-size:10px; line-height:1.5; }
   .ea-tag { display:inline-block; margin:10px 0 0; padding:3px 9px; border-radius:999px; background:#eef1ec; color:#5d6b61; font-size:11px; }
@@ -360,22 +387,7 @@ const css = `
   .ea-privacy summary::-webkit-details-marker { display:none; }
   .ea-privacy summary span { color:#234f38; text-decoration:underline; text-underline-offset:2px; }
   .ea-privacy[open] summary span { display:none; }
-  .ea-rail { display:flex; flex-direction:column; gap:12px; }
-  .ea-card { padding:18px; border:1px solid #e2e7df; border-radius:20px; background:#fff; }
-  .ea-card h2 { margin:0 0 5px; font-size:13px; }
-  .ea-card p { margin:0; color:#728076; font-size:11px; line-height:1.5; }
-  .ea-source { display:block; padding:12px 0; border-top:1px solid #edf0eb; color:#25372b; text-decoration:none; }
-  .ea-source:first-of-type { margin-top:12px; }
-  .ea-source strong { display:block; font-size:11px; line-height:1.4; }
-  .ea-source small { display:block; margin-top:3px; color:#718076; font-size:10px; }
-  .ea-excerpt { margin-top:9px!important; padding:10px 11px; border-left:2px solid #9bc294; border-radius:0 9px 9px 0; color:#48594d!important; background:#f2f7ef; font-size:10px!important; }
   .ea-audio { margin-top:10px; width:100%; height:34px; }
-  .ea-voice-play { margin-top:10px; padding:8px 12px; border:1px solid #c9d9c8; border-radius:10px; color:#234f38; background:#f4f8f2; font:inherit; font-size:12px; cursor:pointer; }
-  .ea-voice-play:disabled { opacity:.6; cursor:wait; }
-  .ea-feedback { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; color:#607269; font-size:12px; }
-  .ea-feedback button { padding:5px 10px; border:1px solid #d7e2d5; border-radius:10px; background:#fff; font:inherit; cursor:pointer; }
-  .ea-feedback button:disabled { opacity:.6; cursor:wait; }
-  .ea-feedback textarea { flex-basis:100%; min-height:54px; padding:8px 10px; border:1px solid #d7e2d5; border-radius:10px; font:inherit; font-size:12px; resize:vertical; }
   /* Sized by the space Karen is given, not the screen: a Framer frame or page column
      narrower than 680px gets the phone layout even when the viewport is wider. */
   @container (max-width:680px) {
@@ -386,26 +398,20 @@ const css = `
     .ea-top .ea-brand br { display:none; }
     .ea-top .ea-brand strong { font-size:15px; }
     .ea-body { display:block; }
-    .ea-panel { border:0; border-radius:0; }
-    .ea-main { min-height:calc(100dvh - 63px); padding:16px 16px 0; }
-    .ea-kicker { margin-top:6px; font-size:11px; }
-    .ea h1 { font-size:28px; }
-    .ea-sub { font-size:15px; }
+    .ea-main { min-height:calc(100dvh - 63px); padding:0 16px; }
+    .ea-hello { margin-top:16px; }
+    .ea-chips { margin-left:0; }
+    .ea-chip { font-size:14px; }
+    .ea-composer { position:sticky; bottom:0; z-index:2; margin:0 -16px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #edf0eb; background:#fff; }
+    .ea-input { font-size:16px; }
+    .ea-hello-bubble { font-size:15px; }
+    .ea-source { font-size:12px; }
     .ea-thread { min-height:0; }
     .ea-question, .ea-answer, .ea-past-answer { max-width:100%; font-size:15px; }
-    .ea-chip { font-size:14px; }
-    .ea-composer { position:sticky; bottom:0; z-index:2; margin:0 -16px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid #edf0eb; }
-    .ea-input { font-size:16px; }
     .ea-foot, .ea-privacy summary { font-size:12px; }
     .ea-bar-row { grid-template-columns:minmax(0,1fr) 3.4em; row-gap:4px; padding:6px 0; font-size:14px; }
     .ea-bar-label { grid-column:1 / -1; white-space:normal; }
     .ea-lead { font-size:16px; }
-    .ea-jump { display:inline-block; margin-top:10px; color:#234f38; font-size:14px; font-weight:600; }
-    .ea-rail { display:grid; gap:12px; padding:16px 16px 28px; border-top:8px solid #f6f7f3; }
-    .ea-card { padding:16px; }
-    .ea-card h2 { font-size:15px; }
-    .ea-card p, .ea-source strong { font-size:13px; }
-    .ea-source small, .ea-excerpt { font-size:12px!important; }
   }
 `
 
@@ -480,6 +486,7 @@ export default function EnergyAgentConversation({
     const [feedback, setFeedback] = useState<"idle" | "sending" | "sent" | "failed">("idle")
     const [feedbackOpen, setFeedbackOpen] = useState(false)
     const [feedbackComment, setFeedbackComment] = useState("")
+    const [today, setToday] = useState<Today | null>(null)
     const petraAbort = useRef<AbortController | null>(null)
     const petraPlayer = useRef<HTMLAudioElement | null>(null)
     const petraAudioUrlRef = useRef("")
@@ -528,7 +535,18 @@ export default function EnergyAgentConversation({
         window.speechSynthesis?.cancel()
     }, [])
 
-    function endpointFor(path: "answer-stream" | "upload" | "session" | "petra-speech" | "transcribe" | "feedback"): string {
+    // Today's wholesale price for the greeting; the greeting simply leaves it out when this fails.
+    useEffect(() => {
+        if (!apiEndpoint.trim()) return
+        let cancelled = false
+        fetch(endpointFor("today"), { method: "GET" })
+            .then((response) => response.ok ? response.json() : null)
+            .then((data) => { if (!cancelled && typeof data?.now_cents === "number") setToday(data) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [apiEndpoint])
+
+    function endpointFor(path: "today" | "answer-stream" | "upload" | "session" | "petra-speech" | "transcribe" | "feedback"): string {
         const url = new URL(apiEndpoint.trim())
         url.pathname = url.pathname.replace(/\/api\/answer\/?$/, `/api/${path}`)
         if (!url.pathname.endsWith(`/api/${path}`)) {
@@ -985,70 +1003,77 @@ export default function EnergyAgentConversation({
                 {(turns.length > 0 || Boolean(asked)) && <button className="ea-new" type="button" onClick={() => void newConversation()} disabled={busy || uploading}>Nieuw gesprek</button>}
             </header>
             <div className="ea-body">
-            <section className="ea-panel ea-main">
-                {!asked && !turns.length && <><div className="ea-kicker">Energy co-pilot</div>
-                <h1>Praat met Karen.<br />Begrijp je energie.</h1>
-                <p className="ea-sub">Vraag naar je factuur, energieverbruik of verwarming. Karen laat zien waarop haar antwoord steunt.</p></>}
+            <section className="ea-main">
                 <div className="ea-thread" aria-live="polite" ref={thread}>
+                    {!asked && !turns.length && <div className="ea-hello">
+                        <img className="ea-hello-face" src={KAREN_LOGO} alt="" />
+                        <div className="ea-hello-bubble">
+                            <h1>Hoi, ik ben Karen.</h1>
+                            <p>Vraag me alles over je energiefactuur, je contract of de prijzen. Ik toon je altijd waar mijn antwoord vandaan komt.</p>
+                            {today && <p className="ea-today">Stroom op de groothandelsmarkt kost nu <b>{formatCents(today.now_cents)} cent/kWh</b>{today.cheapest_hour !== null && today.cheapest_hour !== today.hour ? `, het goedkoopst vandaag om ${today.cheapest_hour}u.` : "."}</p>}
+                        </div>
+                    </div>}
+                    {!asked && !turns.length && <div className="ea-chips">
+                        {[sampleQuestion, "Wat kost stroom vandaag?", "Hoe check ik mijn energiecontract?"].map((text) => <button key={text} className="ea-chip" onClick={() => void ask(text)}>{text}</button>)}
+                    </div>}
                     {turns.map((turn, index) => <div className="ea-turn" key={index}><div className="ea-question">{turn.question}</div><div className="ea-past-answer">{turn.visual?.kind === "prices" && turn.visual.groups?.length ? <PriceChart visual={turn.visual} /> : <FormattedAnswer text={turn.answer} />}</div></div>)}
                     {asked && <div className="ea-question">{asked}</div>}
                     {busy && steps.length > 0 && <KarenFlow steps={steps} writing={Boolean(draft)} />}
                     {(busy || uploading || listening || transcribing) && !draft && !(busy && steps.length > 0) && <div className="ea-state"><span className="ea-dot" />{status}</div>}
                     {!busy && steps.length > 0 && reply && <p className="ea-flow-done">{stepSummary(steps)}</p>}
                     {busy && draft && <div className="ea-answer"><FormattedAnswer text={draft} /></div>}
-                    {reply && <><div className="ea-answer">{reply.visual?.kind === "prices" && reply.visual.groups?.length ? <PriceChart visual={reply.visual} /> : <FormattedAnswer text={reply.answer} />}{reply.processing === "general-knowledge" && <p className="ea-tag">Algemene uitleg · geen bron gevonden</p>}</div>{!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}{reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Antwoord klaar. Audio wordt voorbereid; dit kan even duren.</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}{browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}{petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}{petraError && <p className="ea-foot" role="status">{petraError}</p>}{reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
-                        ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>
-                        : <div className="ea-feedback">
-                            {feedbackOpen ? <>
-                                <textarea aria-label="Wat ging er mis?" placeholder="Wat ging er mis? (optioneel, geen persoonlijke gegevens)" value={feedbackComment} maxLength={500} onChange={(event) => setFeedbackComment(event.target.value)} />
-                                <button disabled={feedback === "sending"} onClick={() => void sendFeedback("down", feedbackComment)}>Verstuur feedback</button>
-                            </> : <>
-                                <span>Was dit nuttig?</span>
-                                <button aria-label="Nuttig antwoord" disabled={feedback === "sending"} onClick={() => void sendFeedback("up")}>👍</button>
-                                <button aria-label="Niet nuttig" disabled={feedback === "sending"} onClick={() => setFeedbackOpen(true)}>👎</button>
-                            </>}
-                            {feedback === "failed" && <span role="status">Feedback versturen lukte niet. Probeer het later opnieuw.</span>}
-                        </div>)}{(sources.length > 0 || Boolean(reply.suggested_sources?.length)) && <a className="ea-jump" href="#ea-sources">Bekijk de bronnen ↓</a>}</>}
+                    {reply && <><div className="ea-answer">{reply.visual?.kind === "prices" && reply.visual.groups?.length ? <PriceChart visual={reply.visual} /> : <FormattedAnswer text={reply.answer} />}{reply.processing === "general-knowledge" && <p className="ea-tag">Algemene uitleg · geen bron gevonden</p>}
+                        {(sources.length > 0 || Boolean(reply.suggested_sources?.length)) && <div className="ea-sources" id="ea-sources">
+                            {reply.live_source_status === "failed" && <p className="ea-foot">De live controle is niet volledig bevestigd.</p>}
+                            {sources.length > 0 && <div className="ea-source-row"><span>Bronnen</span>{sources.filter((source, index) => sources.findIndex((other) => (other.url || other.title) === (source.url || source.title)) === index).map((source, index) => source.url
+                                ? <a className="ea-source" key={`${source.title}-${index}`} href={source.url} target="_blank" rel="noreferrer" title={source.detail || source.title}>{source.title} ↗</a>
+                                : <span className="ea-source" key={`${source.title}-${index}`} title={source.detail || ""}>{source.title}</span>)}</div>}
+                            {sources.some((source) => source.excerpt) && <details className="ea-passages"><summary>Toon de gebruikte passages</summary>{sources.filter((source) => source.excerpt).map((source, index) => <p className="ea-excerpt" key={`excerpt-${index}`}>“{source.excerpt}”<small>{source.title}</small></p>)}</details>}
+                            {Boolean(reply.suggested_sources?.length) && <div className="ea-source-row"><span>Zelf raadplegen</span>{reply.suggested_sources?.map((source, index) => <a className="ea-source ea-source-more" key={`suggested-${index}`} href={source.url} target="_blank" rel="noreferrer" title={source.detail}>{source.title} ↗</a>)}</div>}
+                        </div>}
+                    </div>
+                    {!apiEndpoint.trim() && <div className="ea-foot">Gesimuleerd antwoord om de interface te bekijken.</div>}
+                    <div className="ea-actions">
+                        {reply.petra_speech_token && !sessionId && !petraAudioUrl && !browserSpeaking && (petraBusy ? <p className="ea-foot" role="status">Audio wordt voorbereid…</p> : <button className="ea-voice-play" onClick={() => void playPetra(reply.petra_speech_token!, reply.answer)}>Beluister Karen</button>)}
+                        {browserSpeaking && <button className="ea-voice-play" onClick={() => clearPetra()}>Stop voorlezen</button>}
+                        {reply.feedback_token && apiEndpoint.trim() && !sessionId && (feedback === "sent"
+                            ? <p className="ea-foot" role="status">Bedankt! Karen leert van je feedback.</p>
+                            : !feedbackOpen && <div className="ea-feedback">
+                                <button aria-label="Nuttig antwoord" title="Nuttig" disabled={feedback === "sending"} onClick={() => void sendFeedback("up")}>👍</button>
+                                <button aria-label="Niet nuttig" title="Niet nuttig" disabled={feedback === "sending"} onClick={() => setFeedbackOpen(true)}>👎</button>
+                            </div>)}
+                    </div>
+                    {reply.feedback_token && apiEndpoint.trim() && !sessionId && feedback !== "sent" && feedbackOpen && <div className="ea-feedback ea-feedback-open">
+                        <textarea aria-label="Wat ging er mis?" placeholder="Wat ging er mis? (optioneel, geen persoonlijke gegevens)" value={feedbackComment} maxLength={500} onChange={(event) => setFeedbackComment(event.target.value)} />
+                        <button disabled={feedback === "sending"} onClick={() => void sendFeedback("down", feedbackComment)}>Verstuur feedback</button>
+                    </div>}
+                    {feedback === "failed" && <p className="ea-foot" role="status">Feedback versturen lukte niet. Probeer het later opnieuw.</p>}
+                    {petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}
+                    {petraError && <p className="ea-foot" role="status">{petraError}</p>}</>}
                 </div>
-                {!asked && !turns.length && <div className="ea-chips">
-                    <button className="ea-chip" onClick={() => void ask(sampleQuestion)}>{sampleQuestion}</button>
-                    <button className="ea-chip" onClick={() => void ask("Wat kost stroom vandaag?")}>Wat kost stroom vandaag?</button>
-                </div>}
                 <div className="ea-composer">
-                <button className="ea-mic" type="button" data-listening={listening} onClick={() => listening ? stopVoice() : startVoice()} disabled={busy || uploading || transcribing || Boolean(sessionId)} aria-label={listening ? "Stop luisteren" : "Stel je vraag met je stem"}>
-                    <span aria-hidden="true">{listening ? "■" : "🎙"}</span>{listening ? "Stop luisteren" : "Stel je vraag met je stem"}
-                </button>
+                {uploadName && <p className="ea-pill">📄 {uploadName} · Karen leest mee<button type="button" onClick={() => void clearPdf()} disabled={uploading || busy}>Verwijder</button></p>}
+                {uploadError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{uploadError}</p>}
                 {voiceError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{voiceError}</p>}
                 {voiceDraft && <p className="ea-foot" role="status">Controleer de herkende vraag hieronder. Je kunt die aanpassen voordat Karen zoekt.</p>}
                 <div className="ea-controls">
-                    <input className="ea-input" value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void ask(question)} placeholder="Vraag aan Karen…" aria-label="Vraag aan Karen" disabled={busy || uploading} />
+                    <label className="ea-attach" title="Voeg je factuur toe (PDF of foto)" data-disabled={uploading || busy || listening}>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8" /></svg>
+                        <input type="file" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp" aria-label="Upload je energiefactuur als PDF of foto" disabled={uploading || busy || listening} onChange={(event) => { void uploadPdf(event.target.files?.[0]); event.target.value = "" }} />
+                    </label>
+                    <input className="ea-input" value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void ask(question)} placeholder={uploadName ? "Vraag iets over je factuur…" : "Vraag aan Karen…"} aria-label="Vraag aan Karen" disabled={busy || uploading} />
+                    <button className="ea-mic" type="button" data-listening={listening} onClick={() => listening ? stopVoice() : startVoice()} disabled={busy || uploading || transcribing || Boolean(sessionId)} aria-label={listening ? "Stop luisteren" : "Stel je vraag met je stem"} title={listening ? "Stop luisteren" : "Stel je vraag met je stem"}>
+                        {listening ? <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" /></svg> : <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></svg>}
+                    </button>
                     <button className="ea-button" onClick={() => void ask(question)} disabled={busy || uploading || !question.trim()} aria-label="Verstuur vraag">↗</button>
                 </div>
                 {answerError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{answerError}</p>}
-                </div>
                 <details className="ea-privacy">
-                    <summary>Vragen en antwoorden worden anoniem bewaard om Karen te verbeteren. Publieke vragen gaan naar Gemma en officiële bronnen. <span>Meer over privacy</span></summary>
-                    <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma (of een OpenAI-model als Gemma overbelast is) en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek staat in deze browser, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het. Om Karen te verbeteren bewaart de beheerder publieke vragen en antwoorden zonder naam of account; e-mailadressen, rekening- en EAN-nummers in een vraag worden eerst onleesbaar gemaakt. Vragen over je eigen factuur worden niet bewaard.</p>
+                    <summary>Vragen worden anoniem bewaard om Karen te verbeteren. <span>Meer over privacy</span></summary>
+                    <p className="ea-foot">Je browser herkent je gesproken vraag. Heeft je browser geen eigen spraakherkenning (zoals Chrome op iPhone), dan gaat een korte opname naar Karen’s backend en zet OpenAI die om naar tekst; de opname wordt niet bewaard. Controleer de tekst voor je die verstuurt; Karen verwerkt en beantwoordt de vraag. Voor aanbiedingen deelt Karen je gewest, postcode, energietype, jaarverbruik en eventueel expliciet opgegeven meter- en prosumentgegevens met Browser Use en de officiële vergelijker; deze invoer blijft maximaal 60 minuten in sessiegeheugen. Deel geen factuurgegevens via voice. Voice is uitgeschakeld bij een actieve PDF. Publieke energievragen gebruiken Gemma (of een OpenAI-model als Gemma overbelast is) en zo nodig officiële webbronnen via Browserbase. Na een gesproken vraag leest Karen haar publieke antwoord voor; bij een getypte vraag doet ze dat pas als je op “Beluister Karen” tikt. Alleen daarvoor gaat de antwoordtekst naar de Babbeldoos-stemservice, met de Vlaamse Petra-stem; PDF-antwoorden blijven op Karen’s backend. Is Petra niet beschikbaar, dan leest de stem van je browser het antwoord voor. Je gesprek staat in deze browser, en je vorige vragen en antwoorden gaan mee zodat Karen vervolgvragen begrijpt; met “Nieuw gesprek” wis je het. Om Karen te verbeteren bewaart de beheerder publieke vragen en antwoorden zonder naam of account; e-mailadressen, rekening- en EAN-nummers in een vraag worden eerst onleesbaar gemaakt. Vragen over je eigen factuur worden niet bewaard. Een factuur (PDF of foto, max. 15 MB) leest Karen op haar eigen backend, zonder extern model; de tekst blijft maximaal 60 minuten in sessiegeheugen.</p>
                 </details>
+                </div>
             </section>
-            <aside className="ea-rail">
-                <section className="ea-card"><h2>Jouw factuur</h2><p>Optioneel · PDF of foto naar Karen’s backend; tekst tijdelijk in sessiegeheugen (max. 60 min), zonder extern model. Maximaal 15 MB.</p>
-                    <label className="ea-upload" data-disabled={uploading || busy || listening}>Kies een PDF of foto
-                        <input type="file" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp" aria-label="Upload je energiefactuur als PDF of foto" disabled={uploading || busy || listening} onChange={(event) => { void uploadPdf(event.target.files?.[0]); event.target.value = "" }} />
-                    </label>
-                    {uploadName && <p style={{ marginTop: 8 }}>Sessie actief · {uploadName}<button type="button" onClick={() => void clearPdf()} disabled={uploading || busy} style={{ marginLeft: 8 }}>Verwijder</button></p>}
-                    {uploadError && <p role="alert" style={{ marginTop: 8, color: "#a13333" }}>{uploadError}</p>}
-                    {uploading && <p role="status" style={{ marginTop: 8 }}>{status}</p>}
-                </section>
-                <section className="ea-card" id="ea-sources"><h2>{reply ? "Bronnen bij dit antwoord" : "Bronnen in de demo"}</h2><p>{reply?.live_source_status === "failed" ? "De live controle is niet volledig bevestigd. Gebruikte passages en links om zelf te raadplegen staan apart." : reply ? "Bronnen die Karen voor dit antwoord gebruikte." : "Officiële uitleg en relevante PDF-passage."}</p>
-                    {sources.map((source, index) => <div className="ea-source" key={`${source.title}-${index}`}>
-                        {source.url ? <a href={source.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}><strong>{source.title} ↗</strong><small>{source.detail || "Bron geraadpleegd"}</small></a> : <><strong>{source.title}</strong><small>{source.detail || "Bron geraadpleegd"}</small></>}
-                        {source.excerpt && <p className="ea-excerpt">“{source.excerpt}”</p>}
-                    </div>)}
-                    {!sources.length && <p style={{ marginTop: 14 }}>{reply ? "Geen bronpassage bevestigd voor dit antwoord." : "Na de vraag toont Karen hier de gebruikte bronnen."}</p>}
-                    {Boolean(reply?.suggested_sources?.length) && <div style={{ marginTop: 18 }}><h3 style={{ fontSize: 12 }}>Zelf raadplegen · niet als bewijs gebruikt</h3>{reply?.suggested_sources?.map((source, index) => <div className="ea-source" key={`suggested-${index}`}><a href={source.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}><strong>{source.title} ↗</strong><small>{source.detail}</small></a></div>)}</div>}
-                </section>
-            </aside>
             </div>
         </div>
         </div>
