@@ -25,8 +25,28 @@ def test_how_the_system_works_still_starts_at_the_regulators(question):
 
 def test_prompts_ask_for_a_direct_answer_and_je():
     for instruction in (gemma_answer._SYSTEM_INSTRUCTION, gemma_answer._GENERAL_INSTRUCTION):
-        assert '"Ja" of "Nee"' in instruction and 'nooit met "u"' in instruction
+        assert "rechtstreeks beantwoordt" in instruction and 'nooit met "u"' in instruction
     assert "niet over wat precies gevraagd wordt" in gemma_answer._SYSTEM_INSTRUCTION
+
+
+@pytest.mark.parametrize("question", [
+    "Kan mijn energieleverancier een hoger voorschotbedrag verplichten?",
+    "Worden propaangas en stookolie ook duurder?",
+    "Zijn de hoge prijzen het gevolg van de accijnzen en taksen op energie?",
+    "Can my supplier raise my advance payment?",
+])
+def test_yes_no_questions_ask_for_ja_or_nee(question):
+    assert '"Ja" of "Nee"' in gemma_answer._form_hint(question)
+
+
+@pytest.mark.parametrize("question", [
+    "Waarom wordt de gasprijs aan de elektriciteitsprijs gekoppeld?",
+    "Hoe komt het dat ook het sociaal tarief stijgt?",
+    "Waar komt onze olie vandaan?",
+    "Wat is de makkelijkste manier om prijzen te vergelijken?",
+])
+def test_open_questions_get_no_forced_ja(question):
+    assert gemma_answer._form_hint(question) == ""
 
 
 def test_blocked_pages_are_never_read(monkeypatch):
