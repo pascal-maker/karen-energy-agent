@@ -64,6 +64,7 @@ from luminus_harness.contract_check import answer_contract_check
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.conversation_log import build_log_record, load_recent, store_log_record
 from luminus_harness.admin_page import conversations_csv, render_admin_page
+from luminus_harness import expert_judge
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
 from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, is_gas_price_question, load_market_data, today_summary
@@ -1106,6 +1107,41 @@ async def admin_conversations_csv(request: Request, days: int = 7) -> Response:
         media_type="text/csv; charset=utf-8",
         headers={"Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="karen-gesprekken.csv"'},
     )
+
+
+_benchmark: dict[str, Any] = {"run": None, "task": None}
+
+
+async def _benchmark_answer(question: str) -> dict[str, Any]:
+    # Straight to the answer route: benchmark questions are not visitor questions, so they are not logged.
+    return await _answer(AnswerRequest(question=question))
+
+
+async def _run_benchmark() -> None:
+    def progress(run: dict[str, Any]) -> None:
+        _benchmark["run"] = run
+
+    run = await expert_judge.run_benchmark(_benchmark_answer, expert_judge.load_cases(), progress)
+    try:
+        await asyncio.to_thread(expert_judge.save_run, run)
+    except Exception:
+        pass
+
+
+@api_app.get("/admin/benchmark", include_in_schema=False)
+async def admin_benchmark(request: Request) -> Response:
+    _check_admin(request)
+    page = expert_judge.render_benchmark_page(_benchmark["run"], expert_judge.judge_available(), len(expert_judge.load_cases()))
+    return Response(page, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
+
+
+@api_app.post("/admin/benchmark", include_in_schema=False)
+async def admin_benchmark_start(request: Request) -> Response:
+    _check_admin(request)
+    task = _benchmark["task"]
+    if expert_judge.judge_available() and (task is None or task.done()):
+        _benchmark["task"] = asyncio.create_task(_run_benchmark())
+    return Response(status_code=303, headers={"Location": "/admin/benchmark"})
 
 
 KAREN_COMPONENT_JS = REPO_ROOT / "build" / "karen-component.js"
