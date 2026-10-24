@@ -112,7 +112,7 @@ th{{font-size:12px;color:#6b776f;font-weight:600;background:#fafbf9;position:sti
 </style></head><body>
 <h1>Wat mensen Karen vragen</h1>
 <div class="bar"><span class="muted">Laatste {days} dagen · tijden in Brussel · oranje = geen antwoord</span>
-<a href="?days=1">vandaag</a><a href="?days=7">7 dagen</a><a href="?days=30">30 dagen</a><a href="/admin/conversations.csv?days={days}">CSV</a></div>
+<a href="?days=1">vandaag</a><a href="?days=7">7 dagen</a><a href="?days=30">30 dagen</a><a href="/admin/conversations.csv?days={days}">CSV</a><a href="/admin/benchmark">Karen tegen de experts</a></div>
 <div class="tiles">{tile_html}</div>{empty}
 <div class="wrap"><table><thead><tr><th>Tijd</th><th>Vraag</th><th>Jev</th><th>Pad</th><th>Antwoord</th><th>Duur</th><th>Oordeel</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div></body></html>"""
