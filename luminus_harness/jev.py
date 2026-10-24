@@ -44,7 +44,9 @@ ROUTES = {
     ),
     "energy_other": (
         "Any other energy question, including why prices change, network costs, the capacity tariff (capaciteitstarief), "
-        "social tariffs, invoices, advance payments, heating, boilers, premiums, rules, contracts or cancelling."
+        "social tariffs, invoices, advance payments, heating, boilers, premiums, rules, contracts or cancelling; "
+        "also energy news: how long high prices will last, energy taxes, heating oil or propane, and where Belgium's "
+        "gas, oil or electricity comes from."
     ),
     "small_talk": "Only a greeting, thanks, goodbye, how-are-you, or a question about who Karen is.",
     "off_topic": "Not about energy at all.",
