@@ -66,7 +66,7 @@ def test_a_failing_case_does_not_stop_the_run(monkeypatch):
 def test_benchmark_set_holds_the_vrt_questions_with_expert_answers():
     cases = expert_judge.load_cases()
     assert len(cases) >= 13
-    assert all(case["question"].endswith("?") and len(case["expert_answer"]) > 40 and case["url"].startswith("https://") for case in cases)
+    assert all(case["question"].endswith("?") and len(case["expert_answer"]) > 40 and case["source_url"].startswith("https://") for case in cases)
     assert len({case["id"] for case in cases}) == len(cases)
 
 
@@ -100,7 +100,7 @@ def test_owner_starts_a_run_and_sees_the_result(client, monkeypatch):
     test_client, app = client
     monkeypatch.setenv("KAREN_ADMIN_KEY", "geheim")
     monkeypatch.setenv("TYPESAFE_API_KEY", "test")
-    monkeypatch.setattr(expert_judge, "load_cases", lambda: [{"id": "1", "question": "Mag dat?", "expert_answer": "EXPERT nee", "set": "VRT", "url": "https://vrt.be"}])
+    monkeypatch.setattr(expert_judge, "load_cases", lambda: [{"id": "1", "expert_id": "x", "question": "Mag dat?", "expert_answer": "EXPERT nee", "source_url": "https://vrt.be/a"}])
     monkeypatch.setattr(expert_judge, "_post", fake_jev(
         {"a_better": 0.6, "equal": 0.3, "b_better": 0.1}, {"a_better": 0.1, "equal": 0.3, "b_better": 0.6}))
     asked = []
@@ -121,3 +121,21 @@ def test_owner_starts_a_run_and_sees_the_result(client, monkeypatch):
     page = test_client.get("/admin/benchmark", headers=auth("geheim")).text
     assert asked == ["Mag dat?"]
     assert "Karen beter" in page and "KAREN: nee, je mag weigeren." in page
+
+
+def test_cases_need_their_fields_and_each_carry_their_own_source(tmp_path, monkeypatch):
+    path = tmp_path / "cases.json"
+    path.write_text('{"cases": [{"id": "a", "expert_id": "x", "question": "Mag dat?", "expert_answer": "Nee."}]}', encoding="utf-8")
+    monkeypatch.setattr(expert_judge, "CASES_PATH", path)
+    with pytest.raises(ValueError, match="a mist source_url"):
+        expert_judge.load_cases()
+
+
+def test_benchmark_blocks_each_cases_source_and_the_registry_holdout(tmp_path, monkeypatch):
+    holdout = tmp_path / "holdout.json"
+    holdout.write_text('{"benchmark_only_urls": ["https://www.uhasselt.be/paper.pdf"]}', encoding="utf-8")
+    monkeypatch.setattr(expert_judge, "HOLDOUT_PATH", holdout)
+    cases = [{"source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen/"}]
+    assert expert_judge.blocked_sources(cases) == ("https://www.uhasselt.be/paper.pdf", "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen")
+    monkeypatch.setattr(expert_judge, "HOLDOUT_PATH", tmp_path / "missing.json")
+    assert len(expert_judge.blocked_sources(cases)) == 1

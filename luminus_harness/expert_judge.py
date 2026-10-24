@@ -25,6 +25,9 @@ from zoneinfo import ZoneInfo
 from .jev import DEFAULT_BASE_URL, DEFAULT_MODEL
 
 CASES_PATH = Path(__file__).with_name("expert_benchmark.json")
+# Sources kept for the benchmark only (from the expert registry's holdout.json): Karen may not read them during a run.
+HOLDOUT_PATH = Path(__file__).with_name("benchmark_holdout.json")
+REQUIRED_FIELDS = ("id", "expert_id", "question", "expert_answer", "source_url")
 JUDGE_TIMEOUT_SECONDS = 30.0
 _BRUSSELS = ZoneInfo("Europe/Brussels")
 
@@ -50,12 +53,23 @@ YES_NO = {"yes": "Yes.", "no": "No."}
 
 
 def load_cases() -> list[dict[str, Any]]:
-    data = json.loads(CASES_PATH.read_text(encoding="utf-8"))
-    return [
-        {**case, "set": group["name"], "url": group.get("url", ""), "expert": group.get("expert", "")}
-        for group in data["sets"]
-        for case in group["cases"]
-    ]
+    """One entry per question, each with its own source: id, expert_id, question, expert_answer,
+    quote (shown on the page only), source_url and published_at."""
+    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))["cases"]
+    for case in cases:
+        missing = [field for field in REQUIRED_FIELDS if not str(case.get(field, "")).strip()]
+        if missing:
+            raise ValueError(f"Benchmarkvraag {case.get('id', '?')} mist {', '.join(missing)}.")
+    return cases
+
+
+def blocked_sources(cases: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Every case's own source plus the registry's benchmark-only sources."""
+    urls = {case["source_url"] for case in cases}
+    if HOLDOUT_PATH.is_file():
+        urls |= set(json.loads(HOLDOUT_PATH.read_text(encoding="utf-8")).get("benchmark_only_urls") or [])
+    # Without the trailing slash, so ".../artikel" also blocks ".../artikel/".
+    return tuple(sorted({url.rstrip("/") for url in urls if url}))
 
 
 def judge_available() -> bool:
@@ -158,7 +172,7 @@ async def run_benchmark(answer: AnswerFn, cases: list[dict[str, Any]], progress:
     progress(run)
     for case in cases:
         started = time.monotonic()
-        row: dict[str, Any] = {key: case.get(key, "") for key in ("id", "set", "url", "question", "expert_answer")}
+        row: dict[str, Any] = {key: case.get(key, "") for key in ("id", "expert_id", "source_url", "question", "expert_answer", "quote")}
         try:
             reply = await answer(case["question"])
             row.update(
@@ -249,7 +263,10 @@ def render_benchmark_page(run: dict[str, Any] | None, available: bool, case_coun
                 f"<tr class='{flag}'><td>{e(row['question'])}</td><td class='nowrap'><b>{label}</b><div class='muted'>{detail}</div></td>"
                 f"<td class='nowrap'>{_pct(verdict.get('direct'))}</td><td class='nowrap'>{_pct(verdict.get('contradicts'))}</td>"
                 f"<td><details><summary>Karen ({e(row.get('processing', ''))})</summary><p>{e(row.get('karen_answer', ''))}</p></details>"
-                f"<details><summary>Expert</summary><p>{e(row.get('expert_answer', ''))}</p></details></td></tr>"
+                f"<details><summary>Expert</summary><p>{e(row.get('expert_answer', ''))}</p>"
+                + (f"<blockquote>{e(row['quote'])}</blockquote>" if row.get("quote") else "")
+                + (f"<a href='{e(row['source_url'])}' target='_blank' rel='noopener'>bron</a>" if row.get("source_url") else "")
+                + "</details></td></tr>"
             )
         started = datetime.fromisoformat(run["started_at"]).astimezone(_BRUSSELS).strftime("%d/%m %H:%M")
         body = (

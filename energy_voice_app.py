@@ -1116,7 +1116,7 @@ _benchmark: dict[str, Any] = {"run": None, "task": None}
 async def _benchmark_answer(question: str) -> dict[str, Any]:
     # Straight to the answer route: benchmark questions are not visitor questions, so they are not logged.
     # The experts' own articles are off limits, or Karen would just read the answer key.
-    reset = blocked_urls.set(tuple({case["url"] for case in expert_judge.load_cases() if case.get("url")}))
+    reset = blocked_urls.set(expert_judge.blocked_sources(expert_judge.load_cases()))
     try:
         return await _answer(AnswerRequest(question=question))
     finally:

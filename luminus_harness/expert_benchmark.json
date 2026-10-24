@@ -1,76 +1,121 @@
 {
- "sets": [
+ "cases": [
   {
-   "name": "VRT NWS · Luc Pauwels · 23 okt 2026",
-   "url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
-   "expert": "Luc Pauwels (energiespecialist VRT NWS)",
-   "cases": [
-    {
-     "id": "vrt-2026-10-23-01",
-     "question": "Kies ik bij deze hoge prijzen best vast, variabel of dynamisch contract?",
-     "expert_answer": "Hangt af van de prijsevolutie. Prijzen staan nu zeer hoog; stijgen ze, dan beschermt vast. Dalen ze, dan is variabel voordeliger. Voor stroom bestaat ook dynamisch (marktprijs per kwartier), 'heel interessant, zelfs in een crisis'."
-    },
-    {
-     "id": "vrt-2026-10-23-02",
-     "question": "Wat is de makkelijkste manier om prijzen te vergelijken?",
-     "expert_answer": "De overheidsvergelijkers: CREG-scan en V-test. Staat je contract in het rood, zoek een goedkoper alternatief. Verschil goedkoopste-duurste gas+stroom: ongeveer 1.000 euro per jaar. Sommige vaste stroomcontracten zijn sinds maart niet duurder geworden."
-    },
-    {
-     "id": "vrt-2026-10-23-03",
-     "question": "Welke investeringen kan ik doen om mijn energiefactuur naar beneden te krijgen?",
-     "expert_answer": "Kort: minder verbruiken (verwarming een graad lager). Lang: van gas naar warmtepomp, maar al snel 11.000 euro en stroom is zwaarder belast dan gas; vooral interessant als je je verwarming toch moet vervangen."
-    },
-    {
-     "id": "vrt-2026-10-23-04",
-     "question": "Waarom wordt de gasprijs aan de elektriciteitsprijs gekoppeld?",
-     "expert_answer": "Gas wordt gebruikt om stroom op te wekken. Eerst draaien zon, wind, kern; stijgt de vraag, dan moeten dure gascentrales bij en die bepalen de marktprijs. Ook groene leveranciers mogen die prijs aanrekenen."
-    },
-    {
-     "id": "vrt-2026-10-23-05",
-     "question": "Hoe komt het dat ook het sociaal tarief stijgt?",
-     "expert_answer": "Wordt om de 3 maanden herberekend op basis van de goedkoopste commerciële contracten en laagste nettarieven. Worden die duurder, dan stijgt het sociaal tarief mee: ongeveer 250 euro meer dan vorig jaar voor de komende 3 maanden."
-    },
-    {
-     "id": "vrt-2026-10-23-06",
-     "question": "Kan mijn energieleverancier een hoger voorschotbedrag verplichten?",
-     "expert_answer": "Nee. Een leverancier mag een verhoging voorstellen (Ecofix doet dat voor 40.000 gasklanten), maar je mag die altijd weigeren. Met een digitale meter kun je een maandafrekening vragen."
-    },
-    {
-     "id": "vrt-2026-10-23-07",
-     "question": "Worden propaangas en stookolie ook duurder?",
-     "expert_answer": "Ja. Stookolie wordt duurder. Propaan steeg ook, maar veel minder: ongeveer +10% tegenover ongeveer +200% voor aardgas."
-    },
-    {
-     "id": "vrt-2026-10-23-08",
-     "question": "Zijn de hoge prijzen het gevolg van de accijnzen en taksen op energie?",
-     "expert_answer": "Nee. Het komt door duurdere gas- en stroomprijzen. Stroomfactuur: 52% energie, 30% net, bijna 20% taksen. Gas: 72% / 14% / 14%. Taksen zijn nauwelijks gestegen."
-    },
-    {
-     "id": "vrt-2026-10-23-09",
-     "question": "De prijzen zijn al zo hoog, maar de taksen gaan nog stijgen?",
-     "expert_answer": "Taksen op fossiel (aardgas, stookolie) stijgen, taksen op elektriciteit dalen. Netto: 390 miljoen extra inkomsten tegenover 170 miljoen minder."
-    },
-    {
-     "id": "vrt-2026-10-23-10",
-     "question": "Hoe lang gaat dit nog duren?",
-     "expert_answer": "Leveranciers kopen op voorhand: tot en met maart liggen de prijzen hoger, dus volgende maand stijgen ze zeker opnieuw. Na de winter normaal dalen, maar dat hangt af van Oekraïne en het Midden-Oosten."
-    },
-    {
-     "id": "vrt-2026-10-23-11",
-     "question": "Waar komt ons gas vandaan?",
-     "expert_answer": "Noorwegen (grootste), dan de VS, daarna o.a. Kazachstan en Rusland."
-    },
-    {
-     "id": "vrt-2026-10-23-12",
-     "question": "Waar komt onze olie vandaan?",
-     "expert_answer": "Deels Noordzee (Noorwegen, VK), verder import uit o.a. de VS en instabiele landen zoals Libië. Bijna 40% van onze fossiele brandstoffen komt uit conflictgebieden."
-    },
-    {
-     "id": "vrt-2026-10-23-13",
-     "question": "Welke invloed hebben de stijgende energieprijzen op andere producten?",
-     "expert_answer": "Bijna alles hangt af van energie voor productie en transport; aardgas is grondstof voor kunstmest, dus ook voedsel wordt duurder. Hogere inflatie."
-    }
-   ]
+   "id": "pauwels-2026-10-23-01",
+   "expert_id": "luc-pauwels",
+   "question": "Kies ik bij deze hoge prijzen best vast, variabel of dynamisch contract?",
+   "expert_answer": "Hangt af van de prijsevolutie. Prijzen staan nu zeer hoog; stijgen ze, dan beschermt vast. Dalen ze, dan is variabel voordeliger. Voor stroom bestaat ook dynamisch (marktprijs per kwartier), 'heel interessant, zelfs in een crisis'.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-02",
+   "expert_id": "luc-pauwels",
+   "question": "Wat is de makkelijkste manier om prijzen te vergelijken?",
+   "expert_answer": "De overheidsvergelijkers: CREG-scan en V-test. Staat je contract in het rood, zoek een goedkoper alternatief. Verschil goedkoopste-duurste gas+stroom: ongeveer 1.000 euro per jaar. Sommige vaste stroomcontracten zijn sinds maart niet duurder geworden.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-03",
+   "expert_id": "luc-pauwels",
+   "question": "Welke investeringen kan ik doen om mijn energiefactuur naar beneden te krijgen?",
+   "expert_answer": "Kort: minder verbruiken (verwarming een graad lager). Lang: van gas naar warmtepomp, maar al snel 11.000 euro en stroom is zwaarder belast dan gas; vooral interessant als je je verwarming toch moet vervangen.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-04",
+   "expert_id": "luc-pauwels",
+   "question": "Waarom wordt de gasprijs aan de elektriciteitsprijs gekoppeld?",
+   "expert_answer": "Gas wordt gebruikt om stroom op te wekken. Eerst draaien zon, wind, kern; stijgt de vraag, dan moeten dure gascentrales bij en die bepalen de marktprijs. Ook groene leveranciers mogen die prijs aanrekenen.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-05",
+   "expert_id": "luc-pauwels",
+   "question": "Hoe komt het dat ook het sociaal tarief stijgt?",
+   "expert_answer": "Wordt om de 3 maanden herberekend op basis van de goedkoopste commerciële contracten en laagste nettarieven. Worden die duurder, dan stijgt het sociaal tarief mee: ongeveer 250 euro meer dan vorig jaar voor de komende 3 maanden.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-06",
+   "expert_id": "luc-pauwels",
+   "question": "Kan mijn energieleverancier een hoger voorschotbedrag verplichten?",
+   "expert_answer": "Nee. Een leverancier mag een verhoging voorstellen (Ecofix doet dat voor 40.000 gasklanten), maar je mag die altijd weigeren. Met een digitale meter kun je een maandafrekening vragen.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-07",
+   "expert_id": "luc-pauwels",
+   "question": "Worden propaangas en stookolie ook duurder?",
+   "expert_answer": "Ja. Stookolie wordt duurder. Propaan steeg ook, maar veel minder: ongeveer +10% tegenover ongeveer +200% voor aardgas.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-08",
+   "expert_id": "luc-pauwels",
+   "question": "Zijn de hoge prijzen het gevolg van de accijnzen en taksen op energie?",
+   "expert_answer": "Nee. Het komt door duurdere gas- en stroomprijzen. Stroomfactuur: 52% energie, 30% net, bijna 20% taksen. Gas: 72% / 14% / 14%. Taksen zijn nauwelijks gestegen.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-09",
+   "expert_id": "luc-pauwels",
+   "question": "De prijzen zijn al zo hoog, maar de taksen gaan nog stijgen?",
+   "expert_answer": "Taksen op fossiel (aardgas, stookolie) stijgen, taksen op elektriciteit dalen. Netto: 390 miljoen extra inkomsten tegenover 170 miljoen minder.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-10",
+   "expert_id": "luc-pauwels",
+   "question": "Hoe lang gaat dit nog duren?",
+   "expert_answer": "Leveranciers kopen op voorhand: tot en met maart liggen de prijzen hoger, dus volgende maand stijgen ze zeker opnieuw. Na de winter normaal dalen, maar dat hangt af van Oekraïne en het Midden-Oosten.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-11",
+   "expert_id": "luc-pauwels",
+   "question": "Waar komt ons gas vandaan?",
+   "expert_answer": "Noorwegen (grootste), dan de VS, daarna o.a. Kazachstan en Rusland.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-12",
+   "expert_id": "luc-pauwels",
+   "question": "Waar komt onze olie vandaan?",
+   "expert_answer": "Deels Noordzee (Noorwegen, VK), verder import uit o.a. de VS en instabiele landen zoals Libië. Bijna 40% van onze fossiele brandstoffen komt uit conflictgebieden.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
+  },
+  {
+   "id": "pauwels-2026-10-23-13",
+   "expert_id": "luc-pauwels",
+   "question": "Welke invloed hebben de stijgende energieprijzen op andere producten?",
+   "expert_answer": "Bijna alles hangt af van energie voor productie en transport; aardgas is grondstof voor kunstmest, dus ook voedsel wordt duurder. Hogere inflatie.",
+   "quote": "",
+   "source_url": "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen-en-antwoorden-over-gasprijs-elektriciteitsprijs-energiepr/",
+   "published_at": "2026-10-23"
   }
  ]
 }
