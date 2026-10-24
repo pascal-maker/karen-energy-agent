@@ -50,6 +50,7 @@ from luminus_harness.gemma_answer import (
     GemmaAPIError,
     answer_energy_question,
     answer_small_talk,
+    blocked_urls,
     answer_stream,
     standalone_question,
     mentions_energy,
@@ -1114,7 +1115,12 @@ _benchmark: dict[str, Any] = {"run": None, "task": None}
 
 async def _benchmark_answer(question: str) -> dict[str, Any]:
     # Straight to the answer route: benchmark questions are not visitor questions, so they are not logged.
-    return await _answer(AnswerRequest(question=question))
+    # The experts' own articles are off limits, or Karen would just read the answer key.
+    reset = blocked_urls.set(tuple({case["url"] for case in expert_judge.load_cases() if case.get("url")}))
+    try:
+        return await _answer(AnswerRequest(question=question))
+    finally:
+        blocked_urls.reset(reset)
 
 
 async def _run_benchmark() -> None:
