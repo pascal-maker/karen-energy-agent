@@ -190,3 +190,9 @@ def test_karen_blocks_every_benchmark_only_source() -> None:
     registry = json.loads((ROOT / "data" / "benchmark" / "holdout.json").read_text(encoding="utf-8"))
     karen = json.loads((ROOT.parent / "luminus_harness" / "benchmark_holdout.json").read_text(encoding="utf-8"))
     assert set(registry["benchmark_only_urls"]) <= set(karen["benchmark_only_urls"])
+
+
+def test_karen_benchmark_has_every_expert_case() -> None:
+    cases = json.loads((ROOT / "data" / "benchmark" / "expert_cases.json").read_text(encoding="utf-8"))["cases"]
+    karen = json.loads((ROOT.parent / "luminus_harness" / "expert_benchmark.json").read_text(encoding="utf-8"))["cases"]
+    assert {case["id"] for case in cases} <= {case["id"] for case in karen}
