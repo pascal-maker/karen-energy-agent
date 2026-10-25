@@ -124,17 +124,26 @@ async def _ask(state: str, questions: dict[str, tuple[str, dict[str, str]]]) -> 
 MAX_ANSWER_CHARS = 3000
 
 
+def _dated(question: str, published_at: str) -> str:
+    """Older expert sources: newer, correct facts in Karen's answer must not count against her."""
+    if not published_at:
+        return question
+    return (f"{question}\n(One of the answers dates from {published_at}. Facts that changed since then "
+            "are not errors in an answer that gives the newer situation.)")
+
+
 def _pair(question: str, first: str, second: str) -> str:
     return f"Question: {question}\n\nAnswer A:\n{first[:MAX_ANSWER_CHARS]}\n\nAnswer B:\n{second[:MAX_ANSWER_CHARS]}"
 
 
-async def judge(question: str, expert_answer: str, karen_answer: str) -> dict[str, Any]:
+async def judge(question: str, expert_answer: str, karen_answer: str, published_at: str = "") -> dict[str, Any]:
     """Jev's verdict on Karen against the expert, averaged over both orders."""
+    question = _dated(question, published_at)
     karen_first, expert_first, checks = await asyncio.gather(
         _ask(_pair(question, karen_answer, expert_answer), {"compare": (COMPARE_INSTRUCTIONS, COMPARE)}),
         _ask(_pair(question, expert_answer, karen_answer), {"compare": (COMPARE_INSTRUCTIONS, COMPARE)}),
         _ask(
-            f"Question: {question}\n\nExpert's answer:\n{expert_answer[:MAX_ANSWER_CHARS]}\n\nKaren's answer:\n{karen_answer[:MAX_ANSWER_CHARS]}",
+            f"Question: {question}\n\nExpert's answer{f' (from {published_at})' if published_at else ''}:\n{expert_answer[:MAX_ANSWER_CHARS]}\n\nKaren's answer:\n{karen_answer[:MAX_ANSWER_CHARS]}",
             {"direct": (DIRECT_INSTRUCTIONS, YES_NO), "contradicts": (CONTRADICT_INSTRUCTIONS, YES_NO)},
         ),
     )
@@ -181,7 +190,9 @@ async def run_benchmark(answer: AnswerFn, cases: list[dict[str, Any]], progress:
                 sources=[source.get("url", "") for source in reply.get("sources") or [] if isinstance(source, dict)],
                 seconds=round(time.monotonic() - started, 1),
             )
-            row["judge"] = await judge(case["question"], case["expert_answer"], row["karen_answer"])
+            row["judge"] = await judge(
+                case["question"], case["expert_answer"], row["karen_answer"], str(case.get("published_at") or "")
+            )
         except Exception as error:  # one failing case should not stop the run
             row["error"] = str(error)[:300] or type(error).__name__
         run["results"].append(row)

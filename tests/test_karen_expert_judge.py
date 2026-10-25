@@ -139,3 +139,11 @@ def test_benchmark_blocks_each_cases_source_and_the_registry_holdout(tmp_path, m
     assert expert_judge.blocked_sources(cases) == ("https://www.uhasselt.be/paper.pdf", "https://www.vrt.be/vrtnws/nl/2026/10/23/vragen")
     monkeypatch.setattr(expert_judge, "HOLDOUT_PATH", tmp_path / "missing.json")
     assert len(expert_judge.blocked_sources(cases)) == 1
+
+
+def test_judge_tells_jev_how_old_the_expert_answer_is(monkeypatch):
+    states = []
+    fake = fake_jev({"a_better": 0.5, "equal": 0.3, "b_better": 0.2}, {"a_better": 0.2, "equal": 0.3, "b_better": 0.5})
+    monkeypatch.setattr(expert_judge, "_post", lambda body: states.append(body["state"]) or fake(body))
+    asyncio.run(expert_judge.judge("Vraag?", "EXPERT", "KAREN", "2020-11-06"))
+    assert len(states) == 3 and all("2020-11-06" in state for state in states)
