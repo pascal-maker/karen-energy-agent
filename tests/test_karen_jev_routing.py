@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 from unittest.mock import AsyncMock
@@ -184,3 +185,27 @@ async def test_jev_route_and_probabilities_are_reported_as_a_step(monkeypatch, e
     assert steps[0]["kind"] == "route" and steps[0]["choice"] == "energy_other" and steps[0]["used"] is True
     assert steps[0]["probabilities"]["energy_other"] == 0.92 and steps[0]["probabilities"]["price"] == 0.01
     assert steps[1]["used"] is False, "A guess below the confidence bar is shown but not followed"
+
+
+@pytest.mark.asyncio
+async def test_jev_picks_the_search_topic_in_the_same_call(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    monkeypatch.setenv("KAREN_JEV_ROUTING", "1")
+    bodies = []
+
+    def post(body):
+        bodies.append(body)
+        return {"answers": {
+            "answer": {"type": "choice", "choice": "energy_other", "confidence": 0.9},
+            "topic": {"type": "choice", "choice": "fuel", "confidence": 0.8},
+        }}
+
+    monkeypatch.setattr(jev, "_post_system_one", post)
+
+    async def ask():
+        route = await jev.route_question("Wat is de prijs van olie vandaag?")
+        return route, jev.search_topic.get()
+
+    assert await asyncio.create_task(ask()) == ("energy_other", "fuel")
+    assert len(bodies) == 1 and set(bodies[0]["questions"]) == {"answer", "topic"}
+    assert jev.search_topic.get() is None, "the topic belongs to one question, not to the next"

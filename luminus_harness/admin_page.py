@@ -19,6 +19,8 @@ _PATHS = {
     "offer-comparison": "Vergelijken",
     "market-data": "Marktprijzen",
     "contract-advice": "Contractadvies",
+    "contract-check": "Contractcheck",
+    "fuel-prices": "Brandstofprijzen",
 }
 _ROUTES = {
     "price": "Prijs",
@@ -41,6 +43,11 @@ def _no_source(record: dict[str, Any]) -> bool:
     return record.get("answer", "").startswith(("Dat weet ik niet zeker", "I'm not sure", "Je ne sais pas"))
 
 
+def missed(record: dict[str, Any]) -> bool:
+    """Karen found no source: she said she isn't sure, or gave a general answer without one."""
+    return _no_source(record) or record.get("processing") == "general-knowledge"
+
+
 def _path(record: dict[str, Any]) -> str:
     if _no_source(record):
         return "Geen antwoord"
@@ -58,20 +65,25 @@ def _ratings(feedback: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return by_log
 
 
-def render_admin_page(conversations: list[dict[str, Any]], feedback: list[dict[str, Any]], days: int) -> str:
+def render_admin_page(
+    conversations: list[dict[str, Any]], feedback: list[dict[str, Any]], days: int, only_missed: bool = False,
+) -> str:
     ratings = _ratings(feedback)
     paths = Counter(_path(record) for record in conversations)
     no_source = sum(1 for record in conversations if _no_source(record))
+    missed_count = sum(1 for record in conversations if missed(record))
+    shown = [record for record in conversations if missed(record)] if only_missed else conversations
     up = sum(1 for item in feedback if item.get("rating") == "up")
     down = sum(1 for item in feedback if item.get("rating") == "down")
     e = html.escape
     tiles = [
         ("Vragen", str(len(conversations))),
         ("Geen antwoord", str(no_source)),
+        ("Gemist (geen bron)", str(missed_count)),
         ("👍 / 👎", f"{up} / {down}"),
     ] + [(name, str(count)) for name, count in paths.most_common(4)]
     rows = []
-    for record in conversations:
+    for record in shown:
         rated = ratings.get(record.get("id", ""))
         rating = {"up": "👍", "down": "👎"}.get(rated.get("rating", "") if rated else "", "")
         comment = f"<div class='muted'>{e(rated['comment'])}</div>" if rated and rated.get("comment") else ""
@@ -84,7 +96,7 @@ def render_admin_page(conversations: list[dict[str, Any]], feedback: list[dict[s
             for source in record.get("sources", [])
         )
         errors = "".join(f"<div class='warn'>{e(message)}</div>" for message in record.get("search_errors", []))
-        flag = " class='miss'" if _no_source(record) else ""
+        flag = " class='miss'" if missed(record) else ""
         rows.append(
             f"<tr{flag}><td class='nowrap'>{e(_local_time(record.get('created_at', '')))}</td>"
             f"<td>{e(record.get('question', ''))}</td>"
@@ -111,8 +123,8 @@ th{{font-size:12px;color:#6b776f;font-weight:600;background:#fafbf9;position:sti
 .sources a{{display:inline-block;margin:2px 6px 0 0;font-size:12px;color:#234f38}}
 </style></head><body>
 <h1>Wat mensen Karen vragen</h1>
-<div class="bar"><span class="muted">Laatste {days} dagen · tijden in Brussel · oranje = geen antwoord</span>
-<a href="?days=1">vandaag</a><a href="?days=7">7 dagen</a><a href="?days=30">30 dagen</a><a href="/admin/conversations.csv?days={days}">CSV</a><a href="/admin/benchmark">Karen tegen de experts</a></div>
+<div class="bar"><span class="muted">Laatste {days} dagen · tijden in Brussel · oranje = gemist: geen bron gevonden</span>
+<a href="?days=1">vandaag</a><a href="?days=7">7 dagen</a><a href="?days=30">30 dagen</a><a href="?days={days}&amp;missed={0 if only_missed else 1}">{'alle vragen' if only_missed else 'alleen gemiste vragen'}</a><a href="/admin/conversations.csv?days={days}">CSV</a><a href="/admin/benchmark">Karen tegen de experts</a></div>
 <div class="tiles">{tile_html}</div>{empty}
 <div class="wrap"><table><thead><tr><th>Tijd</th><th>Vraag</th><th>Jev</th><th>Pad</th><th>Antwoord</th><th>Duur</th><th>Oordeel</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div></body></html>"""

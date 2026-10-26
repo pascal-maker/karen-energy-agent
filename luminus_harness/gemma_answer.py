@@ -12,6 +12,7 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .jev import search_topic
 from .browserbase_sources import ENERGY_SOURCE_SCOPES, ENERGY_SOURCES, SUPPLIER_SOURCES, fetch_energy_page, named_supplier, search_energy_pages
 from .knowledge import KnowledgeChunk, STOP_WORDS, TOKEN_RE, retrieve
 from .market_prices import question_language
@@ -262,15 +263,36 @@ async def _search_scope(query: str, scope: str, max_pages: int = 2) -> list[dict
     return pages
 
 
+# Which sites answer which kind of question. Jev picks the topic (jev.TOPICS); without Jev, or when
+# it is unsure, the word lists below pick news or grid operators and everything else is "official".
+_TOPIC_SCOPES = {
+    "news": ("news",),
+    "grid": ("grid_operators",),
+    "fuel": ("fuel", "news"),
+    "consumer": ("consumer",),
+    "official": (),
+}
+
+
+def _topic_scopes(question: str, scope: str) -> list[str]:
+    topic = search_topic.get()
+    if topic in _TOPIC_SCOPES:
+        return list(_TOPIC_SCOPES[topic])
+    scopes = []
+    # News explains why prices move, grid operators know meters and connections.
+    if _NEWS_TOPIC.search(question):
+        scopes.append("news")
+    if _GRID_TOPIC.search(question) and scope in ("official_energy", "flanders_public"):
+        scopes.append("grid_operators")
+    return scopes
+
+
 def _search_attempts(question: str, scope: str) -> list[tuple[str, str]]:
     """The (query, scope) searches to try in order; a whole sentence over many sites often finds nothing."""
     keywords = _search_keywords(question)
     attempts: list[tuple[str, str]] = []
-    # Topic sites first: news explains why prices move, grid operators know meters and connections.
-    if _NEWS_TOPIC.search(question) and keywords:
-        attempts.append((keywords, "news"))
-    if _GRID_TOPIC.search(question) and keywords and scope in ("official_energy", "flanders_public"):
-        attempts.append((keywords, "grid_operators"))
+    if keywords:
+        attempts.extend((keywords, topic_scope) for topic_scope in _topic_scopes(question, scope))
     attempts.append((question[:350], scope))
     if keywords and keywords.casefold() != question.casefold():
         attempts.append((keywords, scope))
@@ -278,6 +300,9 @@ def _search_attempts(question: str, scope: str) -> list[tuple[str, str]]:
         # Most of Karen's visitors are in Flanders; the answer names the region its source covers.
         attempts.append((keywords, "flanders_public"))
         attempts.append((keywords, "consumer"))
+        # Last try before "not sure": every public site at once, whatever the topic. Not when the
+        # question names a region, since that would bring in other regions' rules.
+        attempts.append((keywords, "all_public"))
     return attempts
 
 

@@ -69,6 +69,8 @@ ENERGY_SOURCE_SCOPES = {
     # Belgian news, only for why-questions about prices and for news requests.
     "news": ["vrt.be", "standaard.be", "tijd.be", "nieuwsblad.be"],
     "consumer": ["test-aankoop.be", "mijnenergie.be"],
+    # Official maximum prices for heating oil, diesel, petrol and propane.
+    "fuel": ["petrolfed.be", "brafco.be"],
     "official_energy": ["creg.be", "vlaanderen.be", "vlaamsenutsregulator.be",
                         "leefmilieu.brussels", "brugel.brussels", "energie.wallonie.be", "cwape.be"],
     "trusted_energy": [
@@ -78,6 +80,12 @@ ENERGY_SOURCE_SCOPES = {
         "vlaamsenutsregulator.be", "creg.be", "mijnenergie.be", "test-aankoop.be",
     ],
 }
+# The last search when the topic's own sites found nothing: every public, non-supplier site at once.
+ENERGY_SOURCE_SCOPES["all_public"] = sorted({
+    domain
+    for scope in ("official_energy", "grid_operators", "news", "consumer", "fuel")
+    for domain in ENERGY_SOURCE_SCOPES[scope]
+})
 
 # Single place that knows which energy suppliers Karen can recognize by name
 # and which registered ENERGY_SOURCES entry answers which kind of question

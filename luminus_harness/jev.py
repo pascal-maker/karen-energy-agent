@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextvars import ContextVar
 from typing import Any
 from urllib.request import Request, urlopen
 
@@ -51,6 +52,26 @@ ROUTES = {
     "small_talk": "Only a greeting, thanks, goodbye, how-are-you, or a question about who Karen is.",
     "off_topic": "Not about energy at all.",
 }
+# Where the answer is published, asked in the same Jev call as the route. The search uses it to
+# pick its sites (_TOPIC_SCOPES in gemma_answer.py); the word lists there decide when it is unset.
+TOPICS = {
+    "news": (
+        "Current events: why prices rise or fall, how long they stay high, forecasts, energy taxes and excise "
+        "duties, where Belgium's gas or oil comes from."
+    ),
+    "grid": "Meters, digital meter, connections, outages, the capacity tariff (capaciteitstarief) or network costs.",
+    "fuel": "Heating oil (stookolie, mazout), diesel, petrol, propane or LPG.",
+    "consumer": "Saving energy, comparing suppliers, tips and consumer advice.",
+    "official": "Rules, premiums, social tariff, contracts, invoices, cancelling, or anything else about electricity or gas.",
+}
+TOPIC_INSTRUCTIONS = (
+    "The state is one chat message sent to Karen, a Belgian energy assistant. Which kind of website "
+    "would answer it best?"
+)
+TOPIC_MIN_CONFIDENCE = 0.5
+# The topic Jev picked for the question being answered; None when Jev is off or unsure.
+search_topic: ContextVar[str | None] = ContextVar("search_topic", default=None)
+
 ROUTE_INSTRUCTIONS = (
     "The state is one chat message sent to Karen, a Belgian energy assistant. "
     "The message can be in Dutch, English or French. Which kind of message is it?"
@@ -84,18 +105,25 @@ def _post_system_one(body: dict[str, Any]) -> dict[str, Any]:
         return json.load(response)
 
 
-async def ask_choice(state: str, instructions: str, criteria: dict[str, str]) -> dict[str, Any] | None:
-    """Jev's Choice answer ({"choice", "confidence", "probabilities"}), or None on any failure."""
+async def ask_choices(state: str, questions: dict[str, tuple[str, dict[str, str]]]) -> dict[str, dict[str, Any] | None]:
+    """Several Choice questions in one Jev call; each answer, or None for one that failed."""
     body = {
         "model": os.getenv("TYPESAFE_DEFAULT_MODEL", "").strip() or DEFAULT_MODEL,
         "state": state,
-        "questions": {"answer": {"type": "choice", "instructions": instructions, "criteria": criteria}},
+        "questions": {
+            name: {"type": "choice", "instructions": instructions, "criteria": criteria}
+            for name, (instructions, criteria) in questions.items()
+        },
     }
     try:
         result = await asyncio.to_thread(_post_system_one, body)
     except Exception:
-        return None
-    answer = (result.get("answers") or {}).get("answer") if isinstance(result, dict) else None
+        return {name: None for name in questions}
+    answers = (result.get("answers") or {}) if isinstance(result, dict) else {}
+    return {name: _valid_choice(answers.get(name), criteria) for name, (_, criteria) in questions.items()}
+
+
+def _valid_choice(answer: Any, criteria: dict[str, str]) -> dict[str, Any] | None:
     if not isinstance(answer, dict) or answer.get("type") != "choice" or answer.get("choice") not in criteria:
         return None
     if not isinstance(answer.get("confidence"), (int, float)):
@@ -103,17 +131,30 @@ async def ask_choice(state: str, instructions: str, criteria: dict[str, str]) ->
     return answer
 
 
+async def ask_choice(state: str, instructions: str, criteria: dict[str, str]) -> dict[str, Any] | None:
+    """Jev's Choice answer ({"choice", "confidence", "probabilities"}), or None on any failure."""
+    return (await ask_choices(state, {"answer": (instructions, criteria)}))["answer"]
+
+
 async def route_question(question: str) -> str | None:
     """One of ROUTES when Jev is enabled and confident enough, else None."""
     question = question.strip()
+    # A loop over questions (the benchmark) runs in one context: never keep the previous topic.
+    search_topic.set(None)
     if not jev_routing_enabled() or not 2 <= len(question) <= 500 or _PRIVATE_INPUT.search(question):
         return None
-    answer = await ask_choice(question, ROUTE_INSTRUCTIONS, ROUTES)
+    answers = await ask_choices(
+        question, {"answer": (ROUTE_INSTRUCTIONS, ROUTES), "topic": (TOPIC_INSTRUCTIONS, TOPICS)},
+    )
+    answer, topic = answers["answer"], answers["topic"]
+    if topic is not None and topic["confidence"] >= TOPIC_MIN_CONFIDENCE:
+        search_topic.set(topic["choice"])
     if answer is None:
         return None
     used = answer["confidence"] >= _min_confidence()
     report_step("route", choice=answer["choice"], confidence=round(float(answer["confidence"]), 3),
-                probabilities=_route_probabilities(answer.get("probabilities")), used=used)
+                probabilities=_route_probabilities(answer.get("probabilities")), used=used,
+                topic=search_topic.get())
     return answer["choice"] if used else None
 
 

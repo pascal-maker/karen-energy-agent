@@ -110,3 +110,17 @@ def test_queued_records_are_flushed_when_the_server_stops(monkeypatch, tmp_path)
     monkeypatch.setattr(conversation_log.atexit, "register", registered.append)
     conversation_log.store_log_record({"id": "a", "created_at": "2026-10-22T19:00:00+00:00"})
     assert registered == [conversation_log.flush]
+
+
+def test_admin_page_lists_only_the_missed_questions():
+    from luminus_harness.admin_page import render_admin_page
+
+    conversations = [
+        {"id": "1", "question": "Wat kost olie?", "answer": "De prijs fluctueert.", "processing": "general-knowledge"},
+        {"id": "2", "question": "Wat is de VREG?", "answer": "Dat weet ik niet zeker.", "processing": "hosted-public-knowledge"},
+        {"id": "3", "question": "Wat kost stroom?", "answer": "12 cent.", "processing": "market-data"},
+    ]
+    page = render_admin_page(conversations, [], 7, only_missed=True)
+    assert "Wat kost olie?" in page and "Wat is de VREG?" in page and "Wat kost stroom?" not in page
+    assert "<b>2</b><span>Gemist (geen bron)</span>" in page
+    assert "Wat kost stroom?" in render_admin_page(conversations, [], 7)
