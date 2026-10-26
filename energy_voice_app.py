@@ -1097,11 +1097,11 @@ def _check_admin(request: Request) -> None:
 
 
 @api_app.get("/admin", include_in_schema=False)
-async def admin_overview(request: Request, days: int = 7) -> Response:
+async def admin_overview(request: Request, days: int = 7, missed: int = 0) -> Response:
     _check_admin(request)
     days = max(1, min(days, 90))
     conversations, feedback = await asyncio.to_thread(load_recent, days)
-    return Response(render_admin_page(conversations, feedback, days), media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
+    return Response(render_admin_page(conversations, feedback, days, only_missed=bool(missed)), media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
 
 
 @api_app.get("/admin/conversations.csv", include_in_schema=False)

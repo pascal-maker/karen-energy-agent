@@ -185,3 +185,25 @@ async def test_failing_fetch_is_reported_as_a_search_error(monkeypatch):
     monkeypatch.setattr(browserbase_sources, "_fetch", lambda _url: "Browserbase Fetch kon niet uitvoeren: het account heeft geen beschikbare quota.")
     assert await browserbase_sources.search_energy_pages("capaciteitstarief", "official_energy") == []
     assert steps == [{"kind": "search_error", "message": "Browserbase Fetch kon niet uitvoeren: het account heeft geen beschikbare quota."}]
+
+
+@pytest.mark.asyncio
+async def test_jev_topic_picks_the_sites_and_all_public_sites_come_last(monkeypatch):
+    from luminus_harness.jev import search_topic
+
+    calls = []
+
+    async def search(query, scope, max_pages=2):
+        calls.append(scope)
+        return []
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    token = search_topic.set("fuel")
+    try:
+        assert await gemma_answer._search_public_pages("Wat kost een liter stookolie?", "official_energy") == []
+    finally:
+        search_topic.reset(token)
+    assert calls[:2] == ["fuel", "news"]
+    assert calls[-1] == "all_public"
+    assert "petrolfed.be" in gemma_answer.ENERGY_SOURCE_SCOPES["all_public"]
+    assert "luminus.be" not in gemma_answer.ENERGY_SOURCE_SCOPES["all_public"]
