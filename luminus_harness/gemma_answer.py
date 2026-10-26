@@ -179,6 +179,7 @@ _ENERGY_TOPIC = re.compile(
     r"verbruik|creg|brugel|cwape|v.test|brusim|vreg|fluvius|sibelga|ores|(?:budget|digitale\s|slimme\s|gas|elektriciteits|stroom)?meters?|meterstand\w*|aansluiting\w*|"
     r"stroompanne|stroomonderbreking|stroomstoring|\w*batterij\w*|laadpa\w*|laadstation\w*|groene stroom|"
     r"energiedelen|leverancier\w*|energiecontract\w*|sjoemelkorting\w*|welkomstkorting\w*|vaste vergoeding|"
+    r"stookolie\w*|mazout\w*|propaan\w*|accijns\w*|brandstof\w*|"
     # English and French: a non-Dutch energy question must not be answered as off-topic.
     r"bills?|invoices?|advance payments?|boilers?|meter readings?|smart meters?|tariffs?|"
     r"énergie\w*|électricité|gaz|chauffage|chaudières?|factures?|acomptes?|consommation|compteurs?|pompe à chaleur|"
@@ -344,8 +345,13 @@ def _strong_local_match(question: str, selected: list[KnowledgeChunk]) -> bool:
     return bool(terms) and overlap >= (1 if len(terms) == 1 else max(2, len(terms) // 2))
 
 
+def _is_energy(question: str) -> bool:
+    """Jev picked a search topic, or the word list knows an energy word."""
+    return search_topic.get() is not None or bool(_ENERGY_TOPIC.search(question))
+
+
 def _needs_public_search(question: str, selected: list[KnowledgeChunk]) -> bool:
-    return bool(_ENERGY_TOPIC.search(question)) and (
+    return _is_energy(question) and (
         not _strong_local_match(question, selected)
         or bool(_LIVE_REQUEST.search(question)) or bool(_HEATING_TOPIC.search(question))
     )
@@ -933,7 +939,7 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
         sources.extend(_web_sources(web_pages, question))
 
     if not selected and not web_pages:
-        if not _ENERGY_TOPIC.search(question):
+        if not _is_energy(question):
             # Not about energy at all: say what Karen helps with instead of "no source".
             return await _answer_small_talk(original_question, "off_topic")
         return await _general_or_no_source(original_question, question, lang, live_source_status)

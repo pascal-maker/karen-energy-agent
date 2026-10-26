@@ -207,3 +207,15 @@ async def test_jev_topic_picks_the_sites_and_all_public_sites_come_last(monkeypa
     assert calls[-1] == "all_public"
     assert "petrolfed.be" in gemma_answer.ENERGY_SOURCE_SCOPES["all_public"]
     assert "luminus.be" not in gemma_answer.ENERGY_SOURCE_SCOPES["all_public"]
+
+
+def test_a_jev_topic_or_a_fuel_word_counts_as_energy():
+    from luminus_harness.jev import search_topic
+
+    assert gemma_answer.mentions_energy("Hoeveel accijns betaal ik op stookolie?")
+    assert not gemma_answer._is_energy("Hoeveel kost een fiets?")
+    token = search_topic.set("news")
+    try:
+        assert gemma_answer._is_energy("Hoeveel kost een fiets?")
+    finally:
+        search_topic.reset(token)
