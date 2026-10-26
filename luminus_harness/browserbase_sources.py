@@ -239,6 +239,13 @@ def _fetch(url: str) -> str:# used to fetch the content of the url
             failure = "Browserbase Fetch is tijdelijk bezet; probeer deze bron later opnieuw."
         else:
             failure = f"Browserbase Fetch gaf HTTP {error.code}; gebruik de zichtbare bronlink voor controle."# used to handle errors
+        # Browserbase says why it refused (402 also comes back while the usage page shows quota left).
+        try:
+            detail = error.read().decode("utf-8", errors="replace")[:200].strip()
+        except Exception:
+            detail = ""
+        if detail:
+            failure += f" Browserbase: {detail}"
         # The page itself is public and on the allowlist, so read it directly when Browserbase can't.
         content = _fetch_direct(url)
         if not content:

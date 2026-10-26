@@ -219,3 +219,20 @@ def test_a_jev_topic_or_a_fuel_word_counts_as_energy():
         assert gemma_answer._is_energy("Hoeveel kost een fiets?")
     finally:
         search_topic.reset(token)
+
+
+def test_fetch_failure_says_why_browserbase_refused(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+
+    from luminus_harness import browserbase_sources
+
+    def refuse(*_args, **_kwargs):
+        raise HTTPError("https://api.browserbase.com/v1/fetch", 402, "Payment Required", {}, io.BytesIO(b'{"message":"Fetch is not included in your plan"}'))
+
+    monkeypatch.setenv("BROWSERBASE_API_KEY", "test")
+    monkeypatch.setattr(browserbase_sources, "urlopen", refuse)
+    browserbase_sources._PAGE_CACHE.clear()
+    message = browserbase_sources._fetch("https://www.vlaanderen.be/zonnepanelen/thuisbatterij")
+    assert message.startswith("Browserbase Fetch kon niet uitvoeren")
+    assert "Fetch is not included in your plan" in message
