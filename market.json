@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "generated_at": "2026-10-26T18:41:47+00:00",
+ "generated_at": "2026-10-26T21:04:24+00:00",
  "market": "BE",
  "spot": {
   "unit": "EUR/MWh",
@@ -801,7 +801,7 @@
    ]
   },
   "stale": false,
-  "updated_at": "2026-10-26T18:41:47+00:00"
+  "updated_at": "2026-10-26T21:04:24+00:00"
  },
  "history": {
   "unit": "EUR/MWh",
@@ -905,7 +905,7 @@
    "avg_so_far": 160.86
   },
   "stale": false,
-  "updated_at": "2026-10-26T18:41:47+00:00"
+  "updated_at": "2026-10-26T21:04:24+00:00"
  },
  "forecast": {
   "unit": "EUR/MWh",
@@ -998,7 +998,7 @@
    }
   ],
   "stale": false,
-  "updated_at": "2026-10-26T18:41:47+00:00"
+  "updated_at": "2026-10-26T21:04:24+00:00"
  },
  "contracts": {
   "as_of": "2026-10-19",
