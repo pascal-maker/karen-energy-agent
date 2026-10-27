@@ -236,3 +236,57 @@ def test_fetch_failure_says_why_browserbase_refused(monkeypatch):
     message = browserbase_sources._fetch("https://www.vlaanderen.be/zonnepanelen/thuisbatterij")
     assert message.startswith("Browserbase Fetch kon niet uitvoeren")
     assert "Fetch is not included in your plan" in message
+
+
+@pytest.mark.asyncio
+async def test_the_retry_skips_pages_that_did_not_answer(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    calls = []
+
+    async def search(query, scope, max_pages=2):
+        calls.append(scope)
+        if scope == "consumer":
+            return [{"title": "Test-Aankoop", "url": "https://www.test-aankoop.be/x", "content": "tekst"}]
+        return [{"title": "Vlaanderen", "url": "https://www.vlaanderen.be/voorschot", "content": "tekst"}]
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    prompts = []
+
+    def generate(prompt, *_args):
+        prompts.append(prompt)
+        return "Ik weet het niet zeker." if len(prompts) == 1 else "Je kunt het voorschot zelf aanpassen."
+
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
+    result = await gemma_answer.answer_energy_question("Kan mijn leverancier mijn voorschot verplicht verhogen?", [])
+    assert result["answer"] == "Je kunt het voorschot zelf aanpassen."
+    assert [source["url"] for source in result["sources"]] == ["https://www.test-aankoop.be/x"]
+    assert "consumer" in calls, "The same Vlaanderen page came back, so the search went on to the next sites"
+
+
+@pytest.mark.asyncio
+async def test_a_why_question_about_prices_searches_instead_of_reading_today_s_price(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    calls = []
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search(calls, "news"))
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: "Dure gascentrales bepalen de marktprijs.")
+    result = await gemma_answer.answer_energy_question("Waarom wordt de gasprijs aan de elektriciteitsprijs gekoppeld?", [])
+    assert "creg" not in [scope for _query, scope in calls]
+    assert result["answer"] == "Dure gascentrales bepalen de marktprijs."
+
+
+@pytest.mark.asyncio
+async def test_a_general_answer_gets_no_yes_no_hint(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", recording_search([], "nothing"))
+    prompts = []
+
+    def generate(prompt, instruction=None, *_args):
+        prompts.append((prompt, instruction))
+        return "Ik weet het niet zeker." if instruction is not gemma_answer._GENERAL_INSTRUCTION else "Dat hangt af van je contract."
+
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
+    result = await gemma_answer.answer_energy_question("Kan mijn leverancier een hoger voorschot verplichten?", [])
+    assert result["processing"] == "general-knowledge"
+    general_prompt = next(prompt for prompt, instruction in prompts if instruction is gemma_answer._GENERAL_INSTRUCTION)
+    assert "ja/nee-vraag" not in general_prompt
+    assert 'Zeg nooit "ja" of "nee"' in gemma_answer._GENERAL_INSTRUCTION
