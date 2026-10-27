@@ -106,3 +106,34 @@ def test_fetch_reads_page_directly_when_browserbase_has_no_quota(monkeypatch) ->
     content = browserbase_sources._fetch(url)
     assert content.startswith("Sinds 2012 betaal je geen verbrekingsvergoeding.")
     assert "x()" not in content
+
+
+def _tiny_pdf(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+
+
+def test_the_direct_download_reads_an_official_pdf(monkeypatch) -> None:
+    import io
+
+    text = "Distributietarief elektriciteit 2026 " * 10
+    response = io.BytesIO(_tiny_pdf(text))
+    response.headers = {"Content-Type": "application/pdf"}
+    response.geturl = lambda: "https://www.creg.be/tarieven.pdf"
+    response.__enter__ = lambda self=response: self
+    monkeypatch.setattr(browserbase_sources, "urlopen", lambda *_args, **_kwargs: response)
+    assert "Distributietarief elektriciteit 2026" in browserbase_sources._fetch_direct("https://www.creg.be/tarieven.pdf")

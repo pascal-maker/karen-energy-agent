@@ -189,13 +189,40 @@ class _PageText(HTMLParser):
             self.parts.append(data.strip())
 
 
+_PDF_MAX_BYTES = 10_000_000
+_PDF_MAX_PAGES = 15
+
+
+def _pdf_text(data: bytes) -> str:
+    """Text of the first pages of a PDF; empty when it is too big, scanned or unreadable."""
+    if len(data) > _PDF_MAX_BYTES:
+        return ""
+    try:
+        from io import BytesIO
+
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(data))
+        text = " ".join((page.extract_text() or "") for page in reader.pages[:_PDF_MAX_PAGES])
+    except Exception:
+        return ""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) > 200 else ""
+
+
 def _fetch_direct(url: str) -> str:
     """Read an allowlisted public page without Browserbase; empty on any failure."""
     request = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; KarenEnergyAgent/1.0)", "Accept": "text/html"})
     try:
         with urlopen(request, timeout=15) as response:
             final_url = response.geturl() if hasattr(response, "geturl") else url
-            if not _is_trusted_energy_url(final_url) or "html" not in response.headers.get("Content-Type", "html"):
+            content_type = response.headers.get("Content-Type", "html")
+            if not _is_trusted_energy_url(final_url):
+                return ""
+            if "pdf" in content_type or final_url.lower().endswith(".pdf"):
+                # Official tariff lists and price dashboards are PDFs (CREG, Brugel, Fluvius).
+                return _pdf_text(response.read(_PDF_MAX_BYTES + 1))
+            if "html" not in content_type:
                 return ""
             html = response.read(2_000_000).decode("utf-8", errors="replace")
     except Exception:
