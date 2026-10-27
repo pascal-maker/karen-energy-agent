@@ -324,3 +324,9 @@ def test_a_regional_source_is_labelled_with_its_region():
     ])
     assert "[Officiële webbron (geldt voor Brussel): Tarieven" in prompt
     assert "[Officiële webbron: CREG" in prompt
+
+
+def test_the_region_rule_never_pushes_the_direct_answer_out_of_the_first_sentence():
+    # "Deze informatie geldt voor Vlaanderen." as opening line cost Karen her direct answers.
+    assert "eerste zin voor welk gewest" not in gemma_answer._SYSTEM_INSTRUCTION
+    assert "in dezelfde zin" in gemma_answer._SYSTEM_INSTRUCTION
