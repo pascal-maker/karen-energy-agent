@@ -303,9 +303,10 @@ def _search(query: str, scope: str) -> list[dict[str, str]] | str:# used to sear
             error = error or results
             continue
         found.extend(result for result in results if result["url"] not in {seen["url"] for seen in found})
-        if len(found) >= 3:
+        if len(found) >= 5:
             break
-    return found[:3] if found else error or []
+    # Five, not three: a paywalled news site that can't be read leaves the next results to try.
+    return found[:5] if found else error or []
 
 
 def _search_once(scoped_query: str, api_key: str) -> list[dict[str, str]] | str:
@@ -417,7 +418,11 @@ async def search_energy_pages(
     if not results:# used to check if the results are not empty
         return []
     pages: list[dict[str, str]] = []
-    for result in results[:max(1, min(max_pages, 3))]:# used to iterate over the results
+    wanted = max(1, min(max_pages, 3))
+    # A page that can't be read (paywall, Fetch refused) makes room for the next result, up to two extra.
+    for result in results[:wanted + 2]:# used to iterate over the results
+        if len(pages) >= wanted:
+            break
         content = await asyncio.to_thread(_fetch, result["url"])# used to fetch the content
         if not is_usable_web_content(content):# used to check if the content is not empty
             if isinstance(content, str) and content.startswith(("Browserbase", "De live bronpagina", "De bronpagina")):

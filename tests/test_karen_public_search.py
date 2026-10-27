@@ -290,3 +290,21 @@ async def test_a_general_answer_gets_no_yes_no_hint(monkeypatch):
     general_prompt = next(prompt for prompt, instruction in prompts if instruction is gemma_answer._GENERAL_INSTRUCTION)
     assert "ja/nee-vraag" not in general_prompt
     assert 'Zeg nooit "ja" of "nee"' in gemma_answer._GENERAL_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_page_makes_room_for_the_next_result(monkeypatch):
+    from luminus_harness import browserbase_sources
+
+    results = [{"title": name, "url": f"https://www.vrt.be/{name}"} for name in ("paywall", "a", "b", "c")]
+    monkeypatch.setattr(browserbase_sources, "_search", lambda *_: results)
+    fetched = []
+
+    def fetch(url):
+        fetched.append(url)
+        return "Browserbase Fetch kon niet uitvoeren." if url.endswith("paywall") else "Leesbare tekst over energie. " * 20
+
+    monkeypatch.setattr(browserbase_sources, "_fetch", fetch)
+    pages = await browserbase_sources.search_energy_pages("olie", "news", max_pages=2)
+    assert [page["title"] for page in pages] == ["a", "b"]
+    assert fetched == ["https://www.vrt.be/paywall", "https://www.vrt.be/a", "https://www.vrt.be/b"]
