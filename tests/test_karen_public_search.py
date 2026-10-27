@@ -151,7 +151,7 @@ async def test_pages_that_do_not_answer_lead_to_the_next_sites(monkeypatch):
     answers = iter(["Ik weet het niet zeker.", "Je verlaagt je piek door toestellen te spreiden."])
     monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: next(answers))
     result = await gemma_answer.answer_energy_question("Hoe kan ik mijn capaciteitstarief verlagen?", [])
-    assert calls == ["grid_operators", "official_energy"]
+    assert calls == ["grid_operators", "flanders_public", "official_energy"]
     assert result["answer"] == "Je verlaagt je piek door toestellen te spreiden."
     assert [source["title"] for source in result["sources"]] == ["official_energy"]
 
@@ -308,3 +308,19 @@ async def test_an_unreadable_page_makes_room_for_the_next_result(monkeypatch):
     pages = await browserbase_sources.search_energy_pages("olie", "news", max_pages=2)
     assert [page["title"] for page in pages] == ["a", "b"]
     assert fetched == ["https://www.vrt.be/paywall", "https://www.vrt.be/a", "https://www.vrt.be/b"]
+
+
+def test_a_meter_tariff_without_a_region_searches_flemish_pages_before_other_regions():
+    attempts = gemma_answer._search_attempts("Wat kost het om mijn gasmeter te laten afsluiten als ik overstap?", "official_energy")
+    scopes = [scope for _, scope in attempts]
+    assert scopes.index("flanders_public") < scopes.index("official_energy")
+    assert scopes.count("flanders_public") == 1
+
+
+def test_a_regional_source_is_labelled_with_its_region():
+    prompt = gemma_answer._prompt("Wat kost het afsluiten van een gasmeter?", [], [
+        {"title": "Tarieven", "url": "https://brugel.brussels/x.pdf", "content": "Sluiting € 0"},
+        {"title": "CREG", "url": "https://www.creg.be/y", "content": "tekst"},
+    ])
+    assert "[Officiële webbron (geldt voor Brussel): Tarieven" in prompt
+    assert "[Officiële webbron: CREG" in prompt

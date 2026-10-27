@@ -358,6 +358,17 @@ _COMPARISON_LEAD = {
     "en": "These are today's cheapest contracts. What you pay depends on your usage: check it on {name}.",
     "fr": "Voici les contrats les moins chers du jour. Ce que tu paies dépend de ta consommation : vérifie-le sur {name}.",
 }
+# "How do I compare?" asks for the tool first; the cards follow as an example.
+_HOW_TO_COMPARE = re.compile(r"\b(?:hoe|manier|waar kan ik|how|way|where can i|comment|o[uù] puis)\b", re.IGNORECASE)
+_CREG_SCAN = ("CREG-scan", "https://www.cregscan.be/nl")
+_HOW_TO_LEAD = {
+    "nl": "De makkelijkste manier is een officiële vergelijker: op {name} vul je je verbruik in en zie je alle contracten naast elkaar. "
+          "Met de CREG-scan zie je meteen of je huidige contract duur is. Dit zijn alvast de goedkoopste contracten van vandaag.",
+    "en": "The easiest way is an official comparator: on {name} you enter your usage and see every contract side by side. "
+          "The CREG-scan shows straight away whether your current contract is expensive. These are today's cheapest contracts.",
+    "fr": "Le plus simple est un comparateur officiel : sur {name}, tu indiques ta consommation et tu vois tous les contrats côte à côte. "
+          "Le CREG-scan te montre tout de suite si ton contrat actuel est cher. Voici déjà les contrats les moins chers du jour.",
+}
 
 
 async def answer_offer_comparison(question: str) -> dict[str, Any] | None:
@@ -372,14 +383,19 @@ async def answer_offer_comparison(question: str) -> dict[str, Any] | None:
         return None
     region = next((name for name, pattern in _COMPARATOR_REGION if pattern.search(question)), "flanders")
     name, url = _COMPARATORS[region]
-    lead = _COMPARISON_LEAD.get(lang, _COMPARISON_LEAD["nl"]).format(name=name)
+    how_to = bool(_HOW_TO_COMPARE.search(question))
+    leads = _HOW_TO_LEAD if how_to else _COMPARISON_LEAD
+    lead = leads.get(lang, leads["nl"]).format(name=name)
+    comparators = [{"title": name, "url": url, "detail": "Officiële vergelijker · zelf je verbruik invullen"}]
+    if how_to:
+        comparators.append({"title": _CREG_SCAN[0], "url": _CREG_SCAN[1], "detail": "Officiële scan van je huidige contract"})
     visual = {key: value for key, value in reply["visual"].items() if key != "day"}
     visual["lead"] = lead
     return {
         **reply,
         "answer": f"{lead}\n{reply['answer']}",
         "visual": visual,
-        "suggested_sources": [{"title": name, "url": url, "detail": "Officiële vergelijker · zelf je verbruik invullen"}],
+        "suggested_sources": comparators,
         "processing": "offer-comparison",
     }
 

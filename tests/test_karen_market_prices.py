@@ -132,6 +132,14 @@ def test_comparison_question_gets_supplier_cards_and_the_comparator(api, monkeyp
     api[2].assert_not_awaited()
 
 
+def test_how_to_compare_leads_with_the_official_comparators(api, monkeypatch):
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
+    reply = ask(api, "Wat is de makkelijkste manier om energieprijzen te vergelijken?")
+    assert reply["answer"].startswith("De makkelijkste manier is een officiële vergelijker: op V-test")
+    assert "CREG-scan" in reply["answer"].split("\n")[0]
+    assert [source["title"] for source in reply["suggested_sources"]] == ["V-test (Vlaamse Nutsregulator)", "CREG-scan"]
+
+
 def test_comparison_in_brussels_points_to_brusim(api, monkeypatch):
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
     reply = ask(api, "goedkoopste energieleverancier in Brussel")
