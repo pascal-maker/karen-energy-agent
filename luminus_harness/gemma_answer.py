@@ -317,6 +317,12 @@ def _search_attempts(question: str, scope: str) -> list[tuple[str, str]]:
     return attempts
 
 
+async def _expert_pages(question: str, read: frozenset[str] = frozenset()) -> list[dict[str, str]]:
+    """Pages from the energy experts' research sites, for questions the public sites don't answer."""
+    query = _search_keywords(question) or question[:350]
+    return [page for page in await _search_scope(query, "experts") if page["url"] not in read]
+
+
 async def _search_public_pages(question: str, scope: str, start: int = 0) -> list[dict[str, str]]:
     """Pages from the first search that finds any, beginning at attempt `start`."""
     pages, _ = await _search_from(question, scope, start)
@@ -970,7 +976,10 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
         if not _is_energy(question):
             # Not about energy at all: say what Karen helps with instead of "no source".
             return await _answer_small_talk(original_question, "off_topic")
-        return await _general_or_no_source(original_question, question, lang, live_source_status)
+        web_pages = await _expert_pages(question)
+        if not web_pages:
+            return await _general_or_no_source(original_question, question, lang, live_source_status)
+        sources, next_search, live_source_status = _web_sources(web_pages, question), None, "checked"
 
     answer = await _grounded_answer(original_question, selected, web_pages, lang)
     if _NOT_SURE.search(answer) and next_search is not None:
@@ -983,6 +992,12 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
             web_pages, selected, sources = more_pages, [], _web_sources(more_pages, question)
             live_source_status = "checked"
             answer = await _grounded_answer(original_question, [], web_pages, lang)
+        if _NOT_SURE.search(answer):
+            # The public sites had no answer: the energy experts' research sites are the last try.
+            expert_pages = await _expert_pages(question, read | {page["url"] for page in web_pages})
+            if expert_pages:
+                web_pages, sources = expert_pages, _web_sources(expert_pages, question)
+                answer = await _grounded_answer(original_question, [], web_pages, lang)
     if _NOT_SURE.search(answer):
         return await _general_or_no_source(original_question, question, lang, live_source_status)
     return {"answer": answer, "sources": sources, "live_source_status": live_source_status}
