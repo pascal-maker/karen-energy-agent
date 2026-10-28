@@ -26,6 +26,10 @@ def test_contract_check_questions_are_recognised(question, topic):
     "Wie is de goedkoopste stroomleverancier?",
     "Mijn Luminus contract zelf opzeggen",
     "How do I check my energy contract?",
+    # Disputes about money already billed need the complaint route, not the 4-step check.
+    "We hebben ons contract vroeger opgezegd en nu wil de leverancier de welkomstkorting terug. Mag dat?",
+    "Ik was maar één maand klant, maar op mijn slotfactuur staat de vaste vergoeding voor een heel jaar. Klopt dat?",
+    "Mijn vorige leverancier moest me 2.000 euro te veel betaalde voorschotten terugstorten. Wat kan ik doen?",
 ])
 def test_other_questions_keep_their_route(question):
     assert contract_check_topic(question) is None
