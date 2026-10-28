@@ -192,8 +192,79 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
     return {"answer": "\n".join(lines), "facts": facts, "sources": sources}
 
 
-def answer_uploaded_pdf_question(question: str, chunks: list[KnowledgeChunk]) -> dict[str, Any]:
-    """Answer locally by returning matched PDF passages, without hosted inference."""
+# Follow-up questions about a fact read at upload; checked in this order, so "welke voorschotten
+# heb ik betaald" is about advances and not about the amount still to pay.
+FACT_QUESTIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("advances_paid", re.compile(r"(?i)\bvoorschot")),
+    ("amount_due", re.compile(r"(?i)\b(?:nog\s+(?:te\s+)?betalen|moet\s+ik\s+(?:nog\s+)?(?:\w+\s+)?betalen|te\s+betalen|saldo|openstaand)")),
+    ("total_energy_cost", re.compile(r"(?i)\b(?:totale?\s+(?:energie)?kost|totaal)")),
+    ("electricity_kwh", re.compile(r"(?i)\b(?:verbruik|kwh|hoeveel\s+stroom)")),
+    ("billing_period", re.compile(r"(?i)\b(?:periode|welke\s+maanden|van\s+wanneer|tot\s+wanneer)")),
+    ("supplier", re.compile(r"(?i)\b(?:leverancier|welk\s+bedrijf|van\s+wie\s+is)")),
+)
+FACT_NAMES = {
+    "advances_paid": "de aangerekende voorschotten",
+    "amount_due": "een vermeld bedrag te betalen",
+    "total_energy_cost": "de totale energiekosten",
+    "electricity_kwh": "je verbruik",
+    "billing_period": "de factuurperiode",
+    "supplier": "de leverancier",
+}
+
+
+def _fact_sentence(key: str, fact: dict[str, Any]) -> str:
+    value = fact["value"]
+    page = fact["page"]
+    if key == "advances_paid":
+        return f"Volgens deze factuur zijn er {_format_decimal(value)} aan voorschotten aangerekend (PDF-pagina {page})."
+    if key == "amount_due":
+        return f"Volgens deze factuur moet je nog {_format_decimal(value)} betalen (PDF-pagina {page})."
+    if key == "total_energy_cost":
+        return f"De totale energiekosten op deze factuur zijn {_format_decimal(value)} (PDF-pagina {page})."
+    if key == "electricity_kwh":
+        unit = "m³" if fact.get("unit") in ("m3", "m³") else "kWh"
+        return f"Je verbruik op deze factuur is {value} {unit} (PDF-pagina {page})."
+    if key == "billing_period":
+        return f"Deze factuur gaat over de periode {value} (PDF-pagina {page})."
+    return f"Deze factuur is van {value} (PDF-pagina {page})."
+
+
+def _fact_source(fact: dict[str, Any]) -> dict[str, str]:
+    return {"title": fact["source"], "detail": f"PDF · pagina {fact['page']}", "excerpt": fact["excerpt"]}
+
+
+def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
+    """A direct answer from the facts read at upload, with the passage it came from."""
+    key = next((name for name, pattern in FACT_QUESTIONS if pattern.search(question)), None)
+    if key is None:
+        return None
+    fact = facts.get(key)
+    if fact is not None:
+        return {"answer": _fact_sentence(key, fact), "sources": [_fact_source(fact)]}
+    difference = facts.get("calculated_difference")
+    if key == "amount_due" and difference is not None:
+        # A calculation is never presented as the balance the invoice states.
+        value = difference["value"]
+        direction = "meer" if value > 0 else "minder"
+        return {
+            "answer": (
+                "Ik vond op deze factuur geen duidelijk vermeld bedrag te betalen. "
+                f"Je totale energiekosten zijn {_format_decimal(abs(value))} {direction} dan je voorschotten "
+                f"(PDF-pagina {difference['page']}), maar dat rekenverschil bevestigt niet op zichzelf het uiteindelijke afrekensaldo."
+            ),
+            "sources": [_fact_source(facts[name]) for name in ("total_energy_cost", "advances_paid") if facts.get(name)],
+        }
+    return {"answer": f"Ik vond {FACT_NAMES[key]} niet duidelijk op deze factuur.", "sources": []}
+
+
+def answer_uploaded_pdf_question(
+    question: str, chunks: list[KnowledgeChunk], facts: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Answer locally from the facts read at upload, else by returning matched PDF passages, without hosted inference."""
+    if facts:
+        direct = _fact_answer(question, facts)
+        if direct is not None:
+            return direct
     selected = retrieve(chunks, question, limit=3)
     if not selected:
         return {

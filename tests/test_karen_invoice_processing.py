@@ -124,3 +124,58 @@ def test_rate_limiter_rejects_excess_requests_inside_window() -> None:
     assert limiter.allow("client-a", 1)
     assert not limiter.allow("client-a", 2)
     assert limiter.allow("client-a", 61)
+
+
+def _synthetic_bill_a() -> list[KnowledgeChunk]:
+    return [
+        KnowledgeChunk(page=1, source="bill-a.pdf", urls=(), text=(
+            "Leverancier: Luminus Factuurperiode: 01/01/2025 tot 31/12/2025 Elektriciteitsverbruik: 3.500 kWh"
+        )),
+        KnowledgeChunk(page=2, source="bill-a.pdf", urls=(), text=(
+            "Totale energiekosten: 1.200,00 EUR Totaal voorschotten reeds aangerekend: 900,00 EUR "
+            "Totaal te betalen: 300,00 EUR"
+        )),
+    ]
+
+
+def test_pdf_follow_ups_answer_directly_from_the_facts_read_at_upload() -> None:
+    chunks = _synthetic_bill_a()
+    facts = analyze_invoice_chunks(chunks)["facts"]
+
+    cases = {
+        "Hoeveel moet ik nog betalen?": "Volgens deze factuur moet je nog € 300,00 betalen (PDF-pagina 2).",
+        "Hoeveel voorschot heb ik betaald?": "Volgens deze factuur zijn er € 900,00 aan voorschotten aangerekend (PDF-pagina 2).",
+        "Wat zijn de totale kosten?": "De totale energiekosten op deze factuur zijn € 1.200,00 (PDF-pagina 2).",
+        "Wat is mijn verbruik?": "Je verbruik op deze factuur is 3500 kWh (PDF-pagina 1).",
+        "Over welke periode gaat dit?": "Deze factuur gaat over de periode 01/01/2025 tot 31/12/2025 (PDF-pagina 1).",
+        "Wie is mijn leverancier?": "Deze factuur is van Luminus (PDF-pagina 1).",
+    }
+    for question, answer in cases.items():
+        result = answer_uploaded_pdf_question(question, chunks, facts)
+        assert result["answer"] == answer, question
+        assert result["sources"] and result["sources"][0]["title"] == "bill-a.pdf"
+
+
+def test_pdf_follow_up_keeps_a_calculation_apart_from_a_stated_balance() -> None:
+    chunks = [KnowledgeChunk(page=2, source="bill.pdf", urls=(), text=(
+        "Totale energiekosten: 1.200,00 EUR Totaal voorschotten reeds aangerekend: 900,00 EUR"
+    ))]
+    facts = analyze_invoice_chunks(chunks)["facts"]
+
+    result = answer_uploaded_pdf_question("Hoeveel moet ik nog betalen?", chunks, facts)
+
+    assert result["answer"].startswith("Ik vond op deze factuur geen duidelijk vermeld bedrag te betalen.")
+    assert "€ 300,00 meer dan je voorschotten" in result["answer"]
+    assert "bevestigt niet" in result["answer"]
+
+
+def test_pdf_follow_up_says_when_a_fact_is_missing_and_other_questions_keep_passages() -> None:
+    chunks = [KnowledgeChunk(page=1, source="bill-b.pdf", urls=(), text=(
+        "Leverancier: Eneco Totaal voorschotten reeds aangerekend: 450,00 EUR"
+    ))]
+    facts = analyze_invoice_chunks(chunks)["facts"]
+
+    missing = answer_uploaded_pdf_question("Wat is mijn verbruik?", chunks, facts)
+    assert missing == {"answer": "Ik vond je verbruik niet duidelijk op deze factuur.", "sources": []}
+    passage = answer_uploaded_pdf_question("Wat staat er over Eneco?", chunks, facts)
+    assert passage["answer"].startswith("Ik vond een relevante passage op PDF-pagina 1")
