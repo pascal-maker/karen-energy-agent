@@ -69,7 +69,7 @@ from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness import expert_judge
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
-from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, is_gas_price_question, load_market_data, today_summary
+from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_supplier_price_question, is_gas_price_question, load_market_data, today_summary
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -972,6 +972,10 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         advice = await answer_contract_advice(question, recognised=route == "contract_advice")
         if advice is not None:
             return _with_petra_speech(advice)
+    # "What does Octa+ fixed cost?": that supplier's own verified tariff cards.
+    supplier_prices = await answer_supplier_price_question(question)
+    if supplier_prices is not None:
+        return _with_petra_speech(supplier_prices)
     # Checking or switching a contract: hand-checked steps and rules, whatever route Jev picked.
     check = answer_contract_check(question)
     if check is not None:
