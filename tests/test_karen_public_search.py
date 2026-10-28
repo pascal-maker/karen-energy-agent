@@ -330,3 +330,59 @@ def test_the_region_rule_never_pushes_the_direct_answer_out_of_the_first_sentenc
     # "Deze informatie geldt voor Vlaanderen." as opening line cost Karen her direct answers.
     assert "eerste zin voor welk gewest" not in gemma_answer._SYSTEM_INSTRUCTION
     assert "in dezelfde zin" in gemma_answer._SYSTEM_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_expert_sites_are_the_last_try_when_public_pages_do_not_answer(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    gemma_answer._SEARCH_CACHE.clear()
+    calls = []
+
+    async def search(query, scope, max_pages=2):
+        calls.append(scope)
+        if scope in ("official_energy", "experts"):
+            return [{"title": scope, "url": f"https://www.{scope}.test/x", "content": "tekst"}]
+        return []
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    answers = iter(["Ik weet het niet zeker.", "Een batterij van 1 tot 2 kWh per kWp volstaat meestal."])
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: next(answers))
+    result = await gemma_answer.answer_energy_question("Hoe groot moet een thuisbatterij bij mijn zonnepanelen zijn?", [])
+    assert calls[-1] == "experts" and calls.count("experts") == 1
+    assert result["answer"].startswith("Een batterij van 1 tot 2 kWh")
+    assert [source["title"] for source in result["sources"]] == ["experts"]
+
+
+@pytest.mark.asyncio
+async def test_expert_sites_answer_when_no_public_page_is_found(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    gemma_answer._SEARCH_CACHE.clear()
+
+    async def search(query, scope, max_pages=2):
+        return [{"title": "EnergyVille", "url": "https://www.energyville.be/x", "content": "tekst"}] if scope == "experts" else []
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: "Gezinnen reageren sterker op stijgingen dan op dalingen.")
+    result = await gemma_answer.answer_energy_question("Gaan we weer meer energie verbruiken als de prijzen opnieuw dalen?", [])
+    assert result["sources"][0]["url"] == "https://www.energyville.be/x"
+
+
+@pytest.mark.asyncio
+async def test_benchmark_only_expert_articles_stay_blocked(monkeypatch):
+    gemma_answer._SEARCH_CACHE.clear()
+
+    async def search(query, scope, max_pages=2):
+        return [{"title": "Studie", "url": "https://biblio.ugent.be/publication/1", "content": "tekst"}]
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    token = gemma_answer.blocked_urls.set(("https://biblio.ugent.be/publication/1",))
+    try:
+        assert await gemma_answer._expert_pages("energiecheques effect") == []
+    finally:
+        gemma_answer.blocked_urls.reset(token)
+
+
+def test_expert_sites_are_trusted_but_not_part_of_the_public_scopes():
+    from luminus_harness import browserbase_sources
+    assert browserbase_sources._is_trusted_energy_url("https://www.energyville.be/nl/onderzoek")
+    assert "energyville.be" not in browserbase_sources.ENERGY_SOURCE_SCOPES["all_public"]

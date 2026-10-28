@@ -69,6 +69,10 @@ ENERGY_SOURCE_SCOPES = {
     # Belgian news, only for why-questions about prices and for news requests.
     "news": ["vrt.be", "standaard.be", "tijd.be", "nieuwsblad.be"],
     "consumer": ["test-aankoop.be", "mijnenergie.be"],
+    # Flemish energy experts' research sites from experts/config/experts.yaml (approved by the owner
+    # 2026-10-28): searched only when the public sites don't answer. Benchmark-only articles stay blocked.
+    "experts": ["energyville.be", "ugent.be", "kuleuven.be", "vito.be", "uhasselt.be",
+                "uantwerpen.be", "itinera.team", "installatieenbouw.be"],
     # Official maximum prices for heating oil, diesel, petrol and propane.
     "fuel": ["petrolfed.be", "brafco.be"],
     "official_energy": ["creg.be", "vlaanderen.be", "vlaamsenutsregulator.be",
