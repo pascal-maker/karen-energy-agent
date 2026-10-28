@@ -326,7 +326,7 @@ async def answer_text_turn(question: str | None, state: dict[str, Any] | None):
                 for chunk in session.get("knowledge_chunks", [])
                 if chunk.get("source") == session["knowledge_name"]
             ]
-            result = answer_uploaded_pdf_question(clean_question, uploaded_chunks)
+            result = answer_uploaded_pdf_question(clean_question, uploaded_chunks, analyze_invoice_chunks(uploaded_chunks)["facts"])
             status_html = _status("Passage gevonden", "Verwerkt op Karen’s backend zonder generatief model")
         else:
             result = await answer_energy_question(clean_question, BASE_KNOWLEDGE)
