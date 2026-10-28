@@ -216,7 +216,11 @@ def _pdf_text(data: bytes) -> str:
 
 def _fetch_direct(url: str) -> str:
     """Read an allowlisted public page without Browserbase; empty on any failure."""
-    request = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; KarenEnergyAgent/1.0)", "Accept": "text/html"})
+    request = Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; KarenEnergyAgent/1.0)",
+        # "text/html" alone gets a 406 from supplier CDNs that serve the tariff PDFs.
+        "Accept": "text/html,application/pdf;q=0.9,*/*;q=0.8",
+    })
     try:
         with urlopen(request, timeout=15) as response:
             final_url = response.geturl() if hasattr(response, "geturl") else url

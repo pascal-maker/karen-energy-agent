@@ -386,3 +386,11 @@ def test_expert_sites_are_trusted_but_not_part_of_the_public_scopes():
     from luminus_harness import browserbase_sources
     assert browserbase_sources._is_trusted_energy_url("https://www.energyville.be/nl/onderzoek")
     assert "energyville.be" not in browserbase_sources.ENERGY_SOURCE_SCOPES["all_public"]
+
+
+def test_an_expert_source_is_labelled_so_gemma_attributes_its_conclusion():
+    prompt = gemma_answer._prompt("Helpen energiecheques?", [], [
+        {"title": "Energiekorting is niet de oplossing", "url": "https://users.ugent.be/~gpeersma/x.pdf", "content": "tekst"},
+    ])
+    assert "[Officiële webbron (expertbron: onderzoek of opinie): Energiekorting" in prompt
+    assert "zeg van wie ze komt" in gemma_answer._SYSTEM_INSTRUCTION
