@@ -14,6 +14,7 @@ def unavailable(*_args):
 
 
 def test_overloaded_gemma_falls_back_to_the_backup_model(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setattr(gemma_answer, "_generate_gemma", unavailable)
     monkeypatch.setattr(gemma_answer, "_generate_backup", lambda prompt, system: f"backup: {prompt}")
@@ -30,16 +31,39 @@ def test_no_backup_without_a_key_or_for_a_configuration_error(monkeypatch):
     with pytest.raises(gemma_answer.GemmaUnavailableError):
         gemma_answer._generate("vraag")
 
-    def rejected(*_args):
-        raise gemma_answer.GemmaAPIError("Gemma heeft de API-sleutel geweigerd; controleer GEMINI_API_KEY.")
+    def misconfigured(*_args):
+        raise gemma_answer.GemmaAPIError("Google heeft de Gemma-aanvraag afgewezen. Controleer GEMMA_MODEL.")
 
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setattr(gemma_answer, "_generate_gemma", rejected)
-    with pytest.raises(gemma_answer.GemmaAPIError, match="geweigerd"):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "_generate_gemma", misconfigured)
+    with pytest.raises(gemma_answer.GemmaAPIError, match="GEMMA_MODEL"):
         gemma_answer._generate("vraag")
 
 
+def test_a_refused_gemini_key_falls_back_to_the_backup_model(monkeypatch):
+    def rejected(*_args):
+        raise gemma_answer.GemmaKeyRejectedError("Google heeft GEMINI_API_KEY afgewezen.")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setenv("GEMINI_API_KEY", "revoked")
+    monkeypatch.setattr(gemma_answer, "_generate_gemma", rejected)
+    monkeypatch.setattr(gemma_answer, "_generate_backup", lambda prompt, system: f"backup: {prompt}")
+    assert gemma_answer._generate("vraag") == "backup: vraag"
+
+
+def test_without_a_gemini_key_the_backup_model_answers(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "_generate_gemma", lambda *_: pytest.fail("no Gemma call without its key"))
+    monkeypatch.setattr(gemma_answer, "_generate_backup", lambda prompt, system: f"backup: {prompt}")
+    deltas = []
+    assert gemma_answer._generate("vraag", gemma_answer._SYSTEM_INSTRUCTION, deltas.append) == "backup: vraag"
+    assert deltas == ["backup: vraag"] and gemma_answer._model_configured()
+
+
 def test_a_failing_backup_reports_the_gemma_error(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setattr(gemma_answer, "_generate_gemma", unavailable)
 

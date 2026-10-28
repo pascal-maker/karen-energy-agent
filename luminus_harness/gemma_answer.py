@@ -29,6 +29,10 @@ class GemmaUnavailableError(GemmaAPIError):
     """Gemma is overloaded, rate limited or unreachable; another model may answer instead."""
 
 
+class GemmaKeyRejectedError(GemmaUnavailableError):
+    """Google refused GEMINI_API_KEY; the backup model may answer until the key is fixed."""
+
+
 # Set by the streaming endpoint: receives the final answer's text piece by piece.
 answer_stream: contextvars.ContextVar[Callable[[str], None] | None] = contextvars.ContextVar("answer_stream", default=None)
 # Set by the expert benchmark: pages Karen may not read, so she cannot copy the expert's own article.
@@ -412,7 +416,7 @@ async def _answer_small_talk(question: str, kind: str) -> dict[str, Any]:
     replies = _SMALL_TALK_FALLBACKS[lang]
     fallback = replies.get(kind, replies["greeting"])
     answer = fallback
-    if os.getenv("GEMINI_API_KEY", "").strip():
+    if _model_configured():
         try:
             # The instructions are Dutch, so name the reply language or Gemma tends to answer in Dutch.
             answer = await asyncio.to_thread(
@@ -579,10 +583,24 @@ async def _answer_cancellation_question(question: str) -> dict[str, Any]:
     }
 
 
+def _model_configured() -> bool:
+    """Gemma or the backup model can answer."""
+    return any(os.getenv(name, "").strip() for name in ("GEMINI_API_KEY", "OPENAI_API_KEY"))
+
+
 def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, on_delta: Callable[[str], None] | None = None) -> str:
-    """Answer with Gemma; when Gemma is overloaded or unreachable, answer with the backup model.
+    """Answer with Gemma; without a Gemini key, or when Gemma refuses it, is overloaded or unreachable,
+    answer with the backup model.
 
     With `on_delta`, Gemma's text is passed on piece by piece while it is written."""
+    if not os.getenv("GEMINI_API_KEY", "").strip() and os.getenv("OPENAI_API_KEY", "").strip():
+        try:
+            text = _generate_backup(prompt, system_instruction)
+        except Exception as error:
+            raise GemmaUnavailableError("Het taalmodel is nu niet bereikbaar.") from error
+        if on_delta:
+            on_delta(text)
+        return text
     try:
         return _generate_gemma(prompt, system_instruction, on_delta)
     except GemmaUnavailableError as error:
@@ -694,7 +712,7 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
                 provider_status = None
             provider_message = str(provider_error.get("message", "")).lower()
             if provider_status == "API_KEY_INVALID" or "api key not valid" in provider_message:
-                raise GemmaAPIError(
+                raise GemmaKeyRejectedError(
                     "Google heeft GEMINI_API_KEY afgewezen. Stel in de Hugging Face Space Secrets een geldige Gemini API-key uit Google AI Studio in. Gebruik hier niet de Browserbase-key."
                 ) from error
             if provider_status == "FAILED_PRECONDITION":
@@ -706,7 +724,7 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
                     "Google heeft de Gemma-aanvraag afgewezen. Controleer GEMMA_MODEL en de aanvraagconfiguratie."
                 ) from error
         if error.code in (401, 403):
-            raise GemmaAPIError("Gemma heeft de API-sleutel geweigerd; controleer GEMINI_API_KEY.") from error
+            raise GemmaKeyRejectedError("Gemma heeft de API-sleutel geweigerd; controleer GEMINI_API_KEY.") from error
         if error.code == 429 or error.code >= 500:
             raise GemmaUnavailableError("Gemma is tijdelijk overbelast of de API-limiet is bereikt.") from error
         raise GemmaAPIError(f"Gemma gaf HTTP {error.code} terug.") from error
@@ -812,7 +830,7 @@ async def _dutch_search_question(question: str) -> str:
 
 async def standalone_question(question: str, history: list[dict[str, str]]) -> str:
     """A short follow-up rewritten so it reads on its own, using the last turns; the original when unsure."""
-    if not history or len(question.split()) > _FOLLOW_UP_MAX_WORDS or not os.getenv("GEMINI_API_KEY", "").strip():
+    if not history or len(question.split()) > _FOLLOW_UP_MAX_WORDS or not _model_configured():
         return question
     conversation = "\n".join(
         f"GEBRUIKER: {turn['question'][:300]}\nKAREN: {turn['answer'][:600]}" for turn in history[-4:]
@@ -837,8 +855,8 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
         return await _answer_small_talk(question, kind)
     if _is_cancellation_question(question):
         return await _answer_cancellation_question(question)
-    if not os.getenv("GEMINI_API_KEY", "").strip():
-        raise GemmaAPIError("Gemma is nog niet ingesteld: voeg GEMINI_API_KEY toe aan de backend.")
+    if not _model_configured():
+        raise GemmaAPIError("Karen heeft geen taalmodel: voeg GEMINI_API_KEY of OPENAI_API_KEY toe aan de backend.")
     lang = question_language(question)
     original_question = question
     if lang != "nl":
@@ -1008,7 +1026,7 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
 async def _general_or_no_source(original_question: str, question: str, lang: str, live_source_status: str) -> dict[str, Any]:
     """No source: answer from general knowledge, marked as such and without numbers; otherwise say Karen isn't sure."""
     no_source = {"answer": _NO_SOURCE_REPLY[lang], "sources": [], "live_source_status": live_source_status}
-    if not os.getenv("GEMINI_API_KEY", "").strip():
+    if not _model_configured():
         return no_source
     try:
         answer = await asyncio.to_thread(
