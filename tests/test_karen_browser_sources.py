@@ -137,3 +137,16 @@ def test_the_direct_download_reads_an_official_pdf(monkeypatch) -> None:
     response.__enter__ = lambda self=response: self
     monkeypatch.setattr(browserbase_sources, "urlopen", lambda *_args, **_kwargs: response)
     assert "Distributietarief elektriciteit 2026" in browserbase_sources._fetch_direct("https://www.creg.be/tarieven.pdf")
+
+
+def test_the_direct_download_accepts_pdfs(monkeypatch) -> None:
+    # Supplier CDNs answer 406 to "Accept: text/html" for their tariff PDFs.
+    seen = {}
+
+    def urlopen(request, **_kwargs):
+        seen["accept"] = request.get_header("Accept")
+        raise OSError("stop")
+
+    monkeypatch.setattr(browserbase_sources, "urlopen", urlopen)
+    browserbase_sources._fetch_direct("https://files.octaplus.be/tariffs/E_OCTA_FIXED_RE_VL_NL.pdf")
+    assert "application/pdf" in seen["accept"]
