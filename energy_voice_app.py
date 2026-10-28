@@ -326,7 +326,7 @@ async def answer_text_turn(question: str | None, state: dict[str, Any] | None):
                 for chunk in session.get("knowledge_chunks", [])
                 if chunk.get("source") == session["knowledge_name"]
             ]
-            result = answer_uploaded_pdf_question(clean_question, uploaded_chunks)
+            result = answer_uploaded_pdf_question(clean_question, uploaded_chunks, analyze_invoice_chunks(uploaded_chunks)["facts"])
             status_html = _status("Passage gevonden", "Verwerkt op Karen’s backend zonder generatief model")
         else:
             result = await answer_energy_question(clean_question, BASE_KNOWLEDGE)
@@ -829,6 +829,7 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
     analysis = analyze_invoice_chunks(chunks)
     if photo:
         analysis["answer"] = analysis["answer"].replace("uit de PDF", "van de foto").replace(" (PDF-pagina 1)", "")
+        analysis["photo"] = True
     session_id = _store_upload_session(chunks, analysis, filename)
     return {
         "session_id": session_id,
@@ -963,7 +964,9 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         session = _get_upload_session(body.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Deze PDF-sessie is verlopen. Upload de PDF opnieuw.")
-        result = answer_uploaded_pdf_question(body.question.strip(), session["chunks"])
+        result = answer_uploaded_pdf_question(body.question.strip(), session["chunks"], session["analysis"].get("facts"))
+        if session["analysis"].get("photo"):
+            result["answer"] = result["answer"].replace(" (PDF-pagina 1)", "").replace("PDF-pagina 1", "de foto")
         return {**result, "processing": "local-only", "filename": session["filename"]}
     question = await standalone_question(body.question.strip(), [turn.model_dump() for turn in body.history])
     # Jev picks the route when enabled and confident; otherwise the word lists below decide.

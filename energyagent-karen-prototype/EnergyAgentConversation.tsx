@@ -228,8 +228,9 @@ const answerLanguage = (text: string): VoiceLanguage => {
     const best = (Object.keys(scores) as VoiceLanguage[]).sort((a, b) => scores[b] - scores[a])[0]
     return scores[best] ? best : voiceLanguage()
 }
-type Turn = { question: string; answer: string; visual?: PriceVisual }
-// The conversation is kept only in this visitor's browser; PDF answers are never stored or sent along.
+type Turn = { question: string; answer: string; visual?: PriceVisual; pdf?: boolean }
+// The conversation is kept only in this visitor's browser; PDF answers stay on screen until the PDF is
+// removed, but are never stored or sent along.
 const HISTORY_KEY = "karen-chat-v1"
 const MAX_TURNS = 20
 const SENT_TURNS = 4
@@ -250,7 +251,8 @@ function loadTurns(): Turn[] {
 }
 function saveTurns(turns: Turn[]) {
     try {
-        if (turns.length) window.localStorage.setItem(HISTORY_KEY, JSON.stringify(turns.slice(-MAX_TURNS)))
+        const kept = turns.filter((turn) => !turn.pdf)
+        if (kept.length) window.localStorage.setItem(HISTORY_KEY, JSON.stringify(kept.slice(-MAX_TURNS)))
         else window.localStorage.removeItem(HISTORY_KEY)
     } catch {
         // Private windows or blocked storage: the chat still works, it just isn't kept.
@@ -506,8 +508,8 @@ export default function EnergyAgentConversation({
     }, [turns, asked, reply, busy])
     // The exchange on screen moves into the history before a new question or PDF replaces it.
     function archiveCurrent(): Turn[] {
-        const next = asked && reply && reply.processing !== "local-only"
-            ? [...turns, { question: asked, answer: reply.answer, ...(reply.visual ? { visual: reply.visual } : {}) }].slice(-MAX_TURNS)
+        const next = asked && reply
+            ? [...turns, { question: asked, answer: reply.answer, ...(reply.visual ? { visual: reply.visual } : {}), ...(reply.processing === "local-only" ? { pdf: true } : {}) }].slice(-MAX_TURNS)
             : turns
         if (next !== turns) setTurns(next)
         return next
@@ -687,6 +689,8 @@ export default function EnergyAgentConversation({
         setSessionId("")
         setUploadName("")
         setUploadError("")
+        // Removing the PDF also removes what Karen read from it.
+        setTurns((previous) => previous.filter((turn) => !turn.pdf))
         setVoiceError("")
         setVoiceDraft(false)
         setReply(null)
@@ -704,7 +708,7 @@ export default function EnergyAgentConversation({
         const past = archiveCurrent()
         const history = sessionId
             ? []
-            : past.slice(-SENT_TURNS).map((turn) => ({ question: turn.question, answer: turn.answer.slice(0, 800) }))
+            : past.filter((turn) => !turn.pdf).slice(-SENT_TURNS).map((turn) => ({ question: turn.question, answer: turn.answer.slice(0, 800) }))
         clearPetra()
         if (listening) stopVoice()
         setAnswerError("")

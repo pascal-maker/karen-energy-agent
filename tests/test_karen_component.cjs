@@ -134,6 +134,7 @@ async function main() {
     assert.equal(document.querySelector(".ea-sources a").href, success.sources[0].url)
     assert.equal(spoken.length, 0, "The browser voice is only a fallback when Petra fails")
     assert.equal(mic().disabled, false)
+    const saved = () => JSON.parse(window.localStorage.getItem("karen-chat-v1") || "[]")
     responses.push({ answer: "Lokale PDF-analyse", session_id: "separate-pdf-session", filename: "bill.pdf", processing: "local-only" })
     await act(async () => {
         const input = document.querySelector('input[type="file"]')
@@ -144,7 +145,11 @@ async function main() {
     responses.push({ answer: "Verwijder eerst je PDF", comparison_status: "pdf-blocked", processing: "local-only" })
     await typed("Vergelijk gas")
     assert.deepEqual(requests.at(-1).body, { question: "Vergelijk gas", session_id: "separate-pdf-session" })
+    assert.match(document.body.textContent, /Lokale PDF-analyse/, "Earlier PDF answers stay on screen during the PDF chat")
+    assert.ok(!saved().some(turn => /Lokale PDF-analyse/.test(turn.answer)), "PDF answers on screen are not stored")
     await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent === "Verwijder").click())
+    assert.doesNotMatch(document.body.textContent, /Lokale PDF-analyse|Verwijder eerst je PDF/, "Removing the PDF removes its answers")
+    assert.match(document.body.textContent, /Vergelijk energieaanbiedingen/, "The chat before the PDF stays")
     assert.equal(mic().disabled, false)
 
     // Voice blocked: a denied microphone inside a frame names the frame, not a generic error.
@@ -316,7 +321,6 @@ async function main() {
     await act(async () => root.unmount())
 
     // The chat stays in this browser and earlier turns go along, so follow-ups work; PDF answers never do.
-    const saved = () => JSON.parse(window.localStorage.getItem("karen-chat-v1") || "[]")
     assert.ok(saved().length > 0, "The conversation above was kept")
     assert.ok(!saved().some(turn => /Lokale PDF-analyse|Verwijder eerst je PDF/.test(turn.answer)), "PDF answers are not stored")
     window.localStorage.clear()
