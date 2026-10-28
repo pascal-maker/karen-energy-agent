@@ -282,3 +282,44 @@ def test_api_today_returns_the_summary_or_nothing(api, monkeypatch):
     assert body["now_cents"] == 10.0 and body["date"] == TODAY
     monkeypatch.setattr(app, "load_market_data", AsyncMock(return_value=None))
     assert api[0].get("/api/today").json() == {}
+
+
+def _cards():
+    def card(name, product, kind, price, fee, unit="per_year"):
+        return {"name": name, "product_name": product, "contract_type": kind, "status": "verified",
+                "price_per_kwh_eur": price, "standing_charge_amount": fee, "standing_charge_unit": unit,
+                "source_url": f"https://example.test/{product.replace(' ', '-')}.pdf"}
+    return {"contracts": {
+        "suppliers": [card("OCTA+", "OCTA+ SmartVariabel", "variable", 0.1946, 65),
+                      card("OCTA+", "OCTA+ Elektriciteit Fixed", "fixed", 0.1838, 65),
+                      card("Eneco", "Eneco Zon & Wind Flex", "variable", 0.1949, 65)],
+        "gas_suppliers": [card("OCTA+", "OCTA+ Gas Fixed", "fixed", 0.0825, 65)],
+    }}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("question", "products"), [
+    ("Hoeveel kost stroom bij Octa+ met een vast contract?", ["OCTA+ Elektriciteit Fixed"]),
+    ("Wat is de vaste vergoeding van Eneco Zon en Wind Flex?", ["Eneco Zon & Wind Flex"]),
+    ("Wat kost gas bij Octa+?", ["OCTA+ Gas Fixed"]),
+    ("Wat kost stroom bij OCTA+?", ["OCTA+ SmartVariabel", "OCTA+ Elektriciteit Fixed"]),
+])
+async def test_a_named_supplier_price_question_gets_that_supplier_s_cards(monkeypatch, question, products):
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=_cards()))
+    reply = await market_prices.answer_supplier_price_question(question)
+    assert reply["processing"] == "supplier-tariff-card"
+    assert [source["title"] for source in reply["sources"]] == products
+    assert "vaste vergoeding € 65 per jaar" in reply["answer"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question", [
+    "Hoe zeg ik mijn contract bij Eneco op?",
+    "Is Octa+ goedkoper dan Eneco?",
+    "Wat kost opzeggen bij Octa+?",
+    "Wat kost stroom vandaag?",
+    "Wat kost stroom bij Luminus?",  # no verified Luminus card in this data
+])
+async def test_other_supplier_questions_keep_their_own_route(monkeypatch, question):
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=_cards()))
+    assert await market_prices.answer_supplier_price_question(question) is None

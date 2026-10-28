@@ -20,6 +20,8 @@ from typing import Any
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from .browserbase_sources import named_supplier
+
 DEFAULT_MARKET_DATA_URL = "https://raw.githubusercontent.com/pascal-maker/karen-energy-agent/market-data/market.json"
 CACHE_SECONDS = 10 * 60
 MAX_SUPPLIERS = 4
@@ -414,3 +416,77 @@ def today_summary(data: dict[str, Any], now: datetime | None = None) -> dict[str
         return None
     later = sorted((h for h in day.get("cheapest_hours") or [] if isinstance(h, int) and h >= now.hour))
     return {"date": today, "hour": now.hour, "now_cents": current, "cheapest_hour": later[0] if later else None}
+
+
+# A price question about one named supplier: that supplier's own verified tariff cards.
+_SUPPLIER_CARD_NAMES = {
+    "luminus": "Luminus", "eneco": "Eneco", "engie": "Engie", "totalenergies": "TotalEnergies", "mega": "Mega",
+    "bolt": "Bolt", "elegant": "Elegant", "energyvision": "Energyvision", "octaplus": "OCTA+",
+    "aspiravi": "Aspiravi", "frank": "Frank Energie",
+}
+_SUPPLIER_PRICE = re.compile(
+    r"\b(?:\w*prijs\w*|kost\w*|tarie\w*|vergoeding|abonnement\w*|betaal\w*|kwh|cent|price\w*|costs?|fees?|pay|how much|prix|co[uû]t\w*|redevance|combien|paie\w*)\b",
+    re.IGNORECASE,
+)
+# Cancelling, invoices, complaints and comparisons keep their own routes.
+_SUPPLIER_ELSEWHERE = re.compile(
+    r"\b\w*(?:opzeg|stopzet|verbreking|annul|r[ée]sili|cancel|factu|invoice|voorschot|acompte|afrekening|klacht|plainte|"
+    r"complaint|contact|vergelijk|compar|goedkoper|duurder|cheaper|ketel|boiler|waarom|why|pourquoi)\w*\b",
+    re.IGNORECASE,
+)
+_FIXED_WORD = re.compile(r"\b(?:vast\w*|fix\w*|fixe)\b", re.IGNORECASE)
+_STANDING_FEE = re.compile(r"\b(?:vaste\s+vergoeding|fixed\s+fee|redevance\s+fixe)\b", re.IGNORECASE)
+_VARIABLE_WORD = re.compile(r"\b(?:variab\w*|flex\w*)\b", re.IGNORECASE)
+_CONTRACT_TYPE = {"fixed": {"nl": "vast", "en": "fixed", "fr": "fixe"}, "variable": {"nl": "variabel", "en": "variable", "fr": "variable"}}
+_STANDING_UNIT = {"per_year": {"nl": "per jaar", "en": "a year", "fr": "par an"}, "per_month": {"nl": "per maand", "en": "a month", "fr": "par mois"}}
+
+
+def _card_line(card: dict[str, Any], lang: str) -> str:
+    cents = _cents(card["price_per_kwh_eur"] * 100, lang)
+    kind = _CONTRACT_TYPE[card.get("contract_type", "variable")][lang]
+    amount, unit = card.get("standing_charge_amount"), _STANDING_UNIT.get(card.get("standing_charge_unit"), {}).get(lang)
+    fee = ""
+    if isinstance(amount, (int, float)) and unit:
+        euros = _cents(amount, lang, 2).removesuffix(",00").removesuffix(".00")
+        fee = {"en": f", fixed fee € {euros} {unit}", "fr": f", redevance fixe {euros} € {unit}"}.get(lang, f", vaste vergoeding € {euros} {unit}")
+    unit_kwh = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
+    return f"{card_label(card)} ({kind}): {cents} {unit_kwh}{fee}"
+
+
+async def answer_supplier_price_question(question: str) -> dict[str, Any] | None:
+    """The named supplier's prices from its verified tariff cards; None when the question isn't that."""
+    supplier = named_supplier(question)
+    name = _SUPPLIER_CARD_NAMES.get(supplier or "")
+    if not name or not _SUPPLIER_PRICE.search(question) or _SUPPLIER_ELSEWHERE.search(question):
+        return None
+    data = await load_market_data()
+    if data is None:
+        return None
+    lang = question_language(question)
+    energy = "gas" if _GAS.search(question) else "electricity"
+    # "vaste vergoeding" is the standing charge, not a fixed contract.
+    kind_text = _STANDING_FEE.sub(" ", question)
+    fixed, variable = bool(_FIXED_WORD.search(kind_text)), bool(_VARIABLE_WORD.search(kind_text))
+    types = ["fixed"] if fixed and not variable else ["variable"] if variable and not fixed else ["variable", "fixed"]
+    cards = [card for kind in types for card in verified_cards(data, kind, energy) if card["name"].casefold() == name.casefold()]
+    if not cards:
+        return None
+    what = {"gas": {"nl": "gas", "en": "gas", "fr": "le gaz"}, "electricity": {"nl": "stroom", "en": "electricity", "fr": "l'électricité"}}[energy][lang]
+    lead = {
+        "en": f"On {name}'s current tariff card, {what} costs:",
+        "fr": f"Sur la fiche tarifaire actuelle de {name}, {what} coûte :",
+    }.get(lang, f"Op de huidige tariefkaart van {name} kost {what}:")
+    note = {
+        "en": "Energy price incl. 6% VAT for Flanders, without network costs and levies. Your own price depends on your usage: check it on V-test.",
+        "fr": "Prix de l'énergie TVA 6% incl. pour la Flandre, hors coûts de réseau et taxes. Ton prix dépend de ta consommation : vérifie-le sur V-test.",
+    }.get(lang, "Energieprijs incl. 6% btw in Vlaanderen, zonder netkosten en heffingen. Wat jij betaalt hangt af van je verbruik: reken het na op V-test.")
+    lines = [lead, *(f"- {_card_line(card, lang)}" for card in cards), note]
+    return {
+        "answer": "\n".join(lines),
+        "sources": [{"title": card_label(card), "url": card["source_url"], "detail": "Tariefkaart van de leverancier"}
+                    for card in cards if card.get("source_url")],
+        "suggested_sources": [{"title": _COMPARATORS["flanders"][0], "url": _COMPARATORS["flanders"][1],
+                               "detail": "Officiële vergelijker · zelf je verbruik invullen"}],
+        "live_source_status": "checked",
+        "processing": "supplier-tariff-card",
+    }
