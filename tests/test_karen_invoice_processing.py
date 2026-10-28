@@ -179,3 +179,43 @@ def test_pdf_follow_up_says_when_a_fact_is_missing_and_other_questions_keep_pass
     assert missing == {"answer": "Ik vond je verbruik niet duidelijk op deze factuur.", "sources": []}
     passage = answer_uploaded_pdf_question("Wat staat er over Eneco?", chunks, facts)
     assert passage["answer"].startswith("Ik vond een relevante passage op PDF-pagina 1")
+
+
+def test_explain_my_invoice_gives_an_overview_of_the_facts() -> None:
+    chunks = _synthetic_bill_a()
+    facts = analyze_invoice_chunks(chunks)["facts"]
+
+    result = answer_uploaded_pdf_question("Geef uitleg over de factuur", chunks, facts)
+
+    assert result["answer"].splitlines() == [
+        "Dit staat op je factuur:",
+        "- **Leverancier:** Luminus (PDF-pagina 1)",
+        "- **Periode:** 01/01/2025 tot 31/12/2025 (PDF-pagina 1)",
+        "- **Verbruik:** 3500 kWh (PDF-pagina 1)",
+        "- **Totale energiekosten:** € 1.200,00 (PDF-pagina 2)",
+        "- **Voorschotten aangerekend:** € 900,00 (PDF-pagina 2)",
+        "- **Nog te betalen:** € 300,00 (PDF-pagina 2)",
+    ]
+    assert {source["detail"] for source in result["sources"]} == {"PDF · pagina 1", "PDF · pagina 2"}
+
+
+def test_the_customer_name_is_read_after_a_title_and_stops_at_the_street() -> None:
+    chunks = [KnowledgeChunk(page=1, source="bill.pdf", urls=(), text=(
+        "DUPLICAAT Dubbel uitgereikt op aanvraag van de klant. Mevr. Anna De Smet TESTSTRAAT 1 2000 ANTWERPEN"
+    ))]
+    facts = analyze_invoice_chunks(chunks)["facts"]
+
+    assert facts["customer"]["value"] == "Anna De Smet"
+    result = answer_uploaded_pdf_question("Over welke persoon gaat het?", chunks, facts)
+    assert result["answer"] == "Deze factuur staat op naam van Anna De Smet (PDF-pagina 1)."
+
+
+def test_a_quoted_passage_is_the_part_about_the_question() -> None:
+    header = "DUPLICAAT Dubbel uitgereikt op aanvraag van de klant ter vervanging van de originele factuur. " * 3
+    chunks = [KnowledgeChunk(page=1, source="bill.pdf", urls=(), text=(
+        header + "Je capaciteitstarief is berekend op je maandpiek van 3,2 kW. " + "Verhuis je? Geef het tijdig door. " * 3
+    ))]
+
+    result = answer_uploaded_pdf_question("Hoe is mijn capaciteitstarief berekend?", chunks)
+
+    assert "capaciteitstarief is berekend op je maandpiek van 3,2 kW" in result["answer"]

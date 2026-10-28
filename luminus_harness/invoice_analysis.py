@@ -6,7 +6,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from .knowledge import KnowledgeChunk, retrieve
+from .knowledge import STOP_WORDS, TOKEN_RE, KnowledgeChunk, retrieve
 
 
 AMOUNT_VALUE_PATTERN = r"(-?\d{1,3}(?:[ .]\d{3})*(?:,\d{1,2})?|-?\d+(?:[.,]\d{1,2})?)"
@@ -18,6 +18,12 @@ PERIOD_RE = re.compile(
 CONSUMPTION_RE = re.compile(
     r"(?i)\b(?:elektriciteitsverbruik|stroomverbruik|verbruik|afname)\b[^\d\n]{0,45}"
     r"(\d[\d .]*(?:,\d{1,2})?)\s*(kwh|m³|m3)\b"
+)
+
+# The addressee: a title followed by capitalised names, so a street in capitals ends the name.
+CUSTOMER_RE = re.compile(
+    r"\b(?:Dhr\.?|Mevr\.?|Juffr\.?|Mr\.?|Mw\.?|De heer|Mevrouw|Meneer|Madame|Monsieur)\s+"
+    r"((?:[A-ZÀ-Ý][a-zà-ÿ'-]+|[A-Z]\.)(?:\s+(?:(?:van|de|der|den|le|la)\s+)*[A-ZÀ-Ý][a-zà-ÿ'-]+){0,3})"
 )
 
 AMOUNT_LABELS: dict[str, tuple[str, ...]] = {
@@ -114,8 +120,14 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
         "total_energy_cost": _find_labeled_amount(ordered, AMOUNT_LABELS["total_energy_cost"]),
         "advances_paid": _find_labeled_amount(ordered, AMOUNT_LABELS["advances_paid"]),
         "calculated_difference": None,
+        "customer": None,
     }
 
+    for chunk in ordered:
+        customer = CUSTOMER_RE.search(chunk.text)
+        if customer:
+            facts["customer"] = _fact(customer.group(1), chunk, customer.group(0))
+            break
     for chunk in ordered:
         supplier = re.search(r"(?i)\b(luminus|eneco|elegant)\b", chunk.text)
         if supplier:
@@ -201,7 +213,21 @@ FACT_QUESTIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("electricity_kwh", re.compile(r"(?i)\b(?:verbruik|kwh|hoeveel\s+stroom)")),
     ("billing_period", re.compile(r"(?i)\b(?:periode|welke\s+maanden|van\s+wanneer|tot\s+wanneer)")),
     ("supplier", re.compile(r"(?i)\b(?:leverancier|welk\s+bedrijf|van\s+wie\s+is)")),
+    ("customer", re.compile(r"(?i)\b(?:welke\s+persoon|wie\s+(?:is|staat)\s+(?:de\s+)?(?:klant|op)|op\s+(?:wiens|welke)\s+naam|klantnaam|naam\s+van\s+de\s+klant|voor\s+wie)")),
 )
+# "Leg mijn factuur uit": the overview of everything read at upload.
+OVERVIEW_QUESTION = re.compile(
+    r"(?i)\b(?:uitleg|leg\b.*\buit|uitleggen|samenvat|overzicht|wat\s+staat\s+(?:er\s+)?(?:op|in)|wat\s+betekent|"
+    r"explain|summar|résum|expliqu)"
+)
+OVERVIEW_LABELS = {
+    "supplier": "Leverancier",
+    "billing_period": "Periode",
+    "electricity_kwh": "Verbruik",
+    "total_energy_cost": "Totale energiekosten",
+    "advances_paid": "Voorschotten aangerekend",
+    "amount_due": "Nog te betalen",
+}
 FACT_NAMES = {
     "advances_paid": "de aangerekende voorschotten",
     "amount_due": "een vermeld bedrag te betalen",
@@ -209,6 +235,7 @@ FACT_NAMES = {
     "electricity_kwh": "je verbruik",
     "billing_period": "de factuurperiode",
     "supplier": "de leverancier",
+    "customer": "de naam van de klant",
 }
 
 
@@ -226,7 +253,62 @@ def _fact_sentence(key: str, fact: dict[str, Any]) -> str:
         return f"Je verbruik op deze factuur is {value} {unit} (PDF-pagina {page})."
     if key == "billing_period":
         return f"Deze factuur gaat over de periode {value} (PDF-pagina {page})."
+    if key == "customer":
+        return f"Deze factuur staat op naam van {value} (PDF-pagina {page})."
     return f"Deze factuur is van {value} (PDF-pagina {page})."
+
+
+def _overview_value(key: str, fact: dict[str, Any]) -> str:
+    value = fact["value"]
+    if key == "electricity_kwh":
+        return f"{value} {'m³' if fact.get('unit') in ('m3', 'm³') else 'kWh'}"
+    return _format_decimal(value) if isinstance(value, Decimal) else str(value)
+
+
+def _overview_answer(facts: dict[str, Any]) -> dict[str, Any]:
+    found = [(key, facts[key]) for key in OVERVIEW_LABELS if facts.get(key)]
+    if not found:
+        return {
+            "answer": (
+                "Ik kon op deze factuur geen leverancier, periode, verbruik of bedragen herkennen. "
+                "Vraag me gerust naar een specifiek onderdeel, dan zoek ik de passage op."
+            ),
+            "sources": [],
+        }
+    lines = ["Dit staat op je factuur:"]
+    lines += [f"- **{OVERVIEW_LABELS[key]}:** {_overview_value(key, fact)} (PDF-pagina {fact['page']})" for key, fact in found]
+    difference = facts.get("calculated_difference")
+    if not facts.get("amount_due") and difference is not None:
+        value = difference["value"]
+        lines.append(
+            f"Er staat geen bedrag te betalen vermeld; je kosten zijn {_format_decimal(abs(value))} "
+            f"{'meer' if value > 0 else 'minder'} dan je voorschotten, maar dat bevestigt niet op zichzelf het eindsaldo."
+        )
+    sources: list[dict[str, str]] = []
+    for _, fact in found:
+        source = _fact_source(fact)
+        if source not in sources:
+            sources.append(source)
+    return {"answer": "\n".join(lines), "sources": sources}
+
+
+def _passage_excerpt(text: str, question: str, width: int = 260) -> str:
+    """The part of a passage where the question's words cluster, not just its first characters."""
+    if len(text) <= width:
+        return text
+    lowered = text.lower()
+    terms = {token.lower() for token in TOKEN_RE.findall(question) if token.lower() not in STOP_WORDS and len(token) > 2}
+    hits = sorted(match.start() for term in terms for match in re.finditer(re.escape(term), lowered))
+    if not hits:
+        return text[:width].rsplit(" ", 1)[0] + "…"
+    best = max(hits, key=lambda start: sum(start <= hit < start + width for hit in hits))
+    start = max(0, best - width // 4)
+    end = min(len(text), start + width)
+    if start > 0:
+        start = text.find(" ", start) + 1 or start
+    if end < len(text):
+        end = text.rfind(" ", start, end) if text.rfind(" ", start, end) > start else end
+    return ("…" if start > 0 else "") + text[start:end].strip() + ("…" if end < len(text) else "")
 
 
 def _fact_source(fact: dict[str, Any]) -> dict[str, str]:
@@ -237,7 +319,7 @@ def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
     """A direct answer from the facts read at upload, with the passage it came from."""
     key = next((name for name, pattern in FACT_QUESTIONS if pattern.search(question)), None)
     if key is None:
-        return None
+        return _overview_answer(facts) if OVERVIEW_QUESTION.search(question) else None
     fact = facts.get(key)
     if fact is not None:
         return {"answer": _fact_sentence(key, fact), "sources": [_fact_source(fact)]}
@@ -279,7 +361,7 @@ def answer_uploaded_pdf_question(
         }
         for chunk in selected
     ]
-    quoted_evidence = selected[0].text[:260]
+    quoted_evidence = _passage_excerpt(selected[0].text, question)
     return {
         "answer": f"Ik vond een relevante passage op PDF-pagina {selected[0].page}: “{quoted_evidence}”",
         "sources": sources,
