@@ -251,7 +251,9 @@ def test_luminus_layout_reads_balance_totals_and_consumption_not_meter_readings(
     assert facts["customer"]["value"] == "Jan Janssen"
 
     ask = lambda question: answer_uploaded_pdf_question(question, chunks, facts)["answer"]
-    assert ask("Wat is het totaal dat ik nog moet betalen?") == "Volgens deze factuur moet je nog € 9,65 betalen (PDF-pagina 1)."
+    assert ask("Wat is het totaal dat ik nog moet betalen?") == (
+        "Volgens deze factuur moet je nog € 9,65 betalen (PDF-pagina 1). Volgens deze factuur betaal je vóór 15.04.2021 (PDF-pagina 1)."
+    )
     assert ask("Wat wordt mijn nieuwe voorschot?") == (
         "Je nieuwe voorschot volgens deze factuur: elektriciteit € 108,00 tweemaandelijks (was € 100,00); "
         "gas € 68,00 tweemaandelijks (was € 70,00) (PDF-pagina 1)."
