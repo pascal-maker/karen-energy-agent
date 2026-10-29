@@ -374,6 +374,9 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
             "input_pages": [total["page"], advances["page"]],
         }
 
+    if facts["invoice_type"] and facts["invoice_type"]["value"] == "voorschotfactuur":
+        return {"answer": _advance_bill_summary(facts), "facts": facts, "sources": _summary_sources(facts)}
+
     labels = {
         "supplier": "Leverancier",
         "billing_period": "Factuurperiode",
@@ -429,6 +432,43 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
     else:
         lines.append("Dit rekenverschil tussen deze twee bedragen bevestigt niet op zichzelf het uiteindelijke afrekensaldo.")
     return {"answer": "\n".join(lines), "facts": facts, "sources": sources}
+
+
+def _summary_sources(facts: dict[str, Any]) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    for fact in facts.values():
+        if fact and "excerpt" in fact:
+            source = {"title": fact["source"], "detail": f"PDF · pagina {fact['page']}", "excerpt": fact["excerpt"]}
+            if source not in sources:
+                sources.append(source)
+    return sources
+
+
+def _advance_bill_summary(facts: dict[str, Any]) -> str:
+    """The upload summary of an advance bill: what it charges and how it is paid, not the settlement fields it never has."""
+    supplier = facts.get("supplier")
+    lines = [f"Dit is een voorschotfactuur{' van ' + supplier['value'] if supplier else ''}: "
+             "een vast bedrag op basis van je geschatte verbruik."]
+    advance_lines = facts.get("advance_lines")
+    period = facts.get("billing_period")
+    if period:
+        lines.append(f"- Periode: {period['value']} (PDF-pagina {period['page']}).")
+    elif advance_lines:
+        periods = ", ".join(dict.fromkeys(row["period"] for row in advance_lines["value"]))
+        lines.append(f"- Periode: {periods} (PDF-pagina {advance_lines['page']}).")
+    if advance_lines:
+        vat = f" ({advance_lines['vat']})" if advance_lines.get("vat") else ""
+        parts = ", ".join(f"{row['energy']} {_format_decimal(row['amount'])}" for row in advance_lines["value"])
+        lines.append(f"- Voorschot per energie: {parts}{vat} (PDF-pagina {advance_lines['page']}).")
+    due = facts.get("amount_due")
+    if due:
+        lines.append(f"- Te betalen: {_format_decimal(due['value'])} (PDF-pagina {due['page']}).")
+    date = facts.get("due_date")
+    if date:
+        how = f"je bank betaalt op {date['value']} via domiciliëring" if date.get("direct_debit") else f"betalen vóór {date['value']}"
+        lines.append(f"- Betaling: {how} (PDF-pagina {date['page']}).")
+    lines.append("Op een voorschotfactuur staat geen verbruik of afrekening; die zie je op je jaarafrekening.")
+    return "\n".join(lines)
 
 
 # Follow-up questions about a fact read at upload; checked in this order, so "welke voorschotten

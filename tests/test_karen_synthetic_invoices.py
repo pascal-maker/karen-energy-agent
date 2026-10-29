@@ -142,3 +142,17 @@ def test_advance_lines_keep_the_bills_own_vat_treatment(text, vat):
     assert ("btw" in answer) == (vat is not None)
     if vat:
         assert vat in answer
+
+
+def test_the_upload_summary_of_an_advance_bill_lists_what_it_has_not_settlement_fields():
+    chunks = load_pdf_chunks_from_bytes((FIXTURES / "11-nl-voorschot-domiciliering.pdf").read_bytes(), source="11.pdf")
+    summary = analyze_invoice_chunks(chunks)["answer"]
+    assert summary.splitlines() == [
+        "Dit is een voorschotfactuur van Kanaal Energie: een vast bedrag op basis van je geschatte verbruik.",
+        "- Periode: okt 2026 (PDF-pagina 1).",
+        "- Voorschot per energie: elektriciteit € 63,21, gas € 105,66 (excl. btw) (PDF-pagina 1).",
+        "- Te betalen: € 179,00 (PDF-pagina 1).",
+        "- Betaling: je bank betaalt op 31.10.2026 via domiciliëring (PDF-pagina 1).",
+        "Op een voorschotfactuur staat geen verbruik of afrekening; die zie je op je jaarafrekening.",
+    ]
+    assert "niet betrouwbaar gevonden" not in summary
