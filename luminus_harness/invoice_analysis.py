@@ -172,14 +172,22 @@ def _find_labeled_amount(chunks: list[KnowledgeChunk], labels: tuple[str, ...]) 
 
 def _find_electricity_table(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     """Day + night consumption from a meter table, only when each row's end minus begin equals its consumption."""
+    # A table can be split over two chunks, and the chunk overlap repeats rows: collect every row once.
+    seen: dict[tuple[Any, ...], Decimal] = {}
+    first: tuple[KnowledgeChunk, re.Match[str]] | None = None
     for chunk in chunks:
-        rows = list(ELECTRICITY_TABLE_ROW_RE.finditer(chunk.text))
-        values = [[_decimal_value(row.group(n)) for n in (2, 3, 4)] for row in rows]
-        if rows and all(None not in v and v[1] - v[0] == v[2] for v in values):
-            fact = _fact(sum(v[2] for v in values), chunk, chunk.text[max(0, rows[0].start() - 30):rows[-1].end() + 10])
-            fact["unit"] = "kwh"
-            return fact
-    return None
+        for row in ELECTRICITY_TABLE_ROW_RE.finditer(chunk.text):
+            begin, end, used = (_decimal_value(row.group(n)) for n in (2, 3, 4))
+            if None in (begin, end, used) or end - begin != used:
+                return None
+            seen.setdefault((row.group(1).lower(), begin, end, used), used)
+            first = first or (chunk, row)
+    if first is None:
+        return None
+    chunk, row = first
+    fact = _fact(sum(seen.values()), chunk, chunk.text[max(0, row.start() - 30):row.end() + 120])
+    fact["unit"] = "kwh"
+    return fact
 
 
 def _find_electricity_rows(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
@@ -240,6 +248,25 @@ def _format_decimal(value: Decimal) -> str:
     return f"€ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+_VAT_TOTAL_RE = re.compile(
+    r"(?i)\b(?:totaal|total)\b[^\d€]{0,8}\(?\s*(excl\.?|exclusief|incl\.?|inclusief|htva|tvac)\b[^\d€]{0,25}(?:€\s*)?"
+    r"((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})"
+)
+
+
+def _advance_lines_vat(text: str, amounts: list[Decimal | None], amount_due: dict[str, Any] | None) -> str | None:
+    """'excl. btw' or 'incl. btw' only when the lines add up to a total the bill labels that way; else None."""
+    if None in amounts:
+        return None
+    lines_total = sum(amounts)
+    for match in _VAT_TOTAL_RE.finditer(text):
+        if _decimal_value(match.group(2)) == lines_total:
+            return "excl. btw" if match.group(1).lower().startswith(("excl", "htva")) else "incl. btw"
+    if amount_due and amount_due["value"] == lines_total:
+        return "incl. btw"
+    return None
+
+
 def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
     """Extract conservative, page-linked facts and calculate only labeled totals."""
     ordered = sorted(chunks, key=lambda chunk: chunk.page)
@@ -258,11 +285,11 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
         "invoice_type": None,
         "advance_lines": None,
     }
-    if facts["due_date"] is None:
-        debit = _find_pattern(ordered, DIRECT_DEBIT_RE)
-        if debit:
-            debit["direct_debit"] = True
-            facts["due_date"] = debit
+    # Paid by direct debit, whatever due date is also printed: the visitor does not have to transfer anything.
+    debit = _find_pattern(ordered, DIRECT_DEBIT_RE)
+    if debit:
+        debit["direct_debit"] = True
+        facts["due_date"] = debit
     text = " ".join(chunk.text for chunk in ordered)
     # The heading comes first: "Uw maandelijkse voorschotfactuur ... geen saldo van een jaarafrekening".
     advance_bill = ADVANCE_BILL_RE.search(text)
@@ -270,15 +297,19 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
     if advance_bill and (not settlement or advance_bill.start() < settlement.start()) and not facts["total_energy_cost"] and not facts["advances_paid"]:
         chunk = next(chunk for chunk in ordered if ADVANCE_BILL_RE.search(chunk.text))
         facts["invoice_type"] = _fact("voorschotfactuur", chunk, advance_bill.group(0))
+        rows: dict[tuple[str, str, Decimal | None], dict[str, Any]] = {}
+        first_line: tuple[KnowledgeChunk, re.Match[str]] | None = None
         for chunk in ordered:
-            lines = list(ADVANCE_LINE_RE.finditer(chunk.text))
-            if lines:
-                facts["advance_lines"] = _fact(
-                    [{"energy": "gas" if line.group(1).lower() == "aardgas" else line.group(1).lower(),
-                      "period": line.group(2), "amount": _decimal_value(line.group(3))} for line in lines],
-                    chunk, chunk.text[max(0, lines[0].start() - 20):lines[-1].end() + 10],
-                )
-                break
+            for line in ADVANCE_LINE_RE.finditer(chunk.text):
+                energy = "gas" if line.group(1).lower() == "aardgas" else line.group(1).lower()
+                amount = _decimal_value(line.group(3))
+                rows.setdefault((energy, line.group(2).lower(), amount), {"energy": energy, "period": line.group(2), "amount": amount})
+                first_line = first_line or (chunk, line)
+        if first_line:
+            chunk, line = first_line
+            fact = _fact(list(rows.values()), chunk, chunk.text[max(0, line.start() - 20):line.end() + 120])
+            fact["vat"] = _advance_lines_vat(text, [row["amount"] for row in rows.values()], facts["amount_due"])
+            facts["advance_lines"] = fact
     elif settlement:
         chunk = next(chunk for chunk in ordered if SETTLEMENT_RE.search(chunk.text))
         facts["invoice_type"] = _fact(SETTLEMENT_RE.search(chunk.text).group(0).lower(), chunk, SETTLEMENT_RE.search(chunk.text).group(0))
@@ -406,7 +437,7 @@ OVERVIEW_LABELS = {
     "gas_kwh": "Gasverbruik",
     "total_energy_cost": "Totale energiekosten",
     "advances_paid": "Voorschotten aangerekend",
-    "advance_lines": "Voorschot per energie (excl. btw)",
+    "advance_lines": "Voorschot per energie",
     "amount_due": "Nog te betalen",
     "new_advance": "Nieuw voorschot",
     "due_date": "Betalen vóór",
@@ -467,7 +498,8 @@ def _overview_value(key: str, fact: dict[str, Any]) -> str:
     if key in ("electricity_kwh", "gas_kwh"):
         return f"{value} {'m³' if fact.get('unit') in ('m3', 'm³') else 'kWh'}"
     if key == "advance_lines":
-        return "; ".join(f"{row['energy']} {row['period']} {_format_decimal(row['amount'])}" for row in value)
+        lines = "; ".join(f"{row['energy']} {row['period']} {_format_decimal(row['amount'])}" for row in value)
+        return f"{lines} ({fact['vat']})" if fact.get("vat") else lines
     if key == "due_date" and fact.get("direct_debit"):
         return f"{value} (je bank betaalt via domiciliëring)"
     if key == "new_advance":
@@ -546,7 +578,8 @@ def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
         due = facts.get("amount_due")
         parts = ["Dit is een voorschotfactuur: een vast bedrag op basis van je geschatte verbruik."]
         if due:
-            detail = (" (" + ", ".join(f"{row['energy']} {_format_decimal(row['amount'])}" for row in lines["value"]) + " excl. btw)") if lines else ""
+            vat = f" {lines['vat']}" if lines and lines.get("vat") else ""
+            detail = (" (" + ", ".join(f"{row['energy']} {_format_decimal(row['amount'])}" for row in lines["value"]) + vat + ")") if lines else ""
             parts.append(f"Het voorschot is {_format_decimal(due['value'])}{detail} (PDF-pagina {due['page']}).")
         if key in ("electricity_kwh", "gas_kwh"):
             parts.append("Je werkelijke verbruik staat niet op deze factuur, maar op je jaarafrekening.")
