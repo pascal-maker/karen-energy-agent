@@ -170,22 +170,45 @@ def _find_labeled_amount(chunks: list[KnowledgeChunk], labels: tuple[str, ...]) 
     return None
 
 
+def _overlap_length(previous: KnowledgeChunk, chunk: KnowledgeChunk) -> int:
+    """How many leading characters of `chunk` repeat the end of `previous` (the chunker's overlap); 0 if none."""
+    if previous.source != chunk.source or previous.page != chunk.page:
+        return 0
+    for length in range(min(len(previous.text), len(chunk.text), 600), 19, -1):
+        if previous.text.endswith(chunk.text[:length]):
+            return length
+    return 0
+
+
+def _matches_once(chunks: list[KnowledgeChunk], pattern: re.Pattern[str]):
+    """Every match over all chunks, skipping a match that lies wholly in the overlap already read in the previous chunk.
+
+    Two equal rows elsewhere on the bill (two meters, two connections) are both kept.
+    """
+    previous: KnowledgeChunk | None = None
+    for chunk in chunks:
+        repeated = _overlap_length(previous, chunk) if previous else 0
+        for match in pattern.finditer(chunk.text):
+            if match.end() > repeated:
+                yield chunk, match
+        previous = chunk
+
+
 def _find_electricity_table(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     """Day + night consumption from a meter table, only when each row's end minus begin equals its consumption."""
-    # A table can be split over two chunks, and the chunk overlap repeats rows: collect every row once.
-    seen: dict[tuple[Any, ...], Decimal] = {}
+    # A table can be split over two chunks: add up the rows of all chunks, each read once.
+    used_values: list[Decimal] = []
     first: tuple[KnowledgeChunk, re.Match[str]] | None = None
-    for chunk in chunks:
-        for row in ELECTRICITY_TABLE_ROW_RE.finditer(chunk.text):
-            begin, end, used = (_decimal_value(row.group(n)) for n in (2, 3, 4))
-            if None in (begin, end, used) or end - begin != used:
-                return None
-            seen.setdefault((row.group(1).lower(), begin, end, used), used)
-            first = first or (chunk, row)
+    for chunk, row in _matches_once(chunks, ELECTRICITY_TABLE_ROW_RE):
+        begin, end, used = (_decimal_value(row.group(n)) for n in (2, 3, 4))
+        if None in (begin, end, used) or end - begin != used:
+            return None
+        used_values.append(used)
+        first = first or (chunk, row)
     if first is None:
         return None
     chunk, row = first
-    fact = _fact(sum(seen.values()), chunk, chunk.text[max(0, row.start() - 30):row.end() + 120])
+    fact = _fact(sum(used_values), chunk, chunk.text[max(0, row.start() - 30):row.end() + 120])
     fact["unit"] = "kwh"
     return fact
 
@@ -297,18 +320,16 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
     if advance_bill and (not settlement or advance_bill.start() < settlement.start()) and not facts["total_energy_cost"] and not facts["advances_paid"]:
         chunk = next(chunk for chunk in ordered if ADVANCE_BILL_RE.search(chunk.text))
         facts["invoice_type"] = _fact("voorschotfactuur", chunk, advance_bill.group(0))
-        rows: dict[tuple[str, str, Decimal | None], dict[str, Any]] = {}
+        rows: list[dict[str, Any]] = []
         first_line: tuple[KnowledgeChunk, re.Match[str]] | None = None
-        for chunk in ordered:
-            for line in ADVANCE_LINE_RE.finditer(chunk.text):
-                energy = "gas" if line.group(1).lower() == "aardgas" else line.group(1).lower()
-                amount = _decimal_value(line.group(3))
-                rows.setdefault((energy, line.group(2).lower(), amount), {"energy": energy, "period": line.group(2), "amount": amount})
-                first_line = first_line or (chunk, line)
+        for chunk, line in _matches_once(ordered, ADVANCE_LINE_RE):
+            energy = "gas" if line.group(1).lower() == "aardgas" else line.group(1).lower()
+            rows.append({"energy": energy, "period": line.group(2), "amount": _decimal_value(line.group(3))})
+            first_line = first_line or (chunk, line)
         if first_line:
             chunk, line = first_line
-            fact = _fact(list(rows.values()), chunk, chunk.text[max(0, line.start() - 20):line.end() + 120])
-            fact["vat"] = _advance_lines_vat(text, [row["amount"] for row in rows.values()], facts["amount_due"])
+            fact = _fact(rows, chunk, chunk.text[max(0, line.start() - 20):line.end() + 120])
+            fact["vat"] = _advance_lines_vat(text, [row["amount"] for row in rows], facts["amount_due"])
             facts["advance_lines"] = fact
     elif settlement:
         chunk = next(chunk for chunk in ordered if SETTLEMENT_RE.search(chunk.text))

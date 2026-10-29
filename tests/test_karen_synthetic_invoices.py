@@ -76,14 +76,47 @@ def _facts_from_text(text: str):
     return chunks, analyze_invoice_chunks(chunks)["facts"]
 
 
-def test_a_meter_table_split_over_two_chunks_is_counted_once_per_row():
-    filler = "Uitleg bij uw factuur. " * 39  # pushes the night row into the next chunk; the overlap repeats the day row
-    chunks, facts = _facts_from_text(
-        "Uw jaarafrekening " + filler + "Omschrijving Beginstand Eindstand Verbruik "
-        "Elektriciteit dag 12.000 kWh 13.600 kWh 1.600 kWh Elektriciteit nacht 5.000 kWh 5.900 kWh 900 kWh"
-    )
+def _table(*rows_at: tuple[int, str]) -> str:
+    """A bill text with each table row placed at a character position (chunks are 1000 long, 160 overlap)."""
+    text = "Uw jaarafrekening Omschrijving Beginstand Eindstand Verbruik "
+    for position, row in rows_at:
+        text += "x" * (position - len(text) - 1) + " " + row + " "
+    return text + "y" * max(0, 1100 - len(text)) + " einde"
+
+
+DAY = "Elektriciteit dag 12.000 kWh 13.600 kWh 1.600 kWh"
+NIGHT = "Elektriciteit nacht 5.000 kWh 5.900 kWh 900 kWh"
+
+
+def test_a_meter_table_split_over_two_chunks_adds_both_rows():
+    chunks, facts = _facts_from_text(_table((700, DAY), (1010, NIGHT)))
     assert len(chunks) == 2
+    assert not any(DAY in chunk.text and NIGHT in chunk.text for chunk in chunks)
     assert facts["electricity_kwh"]["value"] == 2500
+
+
+def test_a_row_repeated_by_the_chunk_overlap_is_counted_once():
+    chunks, facts = _facts_from_text(_table((700, DAY), (880, NIGHT)))
+    assert NIGHT in chunks[0].text and NIGHT in chunks[1].text and DAY not in chunks[1].text
+    assert facts["electricity_kwh"]["value"] == 2500
+
+
+def test_two_connections_with_the_same_amount_are_both_kept():
+    chunks, facts = _facts_from_text(
+        "Uw maandelijks voorschot Elektriciteit (EAN 000000000000000001) okt 2026 60,00 € "
+        "Elektriciteit (EAN 000000000000000002) okt 2026 60,00 € Gas (EAN 000000000000000003) okt 2026 90,00 € "
+        "Totaal (excl. BTW) 210,00 € Totaal factuurbedrag (incl. BTW) 222,60 €"
+    )
+    assert [row["amount"] for row in facts["advance_lines"]["value"]] == [60, 60, 90]
+    assert facts["advance_lines"]["vat"] == "excl. btw"
+
+
+def test_two_meters_with_identical_readings_are_both_counted():
+    _, facts = _facts_from_text(
+        "Uw jaarafrekening Meter 1 Elektriciteit dag 1.000 kWh 2.000 kWh 1.000 kWh "
+        "Meter 2 Elektriciteit dag 1.000 kWh 2.000 kWh 1.000 kWh"
+    )
+    assert facts["electricity_kwh"]["value"] == 2000
 
 
 def test_direct_debit_wins_over_a_printed_due_date():
