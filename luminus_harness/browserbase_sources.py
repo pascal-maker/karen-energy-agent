@@ -75,13 +75,14 @@ ENERGY_SOURCE_SCOPES = {
                 "uantwerpen.be", "itinera.team", "installatieenbouw.be"],
     # Official maximum prices for heating oil, diesel, petrol and propane.
     "fuel": ["petrolfed.be", "brafco.be"],
-    "official_energy": ["creg.be", "vlaanderen.be", "vlaamsenutsregulator.be",
+    # The federal Ombudsdienst voor Energie handles complaints a supplier did not solve, in every region.
+    "official_energy": ["creg.be", "vlaanderen.be", "vlaamsenutsregulator.be", "ombudsmanenergie.be",
                         "leefmilieu.brussels", "brugel.brussels", "energie.wallonie.be", "cwape.be"],
     "trusted_energy": [
         "luminus.be", "elegant.be", "eneco.be", "engie.be", "totalenergies.be",
         "mega.be", "boltenergie.be", "energyvision.be",
         "octaplus.be", "aspiravi.com", "frankenergie.be",
-        "vlaamsenutsregulator.be", "creg.be", "mijnenergie.be", "test-aankoop.be",
+        "vlaamsenutsregulator.be", "creg.be", "ombudsmanenergie.be", "mijnenergie.be", "test-aankoop.be",
     ],
 }
 # The last search when the topic's own sites found nothing: every public, non-supplier site at once.
@@ -165,9 +166,15 @@ def is_usable_web_content(content: str) -> bool:
     return bool(stripped) and not stripped.startswith(FETCH_FAILURE_PREFIXES) and not stripped.casefold().startswith("redirecting to [")
 
 
+# Test-Aankoop's public complaint pages are one visitor's story about one supplier, not advice.
+_NOT_A_SOURCE_PATH = re.compile(r"^/(?:klagen|plaintes)(?:/|$)", re.IGNORECASE)
+
+
 def _is_trusted_energy_url(url: str) -> bool:# used to check if the url is trusted
     parsed = urlparse(url)# used to parse the url
     host = (parsed.hostname or "").lower()# used to get the hostname
+    if host.endswith("test-aankoop.be") and _NOT_A_SOURCE_PATH.search(parsed.path):
+        return False
     return parsed.scheme == "https" and any(
         host == domain or host.endswith("." + domain)# used to check if the host is trusted
         for domain in {domain for domains in ENERGY_SOURCE_SCOPES.values() for domain in domains}

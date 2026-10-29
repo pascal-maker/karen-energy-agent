@@ -61,16 +61,25 @@ _TOPICS = (
         r"(?:check\w*|controle\w*|nakijk\w*|na\s+te\s+kijken|nagaan|onder\s+de\s+loep).{0,40}(?:energie)?contract"
         r"|kijk\s+ik\s+\w+\s+(?:energie)?contract\s+na"
         r"|(?:energie)?contract\w*.{0,30}(?:check\w*|controle\w*|nakijk\w*|nagaan)"
-        r"|(?:betaal\s+ik|betalen|betaal\s+je|betaalt)\s+(?:\w+\s+){0,2}te\s+veel|te\s+veel\s+(?:betalen|betaal)"
+        r"|(?:betaal\s+ik|betalen|betaal\s+je|betaalt)\s+(?:\w+\s+){0,2}te\s+veel|te\s+veel\s+(?:betalen|betaal)\b"
         r"|moet\s+ik\s+(?:\w+\s+){0,2}(?:over\s*stappen|overstappen|wisselen|veranderen)(?:\s+van\s+(?:energie)?leverancier)?\s*\??$",
         re.IGNORECASE,
     )),
 )
 
 
+# A dispute about money already billed or owed (a refund, a final bill, a discount clawed back) is not a
+# contract check: those questions need the search path (complaint route, Ombudsdienst), not the 4 steps.
+_DISPUTE = re.compile(
+    r"\bterug(?:betal|stort|vorder|eis|gevorderd|geëist|betaald|gestort|krijg|\s+(?:willen|wil|vragen|vraagt|betalen|storten))\w*"
+    r"|slotfactuur|eindafrekening|klacht|opgezegd|heel\s+jaar|volledig(?:e)?\s+jaar",
+    re.IGNORECASE,
+)
+
+
 def contract_check_topic(question: str) -> str | None:
     """Which contract-check answer fits, or None. A named supplier keeps its own opzeg-route."""
-    if question_language(question) != "nl":
+    if question_language(question) != "nl" or _DISPUTE.search(question):
         return None
     for topic, pattern in _TOPICS:
         if pattern.search(question):

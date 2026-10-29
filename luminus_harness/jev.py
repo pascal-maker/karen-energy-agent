@@ -62,7 +62,7 @@ TOPICS = {
     "grid": "Meters, digital meter, connections, outages, the capacity tariff (capaciteitstarief) or network costs.",
     "fuel": "Heating oil (stookolie, mazout), diesel, petrol, propane or LPG.",
     "consumer": "Saving energy, comparing suppliers, tips and consumer advice.",
-    "official": "Rules, premiums, social tariff, contracts, invoices, cancelling, or anything else about electricity or gas.",
+    "official": "Rules, premiums, social tariff, contracts, invoices, cancelling, complaints or disputes with a supplier, or anything else about electricity or gas.",
 }
 TOPIC_INSTRUCTIONS = (
     "The state is one chat message sent to Karen, a Belgian energy assistant. Which kind of website "

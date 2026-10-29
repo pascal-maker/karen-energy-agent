@@ -394,3 +394,18 @@ def test_an_expert_source_is_labelled_so_gemma_attributes_its_conclusion():
     ])
     assert "[Officiële webbron (expertbron: onderzoek of opinie): Energiekorting" in prompt
     assert "zeg van wie ze komt" in gemma_answer._SYSTEM_INSTRUCTION
+
+
+def test_the_ombudsdienst_is_an_official_source_and_complaint_pages_are_not():
+    from luminus_harness import browserbase_sources
+    assert "ombudsmanenergie.be" in browserbase_sources.ENERGY_SOURCE_SCOPES["official_energy"]
+    assert browserbase_sources._is_trusted_energy_url("https://www.ombudsmanenergie.be/nl/klacht-indienen")
+    assert browserbase_sources._is_trusted_energy_url("https://www.test-aankoop.be/energie/gas-en-elektriciteit")
+    assert not browserbase_sources._is_trusted_energy_url(
+        "https://www.test-aankoop.be/klagen/publieke-klachten/eneco/slotfactuur-123")
+
+
+def test_the_prompt_asks_for_a_warm_tone_and_the_complaint_route():
+    assert "Ombudsdienst voor Energie" in gemma_answer._SYSTEM_INSTRUCTION
+    assert "bij een neutrale vraag geen begripswoorden" in gemma_answer._SYSTEM_INSTRUCTION
+    assert "Ombudsdienst voor Energie" in gemma_answer._GENERAL_INSTRUCTION
