@@ -1,0 +1,207 @@
+{
+ "note": "Fictional test invoices (names Doe, supplier Kanaal Energie / Canal Energie — FICTIEF). 01-10 made by the project owner, 11-20 by scratchpad make_invoices.py. Amounts are decimal strings; a negative amount_due means money back; null means the reader must not find a value.",
+ "invoices": [
+  {
+   "file": "01-nl-afrekening-gegroepeerd.pdf",
+   "amount_due": "234.56",
+   "total_energy_cost": "1234.56",
+   "advances_paid": "1000.00",
+   "new_advance": [
+    "105.00"
+   ],
+   "customer": "John Doe",
+   "supplier": "Kanaal Energie",
+   "electricity_kwh": "2708",
+   "gas_kwh": "6000"
+  },
+  {
+   "file": "02-nl-afrekening-zonder-duizendpunt.pdf",
+   "amount_due": "234.56",
+   "total_energy_cost": "1234.56",
+   "advances_paid": "1000.00",
+   "new_advance": [
+    "105.00"
+   ],
+   "electricity_kwh": "2708",
+   "gas_kwh": "6000"
+  },
+  {
+   "file": "03-nl-tegoed.pdf",
+   "amount_due": "-150.00",
+   "total_energy_cost": "800.00",
+   "advances_paid": "950.00",
+   "new_advance": [
+    "70.00"
+   ],
+   "electricity_kwh": "2708",
+   "gas_kwh": "6000"
+  },
+  {
+   "file": "04-nl-geen-vermeld-saldo.pdf",
+   "amount_due": null,
+   "total_energy_cost": "1200.00",
+   "advances_paid": "900.00",
+   "calculated_difference": "300.00",
+   "electricity_kwh": "2708",
+   "gas_kwh": "6000"
+  },
+  {
+   "file": "05-nl-nulafrekening.pdf",
+   "amount_due": "0.00",
+   "total_energy_cost": "1000.00",
+   "advances_paid": "1000.00",
+   "electricity_kwh": "2708",
+   "gas_kwh": "6000"
+  },
+  {
+   "file": "06-nl-maandelijks-voorschot.pdf",
+   "invoice_type": "voorschotfactuur",
+   "amount_due": "159.00",
+   "advance_lines": {
+    "elektriciteit": "60.00",
+    "gas": "90.00"
+   },
+   "electricity_kwh": null,
+   "gas_kwh": null,
+   "total_energy_cost": null,
+   "advances_paid": null
+  },
+  {
+   "file": "07-nl-twee-paginas.pdf",
+   "amount_due": "350.00",
+   "total_energy_cost": "2450.00",
+   "advances_paid": "2100.00",
+   "new_advance": [
+    "190.00"
+   ],
+   "electricity_kwh": "2708",
+   "gas_kwh": "6000"
+  },
+  {
+   "file": "08-fr-b2b-annuelle.pdf",
+   "amount_due": "2420.00",
+   "total_energy_cost": "6050.00",
+   "advances_paid": "3630.00",
+   "electricity_kwh": "12000",
+   "gas_kwh": null,
+   "due_date": "15/02/2026"
+  },
+  {
+   "file": "09-nl-ontbrekende-bedragen.pdf",
+   "amount_due": null,
+   "total_energy_cost": null,
+   "advances_paid": null,
+   "electricity_kwh": null,
+   "gas_kwh": null,
+   "new_advance": null
+  },
+  {
+   "file": "10-beeldmodel-testfactuur-ocr.pdf",
+   "amount_due": "234.56",
+   "total_energy_cost": "1234.56",
+   "advances_paid": "1000.00",
+   "new_advance": [
+    "105.00"
+   ],
+   "electricity_kwh": "2708"
+  },
+  {
+   "file": "11-nl-voorschot-domiciliering.pdf",
+   "invoice_type": "voorschotfactuur",
+   "amount_due": "179.00",
+   "advance_lines": {
+    "elektriciteit": "63.21",
+    "gas": "105.66"
+   },
+   "due_date": "31.10.2026",
+   "direct_debit": true,
+   "total_energy_cost": null,
+   "advances_paid": null,
+   "electricity_kwh": null,
+   "gas_kwh": null,
+   "customer": "John Doe",
+   "supplier": "Kanaal Energie"
+  },
+  {
+   "file": "12-nl-tweemaandelijks-voorschot.pdf",
+   "invoice_type": "voorschotfactuur",
+   "amount_due": "96.00",
+   "advance_lines": {
+    "elektriciteit": "90.57"
+   },
+   "due_date": "20.11.2026",
+   "gas_kwh": null,
+   "electricity_kwh": null
+  },
+  {
+   "file": "13-nl-jaarafrekening-nieuw-voorschot-tabel.pdf",
+   "invoice_type": "jaarafrekening",
+   "amount_due": "412.30",
+   "total_energy_cost": "2732.30",
+   "advances_paid": "2320.00",
+   "electricity_kwh": "3050",
+   "gas_kwh": "9400",
+   "new_advance": [
+    "95.00",
+    "120.00"
+   ],
+   "due_date": "28/10/2026",
+   "customer": "Alex Doe"
+  },
+  {
+   "file": "14-nl-slotfactuur-verhuis-tegoed.pdf",
+   "invoice_type": "slotfactuur",
+   "amount_due": "-86.40",
+   "total_energy_cost": "514.60",
+   "advances_paid": "601.00",
+   "electricity_kwh": "1420",
+   "gas_kwh": null
+  },
+  {
+   "file": "15-nl-jaarafrekening-gas-m3.pdf",
+   "amount_due": "140.20",
+   "total_energy_cost": "1580.20",
+   "advances_paid": "1440.00",
+   "gas_kwh": "1150",
+   "gas_unit": "m³",
+   "electricity_kwh": null
+  },
+  {
+   "file": "16-nl-prosument-injectie.pdf",
+   "amount_due": "655.10",
+   "total_energy_cost": "1315.10",
+   "advances_paid": "660.00",
+   "electricity_kwh": "3900",
+   "gas_kwh": null
+  },
+  {
+   "file": "17-nl-spatie-duizendtal.pdf",
+   "amount_due": "1018.40",
+   "total_energy_cost": "3268.40",
+   "advances_paid": "2250.00"
+  },
+  {
+   "file": "18-fr-facture-acompte.pdf",
+   "amount_due": "142.04",
+   "due_date": "05/12/2026",
+   "electricity_kwh": null,
+   "gas_kwh": null
+  },
+  {
+   "file": "19-nl-brussel-saldo-in-uw-voordeel.pdf",
+   "amount_due": "-45.10",
+   "total_energy_cost": "954.90",
+   "advances_paid": "1000.00",
+   "electricity_kwh": "2950",
+   "gas_kwh": null
+  },
+  {
+   "file": "20-nl-metertabel-twee-paginas.pdf",
+   "amount_due": "75.90",
+   "total_energy_cost": "1275.90",
+   "advances_paid": "1200.00",
+   "electricity_kwh": "2500",
+   "due_date": "12/12/2026"
+  }
+ ]
+}
