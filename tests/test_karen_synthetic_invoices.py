@@ -148,11 +148,22 @@ def test_the_upload_summary_of_an_advance_bill_lists_what_it_has_not_settlement_
     chunks = load_pdf_chunks_from_bytes((FIXTURES / "11-nl-voorschot-domiciliering.pdf").read_bytes(), source="11.pdf")
     summary = analyze_invoice_chunks(chunks)["answer"]
     assert summary.splitlines() == [
-        "Dit is een voorschotfactuur van Kanaal Energie: een vast bedrag op basis van je geschatte verbruik.",
-        "- Periode: okt 2026 (PDF-pagina 1).",
-        "- Voorschot per energie: elektriciteit € 63,21, gas € 105,66 (excl. btw) (PDF-pagina 1).",
-        "- Te betalen: € 179,00 (PDF-pagina 1).",
-        "- Betaling: je bank betaalt op 31.10.2026 via domiciliëring (PDF-pagina 1).",
-        "Op een voorschotfactuur staat geen verbruik of afrekening; die zie je op je jaarafrekening.",
+        "Dit is je maandelijkse voorschotfactuur voor oktober 2026 van Kanaal Energie.",
+        "- **Elektriciteit:** € 63,21 excl. btw",
+        "- **Gas:** € 105,66 excl. btw",
+        "- **Samen:** € 168,87 + € 10,13 btw = € 179,00",
+        "- **Betaling:** volgens de factuur betaalt je bank dit automatisch op 31 oktober 2026.",
+        "Je werkelijke verbruik en de verrekening van eerdere voorschotten staan op je jaarafrekening.",
     ]
     assert "niet betrouwbaar gevonden" not in summary
+
+
+def test_an_advance_bill_without_a_vat_label_adds_up_only_when_the_numbers_do():
+    chunks = load_pdf_chunks_from_bytes((FIXTURES / "12-nl-tweemaandelijks-voorschot.pdf").read_bytes(), source="12.pdf")
+    summary = analyze_invoice_chunks(chunks)["answer"]
+    assert summary.splitlines()[0] == "Dit is je tweemaandelijkse voorschotfactuur voor november 2026 van Kanaal Energie."
+    assert "- **Samen:** € 90,57 + € 5,43 btw = € 96,00" in summary
+    assert "- **Betalen vóór:** 20 november 2026" in summary
+    odd_chunks, _ = _facts_from_text("Uw maandelijks voorschot Elektriciteit okt 2026 70,00 € BTW 4,20 € Te betalen bedrag: € 80,00")
+    odd = analyze_invoice_chunks(odd_chunks)["answer"]
+    assert "Samen" not in odd and "- **Te betalen:** € 80,00" in odd
