@@ -367,8 +367,10 @@ def _advance_lines_vat(text: str, amounts: list[Decimal | None], amount_due: dic
     return None
 
 
-def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
-    """Extract conservative, page-linked facts and calculate only labeled totals."""
+def analyze_invoice_chunks(chunks: list[KnowledgeChunk], model_facts: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Extract conservative, page-linked facts and calculate only labeled totals.
+
+    `model_facts` (invoice_model.read_invoice_with_model) fill only what the rules did not find."""
     ordered = sorted(chunks, key=lambda chunk: chunk.page)
     facts: dict[str, dict[str, Any] | None] = {
         "supplier": None,
@@ -441,6 +443,9 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
             # "25 MWh" is 25.000 kWh; everything Karen says about electricity is in kWh.
             fact["value"], fact["unit"] = (_whole(amount * 1000), "kwh") if unit == "mwh" else (amount, unit)
 
+    if model_facts:
+        _merge_model_facts(facts, model_facts, text)
+
     total = facts["total_energy_cost"]
     advances = facts["advances_paid"]
     if total and advances:
@@ -511,6 +516,29 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
     else:
         lines.append("Dit rekenverschil tussen deze twee bedragen bevestigt niet op zichzelf het uiteindelijke afrekensaldo.")
     return {"answer": "\n".join(lines), "facts": facts, "sources": sources}
+
+
+def _merge_model_facts(facts: dict[str, Any], model_facts: dict[str, dict[str, Any]], text: str) -> None:
+    """Fill the gaps with the model's checked values; drop the model's amounts when costs minus advances is not the amount due."""
+    from .invoice_model import adds_up
+
+    for key, fact in model_facts.items():
+        if key in facts and facts[key] is None:
+            facts[key] = fact
+    amounts = [facts[key] for key in ("total_energy_cost", "advances_paid", "amount_due")]
+    if all(amounts) and any(fact.get("read_by") == "model" for fact in amounts):
+        if not adds_up(*(fact["value"] for fact in amounts)):
+            for key in ("total_energy_cost", "advances_paid", "amount_due"):
+                if facts[key].get("read_by") == "model":
+                    facts[key] = None
+    if facts["invoice_type"] and facts["invoice_type"]["value"] == "voorschotfactuur" and (facts["total_energy_cost"] or facts["advances_paid"]):
+        # A bill that settles costs against advances is not an advance bill, whatever the model called it.
+        if facts["invoice_type"].get("read_by") == "model":
+            facts["invoice_type"] = None
+            facts["advance_lines"] = None
+    lines = facts["advance_lines"]
+    if lines and lines.get("read_by") == "model":
+        lines["vat"] = _advance_lines_vat(text, [row["amount"] for row in lines["value"]], facts["amount_due"])
 
 
 def _summary_sources(facts: dict[str, Any]) -> list[dict[str, str]]:

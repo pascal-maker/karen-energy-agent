@@ -56,6 +56,7 @@ from luminus_harness.gemma_answer import (
     mentions_energy,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
+from luminus_harness.invoice_model import model_enabled, needs_model, read_invoice_with_model
 from luminus_harness.photo_invoice import PhotoUnavailable, chunks_from_text, is_image_upload, ocr_image
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from luminus_harness.comparison_session import is_offer_comparison_question, pdf_comparison_reply
@@ -827,6 +828,14 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
     if sum(len(chunk.text) for chunk in chunks) > MAX_PDF_TEXT_CHARS:
         raise HTTPException(status_code=413, detail="Dit bestand bevat meer tekst dan één sessie kan verwerken.")
     analysis = analyze_invoice_chunks(chunks)
+    if needs_model(analysis["facts"]) and model_enabled():
+        customer = (analysis["facts"].get("customer") or {}).get("value") or ""
+        try:
+            model_facts = await asyncio.wait_for(asyncio.to_thread(read_invoice_with_model, chunks, (customer,)), timeout=45)
+        except asyncio.TimeoutError:
+            model_facts = {}
+        if model_facts:
+            analysis = analyze_invoice_chunks(chunks, model_facts)
     if photo:
         analysis["answer"] = analysis["answer"].replace("uit de PDF", "van de foto").replace(" (PDF-pagina 1)", "")
         analysis["photo"] = True

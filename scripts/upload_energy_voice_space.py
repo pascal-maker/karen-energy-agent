@@ -27,6 +27,7 @@ def main() -> None:
         "luminus_harness/knowledge.py": repo_root / "luminus_harness" / "knowledge.py",
         "luminus_harness/gemma_answer.py": repo_root / "luminus_harness" / "gemma_answer.py",
         "luminus_harness/invoice_analysis.py": repo_root / "luminus_harness" / "invoice_analysis.py",
+        "luminus_harness/invoice_model.py": repo_root / "luminus_harness" / "invoice_model.py",
         "luminus_harness/rate_limit.py": repo_root / "luminus_harness" / "rate_limit.py",
         "luminus_harness/comparison_session.py": repo_root / "luminus_harness" / "comparison_session.py",
         "luminus_harness/contract_advice.py": repo_root / "luminus_harness" / "contract_advice.py",
