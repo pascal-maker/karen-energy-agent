@@ -12,17 +12,18 @@ from .knowledge import STOP_WORDS, TOKEN_RE, KnowledgeChunk, retrieve
 # Thousands separated by a dot or space ("1.234,56"), or written together ("1234,56"); never cut short.
 AMOUNT_VALUE_PATTERN = r"(-?(?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[,.]\d{1,2})?)(?![.,/-]?\d)"
 PERIOD_RE = re.compile(
-    r"(?i)\b(?:factuurperiode|facturatieperiode|verbruiksperiode|période de facturation|période|periode(?: van)?|afrekening(?: over| voor)?)\s*[:\-]?\s*"
+    r"(?i)\b(?:factuurperiode|facturatieperiode|verbruiksperiode|période de facturation|période|periode(?: van)?|afrekening(?: over| voor)?)(?:\s+du)?\s*[:\-]?\s*"
     r"(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})"
     r"(?:\s*(?:tot en met|tot|t/m|au|[-–])\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))?"
 )
 CONSUMPTION_RE = re.compile(
-    r"(?i)\b(?:elektriciteitsverbruik|stroomverbruik|verbruik|électricité|consommation d'électricité)\b[^\d\n]{0,45}"
-    r"(\d[\d .]*(?:,\d{1,2})?)\s*(kwh|m³|m3)\b"
+    r"(?i)\b(?:elektriciteitsverbruik|stroomverbruik|verbruik|électricité|consommation d'électricité|consommation totale)\b[^\d\n]{0,45}"
+    r"(\d[\d .]*(?:,\d{1,2})?)\s*(kwh|mwh|m³|m3)\b"
 )
 # A consumption table row such as "Actief+ elektriciteit dag 2.208 kWh"; day and night are added up.
 ELECTRICITY_ROW_RE = re.compile(
-    r"(?i)\belektriciteit\s+(dag|nacht|normaal|enkelvoudig|piek|dal)\s+(\d{1,3}(?:\.\d{3})+|\d+)\s*kwh\b"
+    r"(?i)\b(?:elektriciteit|électricité)\s+(dag|nacht|normaal|enkelvoudig|piek|dal|heures\s+pleines|heures\s+creuses|jour|nuit|mono-?horaire)"
+    r"\s*:?\s+(\d{1,3}(?:\.\d{3})+(?:,\d{1,3})?|\d+(?:,\d{1,3})?)\s*(kwh|mwh)\b"
 )
 # A meter table row "Elektriciteit dag 42.400 kWh 44.608 kWh 2.208 kWh": begin, end, consumption.
 # OCR glues words and adds underscores ("Elektriciteitdag _10.000kWh ___500 kWh").
@@ -38,13 +39,41 @@ NEW_ADVANCE_RE = re.compile(r"(?i)\bnieuwe?\s+voorschot")
 NEW_ADVANCE_SINGLE_RE = re.compile(
     r"(?i)\bnieuwe?\s+((?:twee|drie)?maandelijks(?:e)?\s+)?voorschot\s*:?\s*€\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:,\d{1,2})?)"
 )
+# "Votre nouvelle facture intermédiaire s'élève à 2.371,59 € TVAC", "Nouvel acompte : € 150,00".
+# Also a table: "Votre nouvelle facture intermédiaire Type d'énergie Période Montant TVA incl. Électricité
+# 01/01/2018 - 31/12/2018 € 2.371,59".
+NEW_ADVANCE_FR_RE = re.compile(
+    r"(?i)\b(?:(?:nouvelle|prochaine)s?\s+factures?\s+interm[ée]diaires?|nouvel\s+acompte)\b"
+    r"(?:[^€\d]{0,60}((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})\s*€|[^€]{0,160}€\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2}))"
+)
+# "Consommation hors TVA€ 5.124,18 TVA incl.€ 6.179,17", "Décomptes facturés hors TVA€ -3.647,08 TVA incl.€ -4.399,38":
+# the amount incl. btw is the one that counts.
+SPLIT_VAT_RE = re.compile(
+    r"(?i)\b(consommation|décomptes\s+facturés)\s+hors\s+tva\s*€\s*-?\s*(?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2}"
+    r"\s+tva\s+incl\.?\s*€\s*(-?\s*(?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})"
+)
+# "Date d'échéance: 7 novembre 2018 Montant: € 1.779,79": the amount on the payment slip.
+PAYMENT_AMOUNT_RE = re.compile(r"(?i)(?<!\w)montant\s*:\s*€\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})")
+# "Consommation mesurée heures pleines: 03/10/17 - 30/06/18 403.335 415.000 15,000 MWh": the last number is the use.
+FR_METER_ROW_RE = re.compile(
+    r"(?i)\bconsommation\s+mesurée\s+(heures\s+pleines|heures\s+creuses|jour|nuit|mono-?horaire|exclusif\s+nuit)\s*:?\s*"
+    r"(?:\d{2}/\d{2}/\d{2,4}\s*-\s*\d{2}/\d{2}/\d{2,4}\s+)?(?:[\d.,]+\s+){0,2}"
+    r"(\d{1,3}(?:\.\d{3})*(?:,\d{1,3})?)\s*(kwh|mwh)\b"
+)
 NEW_ADVANCE_ROW_RE = re.compile(
     r"(?i)\b(elektriciteit|gas)\s+((?:twee|drie)?maandelijks|per\s+maand|jaarlijks)\s+€\s*"
     + r"((?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:,\d{1,2})?)\s+€\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:,\d{1,2})?)"
 )
 # "Gelieve vóór 15.04.2021 het bedrag ... te betalen", "Vervaldatum: 15/04/2021".
+# "7 novembre 2018", "15 april 2021": a date written with the month's name.
+_WORD_DATE = (
+    r"\d{1,2}(?:er)?\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre|"
+    r"januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)\s+\d{4}"
+)
 DUE_DATE_RE = re.compile(
-    r"(?i)\b(?:gelieve\s+(?:vóór|voor|uiterlijk\s+op)|te\s+betalen\s+(?:vóór|voor|uiterlijk\s+op)|vervaldatum|vervaldag|uiterste\s+betaaldatum|échéance|date\s+d'échéance)\s*:?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})"
+    r"(?i)\b(?:gelieve\s+(?:vóór|voor|uiterlijk\s+op)|te\s+betalen\s+(?:vóór|voor|uiterlijk\s+op)|vervaldatum|vervaldag|uiterste\s+betaaldatum|"
+    r"échéance|date\s+d'échéance|(?:à\s+payer|payable)\s+(?:avant|pour|au\s+plus\s+tard)\s+le|au\s+plus\s+tard\s+le)\s*:?\s*"
+    r"(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|" + _WORD_DATE + r")"
 )
 # "Uw bank zal op 31.10.2026 het bedrag van € 179,00 overschrijven": paid by direct debit on that date.
 DIRECT_DEBIT_RE = re.compile(r"(?i)\buw\s+bank\s+(?:zal\s+)?op\s+(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})")
@@ -86,12 +115,13 @@ AMOUNT_LABELS: dict[str, tuple[str, ...]] = {
     "total_energy_cost": (
         "totale energiekosten", "totale energiekost", "totaal energiekosten",
         "totaal kosten", "totaalkost", "totaal (incl. btw)", "totaal incl. btw",
-        "coût total", "montant total",
+        "coût total", "montant total", "total tvac", "consommation tvac",
     ),
     "advances_paid": (
         "totaal voorschotten reeds aangerekend", "voorschotten reeds aangerekend",
         "aangerekende voorschotten", "voorschotten betaald", "reeds betaalde voorschotten",
         "acomptes déjà facturés", "acomptes facturés", "acomptes payés", "acomptes déjà payés",
+        "décomptes facturés", "décomptes déjà facturés", "factures intermédiaires déjà facturées",
     ),
 }
 
@@ -128,6 +158,15 @@ def _find_pattern(chunks: list[KnowledgeChunk], pattern: re.Pattern[str], *, gro
     return None
 
 
+def _find_pattern_amount(chunks: list[KnowledgeChunk], pattern: re.Pattern[str]) -> dict[str, Any] | None:
+    fact = _find_pattern(chunks, pattern)
+    if fact is not None:
+        fact["value"] = _decimal_value(fact["value"])
+        if fact["value"] is None:
+            return None
+    return fact
+
+
 def _find_period(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     for chunk in chunks:
         match = PERIOD_RE.search(chunk.text)
@@ -160,7 +199,7 @@ def _find_labeled_amount(chunks: list[KnowledgeChunk], labels: tuple[str, ...]) 
             amount = abs(amount)
             # Advances are printed as a deduction ("- € 1.002,00"); their size is what counts. A minus
             # or "terug te krijgen" on the balance means money comes back.
-            if "voorschot" not in label and "acompte" not in label and (
+            if not any(word in label for word in ("voorschot", "acompte", "décompte", "intermédiaire")) and (
                 negative or any(word in label for word in ("terug", "tegoed", "voordeel", "faveur", "rembours"))
             ):
                 amount = -amount
@@ -213,12 +252,46 @@ def _find_electricity_table(chunks: list[KnowledgeChunk]) -> dict[str, Any] | No
     return fact
 
 
+def _whole(value: Decimal) -> Decimal:
+    """25000.000 -> 25000, so a converted MWh figure reads like the kWh on the bill."""
+    return value.quantize(Decimal(1)) if value == value.to_integral_value() else value
+
+
+def _find_french_meter_rows(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
+    total = Decimal(0)
+    first: tuple[KnowledgeChunk, re.Match[str]] | None = None
+    for chunk, row in _matches_once(chunks, FR_METER_ROW_RE):
+        value = _decimal_value(row.group(2))
+        if value is None:
+            return None
+        total += value * (1000 if row.group(3).lower() == "mwh" else 1)
+        first = first or (chunk, row)
+    if first is None:
+        return None
+    chunk, row = first
+    fact = _fact(_whole(total), chunk, chunk.text[max(0, row.start() - 20):row.end() + 120])
+    fact["unit"] = "kwh"
+    return fact
+
+
+def _find_split_vat(chunks: list[KnowledgeChunk], label: str) -> dict[str, Any] | None:
+    for chunk in chunks:
+        for match in SPLIT_VAT_RE.finditer(chunk.text):
+            if match.group(1).lower().startswith(label):
+                amount = _decimal_value(match.group(2).replace(" ", ""))
+                if amount is not None:
+                    return _fact(abs(amount), chunk, match.group(0))
+    return None
+
+
 def _find_electricity_rows(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     for chunk in chunks:
         rows = [row for row in ELECTRICITY_ROW_RE.finditer(chunk.text) if not METER_READING_RE.search(chunk.text[max(0, row.start() - 80):row.start()])]
         if rows:
-            total = sum((_decimal_value(row.group(2)) or Decimal(0)) for row in rows)
-            fact = _fact(total, chunk, chunk.text[max(0, rows[0].start() - 30):rows[-1].end() + 10])
+            total = sum(
+                (_decimal_value(row.group(2)) or Decimal(0)) * (1000 if row.group(3).lower() == "mwh" else 1) for row in rows
+            )
+            fact = _fact(_whole(total), chunk, chunk.text[max(0, rows[0].start() - 30):rows[-1].end() + 10])
             fact["unit"] = "kwh"
             return fact
     return None
@@ -249,6 +322,10 @@ def _find_new_advance(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
                 chunk, chunk.text[heading.start():rows[-1].end()],
             )
             return fact
+        french = NEW_ADVANCE_FR_RE.search(chunk.text)
+        if french:
+            return _fact([{"energy": None, "frequency": None, "old": None, "new": _decimal_value(french.group(1) or french.group(2))}],
+                         chunk, french.group(0))
         single = NEW_ADVANCE_SINGLE_RE.search(chunk.text)
         if single:
             frequency = (single.group(1) or "").strip().lower().removesuffix("e") or None
@@ -297,9 +374,9 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
         "supplier": None,
         "billing_period": _find_period(ordered),
         "electricity_kwh": None,
-        "amount_due": _find_labeled_amount(ordered, AMOUNT_LABELS["amount_due"]),
-        "total_energy_cost": _find_labeled_amount(ordered, AMOUNT_LABELS["total_energy_cost"]),
-        "advances_paid": _find_labeled_amount(ordered, AMOUNT_LABELS["advances_paid"]),
+        "amount_due": _find_labeled_amount(ordered, AMOUNT_LABELS["amount_due"]) or _find_pattern_amount(ordered, PAYMENT_AMOUNT_RE),
+        "total_energy_cost": _find_split_vat(ordered, "consommation") or _find_labeled_amount(ordered, AMOUNT_LABELS["total_energy_cost"]),
+        "advances_paid": _find_split_vat(ordered, "décomptes") or _find_labeled_amount(ordered, AMOUNT_LABELS["advances_paid"]),
         "calculated_difference": None,
         "customer": None,
         "gas_kwh": _find_gas(ordered),
@@ -350,7 +427,8 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
             facts["supplier"] = _fact(name if supplier.re is SUPPLIER_LABEL_RE else name.title(), chunk, supplier.group(0))
             break
     facts["electricity_kwh"] = (
-        _find_electricity_table(ordered) or _find_electricity_rows(ordered) or _find_consumption(ordered)
+        _find_electricity_table(ordered) or _find_french_meter_rows(ordered) or _find_electricity_rows(ordered)
+        or _find_consumption(ordered)
     )
     fact = facts["electricity_kwh"]
     if fact and not isinstance(fact["value"], Decimal):
@@ -359,8 +437,9 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
         if amount is None:
             facts["electricity_kwh"] = None
         else:
-            fact["value"] = amount
-            fact["unit"] = match.group(2).lower()
+            unit = match.group(2).lower()
+            # "25 MWh" is 25.000 kWh; everything Karen says about electricity is in kWh.
+            fact["value"], fact["unit"] = (_whole(amount * 1000), "kwh") if unit == "mwh" else (amount, unit)
 
     total = facts["total_energy_cost"]
     advances = facts["advances_paid"]
@@ -462,8 +541,18 @@ def _month_period(period: str) -> str:
     return f"{_MONTHS.get(word.lower().rstrip('.')[:3], word)} {year}".strip()
 
 
+_FRENCH_MONTHS = {
+    "janvier": "januari", "février": "februari", "fevrier": "februari", "mars": "maart", "avril": "april", "mai": "mei",
+    "juin": "juni", "juillet": "juli", "août": "augustus", "aout": "augustus", "septembre": "september",
+    "octobre": "oktober", "novembre": "november", "décembre": "december", "decembre": "december",
+}
+
+
 def _long_date(value: str) -> str:
-    """'31.10.2026' -> '31 oktober 2026'; anything else stays as written."""
+    """'31.10.2026' and '7 novembre 2018' -> '31 oktober 2026', '7 november 2018'; anything else stays as written."""
+    words = re.fullmatch(r"(?i)(\d{1,2})(?:er)?\s+(\w+)\s+(\d{4})", value)
+    if words:
+        return f"{int(words.group(1))} {_FRENCH_MONTHS.get(words.group(2).lower(), words.group(2).lower())} {words.group(3)}"
     match = re.fullmatch(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4})", value)
     if not match or not 1 <= int(match.group(2)) <= 12:
         return value
@@ -581,7 +670,7 @@ def _fact_sentence(key: str, fact: dict[str, Any]) -> str:
     if key == "due_date":
         if fact.get("direct_debit"):
             return f"Je hoeft niets te doen: je bank betaalt dit bedrag op {value} via domiciliëring (PDF-pagina {page})."
-        return f"Volgens deze factuur betaal je vóór {value} (PDF-pagina {page})."
+        return f"Volgens deze factuur betaal je vóór {_long_date(value) if not re.match(r'\d{1,2}[./-]', value) else value} (PDF-pagina {page})."
     if key == "billing_period":
         return f"Deze factuur gaat over de periode {value} (PDF-pagina {page})."
     if key == "customer":
@@ -596,8 +685,9 @@ def _overview_value(key: str, fact: dict[str, Any]) -> str:
     if key == "advance_lines":
         lines = "; ".join(f"{row['energy']} {row['period']} {_format_decimal(row['amount'])}" for row in value)
         return f"{lines} ({fact['vat']})" if fact.get("vat") else lines
-    if key == "due_date" and fact.get("direct_debit"):
-        return f"{value} (je bank betaalt via domiciliëring)"
+    if key == "due_date":
+        shown = value if re.match(r"\d{1,2}[./-]", value) else _long_date(value)
+        return f"{shown} (je bank betaalt via domiciliëring)" if fact.get("direct_debit") else shown
     if key == "new_advance":
         return "; ".join(
             " ".join(part for part in (row["energy"], _format_decimal(row["new"]), row["frequency"]) if part) for row in value
@@ -666,6 +756,16 @@ def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
         return _overview_answer(facts) if OVERVIEW_QUESTION.search(question) else None
     fact = facts.get(key)
     invoice_type = facts.get("invoice_type")
+    lines = facts.get("advance_lines")
+    if key == "billing_period" and fact is None and lines:
+        # No date range on the bill: the months printed on the advance lines are its period.
+        months = list(dict.fromkeys(_month_period(row["period"]) for row in lines["value"]))
+        if len(months) == 1:
+            period = months[0]
+        else:
+            period = "; ".join(f"{row['energy']} {_month_period(row['period'])}" for row in lines["value"])
+        kind = "voorschotfactuur" if invoice_type and invoice_type["value"] == "voorschotfactuur" else "factuur"
+        return {"answer": f"Deze {kind} gaat over {period} (PDF-pagina {lines['page']}).", "sources": [_fact_source(lines)]}
     if fact is None and invoice_type and invoice_type["value"] == "voorschotfactuur" and key in (
         "electricity_kwh", "gas_kwh", "advances_paid", "total_energy_cost",
     ):
