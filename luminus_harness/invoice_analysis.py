@@ -374,6 +374,9 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
             "input_pages": [total["page"], advances["page"]],
         }
 
+    if facts["invoice_type"] and facts["invoice_type"]["value"] == "voorschotfactuur":
+        return {"answer": _advance_bill_summary(facts, text), "facts": facts, "sources": _summary_sources(facts)}
+
     labels = {
         "supplier": "Leverancier",
         "billing_period": "Factuurperiode",
@@ -429,6 +432,78 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
     else:
         lines.append("Dit rekenverschil tussen deze twee bedragen bevestigt niet op zichzelf het uiteindelijke afrekensaldo.")
     return {"answer": "\n".join(lines), "facts": facts, "sources": sources}
+
+
+def _summary_sources(facts: dict[str, Any]) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    for fact in facts.values():
+        if fact and "excerpt" in fact:
+            source = {"title": fact["source"], "detail": f"PDF · pagina {fact['page']}", "excerpt": fact["excerpt"]}
+            if source not in sources:
+                sources.append(source)
+    return sources
+
+
+_MONTHS = {
+    "jan": "januari", "feb": "februari", "maa": "maart", "apr": "april", "mei": "mei", "jun": "juni",
+    "jul": "juli", "aug": "augustus", "sep": "september", "okt": "oktober", "nov": "november", "dec": "december",
+}
+_MONTH_NUMBERS = list(_MONTHS.values())
+# "BTW 10,13 €", "Btw 6%: € 9,00", "TVA 6% 8,04 €"; not "inclusief btw: € 159,00" (that is the total).
+_VAT_AMOUNT_RE = re.compile(
+    r"(?i)(?<!excl\. )(?<!incl\. )(?<!exclusief )(?<!inclusief )\b(?:btw|tva)(?:\s*\d{1,2}\s*%)?\s*:?\s*(?:€\s*)?"
+    r"((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})(?!\d)"
+)
+
+
+def _month_period(period: str) -> str:
+    """'okt 2026' -> 'oktober 2026'."""
+    word, _, year = period.partition(" ")
+    return f"{_MONTHS.get(word.lower().rstrip('.')[:3], word)} {year}".strip()
+
+
+def _long_date(value: str) -> str:
+    """'31.10.2026' -> '31 oktober 2026'; anything else stays as written."""
+    match = re.fullmatch(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4})", value)
+    if not match or not 1 <= int(match.group(2)) <= 12:
+        return value
+    return f"{int(match.group(1))} {_MONTH_NUMBERS[int(match.group(2)) - 1]} {match.group(3)}"
+
+
+def _advance_bill_summary(facts: dict[str, Any], text: str) -> str:
+    """The upload answer for an advance bill: what it charges and how it is paid, not settlement fields it never has."""
+    supplier = facts.get("supplier")
+    frequency = re.search(r"(?i)\b((?:twee|drie)?maandelijks)", facts["invoice_type"]["excerpt"])
+    kind = f"{frequency.group(1).lower()}e voorschotfactuur" if frequency else "voorschotfactuur"
+    advance_lines = facts.get("advance_lines")
+    rows = advance_lines["value"] if advance_lines else []
+    periods = list(dict.fromkeys(_month_period(row["period"]) for row in rows))
+    period = facts.get("billing_period")
+    when = f" voor {periods[0]}" if len(periods) == 1 else f" voor {period['value']}" if period else ""
+    lines = [f"Dit is je {kind}{when}{' van ' + supplier['value'] if supplier else ''}."]
+
+    vat_label = f" {advance_lines['vat']}" if advance_lines and advance_lines.get("vat") else ""
+    for row in rows:
+        period_note = f" ({_month_period(row['period'])})" if len(periods) > 1 else ""
+        lines.append(f"- **{row['energy'].capitalize()}:** {_format_decimal(row['amount'])}{vat_label}{period_note}")
+    due = facts.get("amount_due")
+    if due:
+        vat = _VAT_AMOUNT_RE.search(text)
+        vat_amount = _decimal_value(vat.group(1)) if vat else None
+        lines_total = sum(row["amount"] for row in rows) if rows and None not in [row["amount"] for row in rows] else None
+        # Only when the bill's own numbers add up: lines + btw = amount to pay.
+        if vat_amount is not None and lines_total is not None and lines_total + vat_amount == due["value"]:
+            lines.append(f"- **Samen:** {_format_decimal(lines_total)} + {_format_decimal(vat_amount)} btw = {_format_decimal(due['value'])}")
+        else:
+            lines.append(f"- **Te betalen:** {_format_decimal(due['value'])}")
+    date = facts.get("due_date")
+    if date:
+        if date.get("direct_debit"):
+            lines.append(f"- **Betaling:** volgens de factuur betaalt je bank dit automatisch op {_long_date(date['value'])}.")
+        else:
+            lines.append(f"- **Betalen vóór:** {_long_date(date['value'])}")
+    lines.append("Je werkelijke verbruik en de verrekening van eerdere voorschotten staan op je jaarafrekening.")
+    return "\n".join(lines)
 
 
 # Follow-up questions about a fact read at upload; checked in this order, so "welke voorschotten
