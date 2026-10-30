@@ -1,5 +1,5 @@
 {
- "note": "Fictional test invoices (names Doe, supplier Kanaal Energie / Canal Energie — FICTIEF). 01-10 made by the project owner, 11-20 by scratchpad make_invoices.py. Amounts are decimal strings; a negative amount_due means money back; null means the reader must not find a value.",
+ "note": "Fictional test invoices (names Doe, supplier Kanaal Energie / Canal Energie — FICTIEF). 01-10 made by the project owner, 11-21 by scratchpad make_invoices.py. Amounts are decimal strings; a negative amount_due means money back; null means the reader must not find a value.",
  "invoices": [
   {
    "file": "01-nl-afrekening-gegroepeerd.pdf",
@@ -202,6 +202,19 @@
    "advances_paid": "1200.00",
    "electricity_kwh": "2500",
    "due_date": "12/12/2026"
+  },
+  {
+   "file": "21-fr-b2b-regularisation-mwh.pdf",
+   "amount_due": "1779.79",
+   "total_energy_cost": "6179.17",
+   "advances_paid": "4399.38",
+   "electricity_kwh": "25000",
+   "due_date": "7 novembre 2018",
+   "new_advance": [
+    "2371.59"
+   ],
+   "supplier": "Canal Energie Entreprises",
+   "billing_period": "03/10/2017 tot 30/06/2018"
   }
  ]
 }

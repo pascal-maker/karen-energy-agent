@@ -197,5 +197,23 @@ make("20-nl-metertabel-twee-paginas", "Uw jaarafrekening", [
 INVOICES.append({"file": "20-nl-metertabel-twee-paginas.pdf", "amount_due": "75.90", "total_energy_cost": "1275.90",
                  "advances_paid": "1200.00", "electricity_kwh": "2500", "due_date": "12/12/2026"})
 
+# 21: French business settlement: MWh, "période du ... au ...", due date in words, new intermediate bill.
+make("21-fr-b2b-regularisation-mwh", "Facture annuelle de régularisation", [[
+    "Fournisseur : Canal Energie Entreprises — FICTIF", "Client : Doe Test BV", "Adresse : Rue du Test 0, 0000 Ville-Test",
+    "Facture TEST-2018-021 · Date : 08/10/2018", "",
+    "Électricité – période du 03/10/2017 au 30/06/2018",
+    "Électricité heures pleines 15 MWh",
+    "Électricité heures creuses 10 MWh",
+    "",
+    "**Récapitulatif\tMontant",
+    "Consommation hors TVA\t€ 5.106,75",
+    "TVA 21%\t€ 1.072,42",
+    "Coût total TVAC\t€ 6.179,17",
+    "Décomptes facturés TVAC\t− € 4.399,38",
+    "**Montant à payer € 1.779,79",
+    "À payer avant le 7 novembre 2018.",
+    "Votre nouvelle facture intermédiaire s'élève à 2.371,59 € TVAC.",
+]])
+
 # Expected values for these bills live in tests/fixtures/invoices/expected.json.
 print(f"{len(INVOICES)} invoices written to {OUT}")
