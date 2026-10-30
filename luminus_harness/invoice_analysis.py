@@ -40,9 +40,25 @@ NEW_ADVANCE_SINGLE_RE = re.compile(
     r"(?i)\bnieuwe?\s+((?:twee|drie)?maandelijks(?:e)?\s+)?voorschot\s*:?\s*€\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:,\d{1,2})?)"
 )
 # "Votre nouvelle facture intermédiaire s'élève à 2.371,59 € TVAC", "Nouvel acompte : € 150,00".
+# Also a table: "Votre nouvelle facture intermédiaire Type d'énergie Période Montant TVA incl. Électricité
+# 01/01/2018 - 31/12/2018 € 2.371,59".
 NEW_ADVANCE_FR_RE = re.compile(
-    r"(?i)\b(?:(?:nouvelle|prochaine)s?\s+factures?\s+interm[ée]diaires?|nouvel\s+acompte)\b[^€\d]{0,60}(?:€\s*)?"
-    r"((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})"
+    r"(?i)\b(?:(?:nouvelle|prochaine)s?\s+factures?\s+interm[ée]diaires?|nouvel\s+acompte)\b"
+    r"(?:[^€\d]{0,60}((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})\s*€|[^€]{0,160}€\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2}))"
+)
+# "Consommation hors TVA€ 5.124,18 TVA incl.€ 6.179,17", "Décomptes facturés hors TVA€ -3.647,08 TVA incl.€ -4.399,38":
+# the amount incl. btw is the one that counts.
+SPLIT_VAT_RE = re.compile(
+    r"(?i)\b(consommation|décomptes\s+facturés)\s+hors\s+tva\s*€\s*-?\s*(?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2}"
+    r"\s+tva\s+incl\.?\s*€\s*(-?\s*(?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})"
+)
+# "Date d'échéance: 7 novembre 2018 Montant: € 1.779,79": the amount on the payment slip.
+PAYMENT_AMOUNT_RE = re.compile(r"(?i)(?<!\w)montant\s*:\s*€\s*((?:\d{1,3}(?:[ .]\d{3})+|\d+),\d{2})")
+# "Consommation mesurée heures pleines: 03/10/17 - 30/06/18 403.335 415.000 15,000 MWh": the last number is the use.
+FR_METER_ROW_RE = re.compile(
+    r"(?i)\bconsommation\s+mesurée\s+(heures\s+pleines|heures\s+creuses|jour|nuit|mono-?horaire|exclusif\s+nuit)\s*:?\s*"
+    r"(?:\d{2}/\d{2}/\d{2,4}\s*-\s*\d{2}/\d{2}/\d{2,4}\s+)?(?:[\d.,]+\s+){0,2}"
+    r"(\d{1,3}(?:\.\d{3})*(?:,\d{1,3})?)\s*(kwh|mwh)\b"
 )
 NEW_ADVANCE_ROW_RE = re.compile(
     r"(?i)\b(elektriciteit|gas)\s+((?:twee|drie)?maandelijks|per\s+maand|jaarlijks)\s+€\s*"
@@ -142,6 +158,15 @@ def _find_pattern(chunks: list[KnowledgeChunk], pattern: re.Pattern[str], *, gro
     return None
 
 
+def _find_pattern_amount(chunks: list[KnowledgeChunk], pattern: re.Pattern[str]) -> dict[str, Any] | None:
+    fact = _find_pattern(chunks, pattern)
+    if fact is not None:
+        fact["value"] = _decimal_value(fact["value"])
+        if fact["value"] is None:
+            return None
+    return fact
+
+
 def _find_period(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     for chunk in chunks:
         match = PERIOD_RE.search(chunk.text)
@@ -227,6 +252,38 @@ def _find_electricity_table(chunks: list[KnowledgeChunk]) -> dict[str, Any] | No
     return fact
 
 
+def _whole(value: Decimal) -> Decimal:
+    """25000.000 -> 25000, so a converted MWh figure reads like the kWh on the bill."""
+    return value.quantize(Decimal(1)) if value == value.to_integral_value() else value
+
+
+def _find_french_meter_rows(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
+    total = Decimal(0)
+    first: tuple[KnowledgeChunk, re.Match[str]] | None = None
+    for chunk, row in _matches_once(chunks, FR_METER_ROW_RE):
+        value = _decimal_value(row.group(2))
+        if value is None:
+            return None
+        total += value * (1000 if row.group(3).lower() == "mwh" else 1)
+        first = first or (chunk, row)
+    if first is None:
+        return None
+    chunk, row = first
+    fact = _fact(_whole(total), chunk, chunk.text[max(0, row.start() - 20):row.end() + 120])
+    fact["unit"] = "kwh"
+    return fact
+
+
+def _find_split_vat(chunks: list[KnowledgeChunk], label: str) -> dict[str, Any] | None:
+    for chunk in chunks:
+        for match in SPLIT_VAT_RE.finditer(chunk.text):
+            if match.group(1).lower().startswith(label):
+                amount = _decimal_value(match.group(2).replace(" ", ""))
+                if amount is not None:
+                    return _fact(abs(amount), chunk, match.group(0))
+    return None
+
+
 def _find_electricity_rows(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     for chunk in chunks:
         rows = [row for row in ELECTRICITY_ROW_RE.finditer(chunk.text) if not METER_READING_RE.search(chunk.text[max(0, row.start() - 80):row.start()])]
@@ -234,7 +291,7 @@ def _find_electricity_rows(chunks: list[KnowledgeChunk]) -> dict[str, Any] | Non
             total = sum(
                 (_decimal_value(row.group(2)) or Decimal(0)) * (1000 if row.group(3).lower() == "mwh" else 1) for row in rows
             )
-            fact = _fact(total, chunk, chunk.text[max(0, rows[0].start() - 30):rows[-1].end() + 10])
+            fact = _fact(_whole(total), chunk, chunk.text[max(0, rows[0].start() - 30):rows[-1].end() + 10])
             fact["unit"] = "kwh"
             return fact
     return None
@@ -267,7 +324,7 @@ def _find_new_advance(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
             return fact
         french = NEW_ADVANCE_FR_RE.search(chunk.text)
         if french:
-            return _fact([{"energy": None, "frequency": None, "old": None, "new": _decimal_value(french.group(1))}],
+            return _fact([{"energy": None, "frequency": None, "old": None, "new": _decimal_value(french.group(1) or french.group(2))}],
                          chunk, french.group(0))
         single = NEW_ADVANCE_SINGLE_RE.search(chunk.text)
         if single:
@@ -317,9 +374,9 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
         "supplier": None,
         "billing_period": _find_period(ordered),
         "electricity_kwh": None,
-        "amount_due": _find_labeled_amount(ordered, AMOUNT_LABELS["amount_due"]),
-        "total_energy_cost": _find_labeled_amount(ordered, AMOUNT_LABELS["total_energy_cost"]),
-        "advances_paid": _find_labeled_amount(ordered, AMOUNT_LABELS["advances_paid"]),
+        "amount_due": _find_labeled_amount(ordered, AMOUNT_LABELS["amount_due"]) or _find_pattern_amount(ordered, PAYMENT_AMOUNT_RE),
+        "total_energy_cost": _find_split_vat(ordered, "consommation") or _find_labeled_amount(ordered, AMOUNT_LABELS["total_energy_cost"]),
+        "advances_paid": _find_split_vat(ordered, "décomptes") or _find_labeled_amount(ordered, AMOUNT_LABELS["advances_paid"]),
         "calculated_difference": None,
         "customer": None,
         "gas_kwh": _find_gas(ordered),
@@ -370,7 +427,8 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
             facts["supplier"] = _fact(name if supplier.re is SUPPLIER_LABEL_RE else name.title(), chunk, supplier.group(0))
             break
     facts["electricity_kwh"] = (
-        _find_electricity_table(ordered) or _find_electricity_rows(ordered) or _find_consumption(ordered)
+        _find_electricity_table(ordered) or _find_french_meter_rows(ordered) or _find_electricity_rows(ordered)
+        or _find_consumption(ordered)
     )
     fact = facts["electricity_kwh"]
     if fact and not isinstance(fact["value"], Decimal):
@@ -381,7 +439,7 @@ def analyze_invoice_chunks(chunks: list[KnowledgeChunk]) -> dict[str, Any]:
         else:
             unit = match.group(2).lower()
             # "25 MWh" is 25.000 kWh; everything Karen says about electricity is in kWh.
-            fact["value"], fact["unit"] = (amount * 1000, "kwh") if unit == "mwh" else (amount, unit)
+            fact["value"], fact["unit"] = (_whole(amount * 1000), "kwh") if unit == "mwh" else (amount, unit)
 
     total = facts["total_energy_cost"]
     advances = facts["advances_paid"]

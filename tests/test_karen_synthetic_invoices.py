@@ -184,3 +184,20 @@ def test_the_period_of_an_advance_bill_comes_from_its_lines_in_the_upload_answer
     assert answer_uploaded_pdf_question("Over welke periode gaat dit?", mixed_chunks, mixed)["answer"] == (
         "Deze voorschotfactuur gaat over elektriciteit oktober 2026; gas november 2026 (PDF-pagina 1)."
     )
+
+
+def test_eneco_french_business_settlement_as_pypdf_reads_it():
+    # Text of Eneco's published French "EXEMPLE DE FACTURE" exactly as pypdf extracts it (owner-supplied, identifiers masked).
+    text = (FIXTURES / "22-fr-eneco-b2b-voorbeeld.txt").read_text(encoding="utf-8")
+    chunks, facts = _facts_from_text(text)
+    assert [_value(key, facts[key]) for key in (
+        "amount_due", "total_energy_cost", "advances_paid", "electricity_kwh", "new_advance", "due_date", "billing_period",
+    )] == ["1779.79", "6179.17", "4399.38", "25000", ["2371.59"], "7 novembre 2018", "03/10/2017 tot 30/06/2018"]
+    ask = lambda question: answer_uploaded_pdf_question(question, chunks, facts)["answer"]
+    assert ask("Hoeveel moet ik betalen?").startswith("Volgens deze factuur moet je nog € 1.779,79 betalen")
+    assert "vóór 7 november 2018" in ask("Hoeveel moet ik betalen?")
+    assert ask("Hoeveel stroom heb ik verbruikt?").startswith("Je stroomverbruik op deze factuur is 25000 kWh")
+    assert ask("Wat is mijn nieuwe voorschot?").startswith("Je nieuwe voorschot volgens deze factuur: € 2.371,59")
+    assert ask("Hoeveel voorschotten heb ik betaald?").startswith("Volgens deze factuur zijn er € 4.399,38 aan voorschotten")
+    summary = analyze_invoice_chunks(chunks)["answer"]
+    assert "niet betrouwbaar gevonden" not in summary
