@@ -167,3 +167,20 @@ def test_an_advance_bill_without_a_vat_label_adds_up_only_when_the_numbers_do():
     odd_chunks, _ = _facts_from_text("Uw maandelijks voorschot Elektriciteit okt 2026 70,00 € BTW 4,20 € Te betalen bedrag: € 80,00")
     odd = analyze_invoice_chunks(odd_chunks)["answer"]
     assert "Samen" not in odd and "- **Te betalen:** € 80,00" in odd
+
+
+def test_the_period_of_an_advance_bill_comes_from_its_lines_in_the_upload_answer_and_the_follow_up():
+    chunks, facts = _read("11-nl-voorschot-domiciliering.pdf")
+    assert facts["billing_period"] is None
+    assert analyze_invoice_chunks(chunks)["answer"].startswith(
+        "Dit is je maandelijkse voorschotfactuur voor oktober 2026 van Kanaal Energie."
+    )
+    assert answer_uploaded_pdf_question("Over welke periode gaat dit?", chunks, facts)["answer"] == (
+        "Deze voorschotfactuur gaat over oktober 2026 (PDF-pagina 1)."
+    )
+    mixed_chunks, mixed = _facts_from_text(
+        "Uw maandelijks voorschot Elektriciteit okt 2026 60,00 € Gas nov 2026 90,00 € Te betalen bedrag: € 150,00"
+    )
+    assert answer_uploaded_pdf_question("Over welke periode gaat dit?", mixed_chunks, mixed)["answer"] == (
+        "Deze voorschotfactuur gaat over elektriciteit oktober 2026; gas november 2026 (PDF-pagina 1)."
+    )

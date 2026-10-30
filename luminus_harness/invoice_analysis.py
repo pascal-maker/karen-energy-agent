@@ -698,6 +698,16 @@ def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
         return _overview_answer(facts) if OVERVIEW_QUESTION.search(question) else None
     fact = facts.get(key)
     invoice_type = facts.get("invoice_type")
+    lines = facts.get("advance_lines")
+    if key == "billing_period" and fact is None and lines:
+        # No date range on the bill: the months printed on the advance lines are its period.
+        months = list(dict.fromkeys(_month_period(row["period"]) for row in lines["value"]))
+        if len(months) == 1:
+            period = months[0]
+        else:
+            period = "; ".join(f"{row['energy']} {_month_period(row['period'])}" for row in lines["value"])
+        kind = "voorschotfactuur" if invoice_type and invoice_type["value"] == "voorschotfactuur" else "factuur"
+        return {"answer": f"Deze {kind} gaat over {period} (PDF-pagina {lines['page']}).", "sources": [_fact_source(lines)]}
     if fact is None and invoice_type and invoice_type["value"] == "voorschotfactuur" and key in (
         "electricity_kwh", "gas_kwh", "advances_paid", "total_energy_cost",
     ):
