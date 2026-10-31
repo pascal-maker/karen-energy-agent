@@ -56,6 +56,7 @@ from luminus_harness.gemma_answer import (
     mentions_energy,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
+from luminus_harness.invoice_model import model_enabled, needs_model, read_invoice_with_model
 from luminus_harness.photo_invoice import PhotoUnavailable, chunks_from_text, is_image_upload, ocr_image
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from luminus_harness.comparison_session import is_offer_comparison_question, pdf_comparison_reply
@@ -588,7 +589,7 @@ with gr.Blocks(title="EnergyAgent Karen", css=CSS, theme=gr.themes.Soft()) as gr
         with gr.Column(scale=1, elem_classes=["card", "voice-card"]):
             gr.HTML(
                 '<h2 class="card-title">Waar kan ik je mee helpen?</h2>'
-                '<p class="voice-intro">Typ je vraag of gebruik de microfoon. Bij een geüploade factuur blijven vervolgvragen tekstueel; Karen verwerkt ze op haar backend zonder extern model.</p>'
+                '<p class="voice-intro">Typ je vraag of gebruik de microfoon. Bij een geüploade factuur blijven vervolgvragen tekstueel; Karen beantwoordt ze op haar backend zonder extern model.</p>'
                 '<div class="demo-prompts"><span>Wat is de stroomprijs?</span>'
                 '<span>Waarom is mijn voorschot gewijzigd?</span>'
                 '<span>Leg deze factuurregel uit</span></div>'
@@ -793,7 +794,7 @@ async def api_health() -> dict[str, str]:
     return {
         "status": "ok",
         "answer_model": os.getenv("GEMMA_MODEL", "gemma-4-26b-a4b-it"),
-        "uploaded_pdf_processing": "local-only",
+        "uploaded_pdf_processing": "masked-model" if model_enabled() else "local-only",
     }
 
 
@@ -827,6 +828,18 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
     if sum(len(chunk.text) for chunk in chunks) > MAX_PDF_TEXT_CHARS:
         raise HTTPException(status_code=413, detail="Dit bestand bevat meer tekst dan één sessie kan verwerken.")
     analysis = analyze_invoice_chunks(chunks)
+    processing = "local-only"
+    if needs_model(analysis["facts"]) and model_enabled():
+        customer = (analysis["facts"].get("customer") or {}).get("value") or ""
+        try:
+            model_facts, sent = await read_invoice_with_model(chunks, (customer,))
+            processing = "masked-model" if sent else processing
+            if model_facts:
+                analysis = analyze_invoice_chunks(chunks, model_facts)
+        except Exception:
+            # Whatever goes wrong with the model, the rules' reading stands.
+            processing = "masked-model"
+            analysis = analyze_invoice_chunks(chunks)
     if photo:
         analysis["answer"] = analysis["answer"].replace("uit de PDF", "van de foto").replace(" (PDF-pagina 1)", "")
         analysis["photo"] = True
@@ -837,7 +850,7 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
         "answer": analysis["answer"],
         "facts": analysis["facts"],
         "sources": analysis["sources"],
-        "processing": "local-only",
+        "processing": processing,
     }
 
 
