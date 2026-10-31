@@ -1,8 +1,10 @@
 """Read any invoice layout with the language model, on masked text, and keep only values Karen can check.
 
 The model sees the invoice text after names, addresses, IBAN, EAN, phone numbers and customer, contract
-and invoice numbers are replaced by [X]. It copies each value exactly as printed; Karen keeps a value only
-when that exact text is on the invoice, and drops amounts that do not add up. The regex reader in
+and invoice numbers are replaced by [X], and after every word that is not on Karen's list of invoice words
+(invoice_words.txt) is replaced too, so a name without a title or label never reaches the model. It copies
+each value exactly as printed; Karen keeps a value only when that exact text is on the invoice next to words
+that fit its meaning (its unit, a refund or payment label), and drops amounts that do not add up. The regex reader in
 invoice_analysis stays first: the model only fills what the rules did not find.
 """
 
@@ -12,6 +14,7 @@ import json
 import os
 import re
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from .knowledge import KnowledgeChunk
@@ -83,14 +86,52 @@ def mask_invoice_text(text: str, names: tuple[str, ...] = ()) -> str:
     masked = _URL_QUERY_RE.sub("", masked)
     masked = _NAME_RE.sub(lambda match: match.group(0).replace(match.group(1), MASK), masked)
     masked = _PHONE_RE.sub(MASK, masked)
-    return masked
+    return _keep_invoice_words(masked)
+
+
+_WORDS = frozenset(
+    line.strip() for line in (Path(__file__).with_name("invoice_words.txt")).read_text(encoding="utf-8").splitlines()
+    if line.strip() and not line.startswith("#")
+)
+# Supplier names whose words are also first names; kept only together.
+_SUPPLIER_PHRASES = re.compile(r"(?i)\b(?:frank energie|dats 24|octa\+|wase wind)\b")
+# "jan 2026" is a month; "Jan" alone may be a name.
+_MONTH_BEFORE_YEAR = re.compile(r"(?i)\bjan(?=\.?\s+\d{2,4}\b)")
+_TOKEN_RE = re.compile(r"\[X\]|[^\W\d_](?:[\w’'.+-]*\w)?|\w*\d\w*(?:[-./]\w+)*")
+
+
+def _known(token: str) -> bool:
+    if token == MASK or token.isdigit() or re.fullmatch(r"[\d.,/-]+", token):
+        return True
+    letters = [run.lower() for run in re.findall(r"[^\W\d_]+", token)]
+    # Numbers with a unit or a short marker ("8u30", "21%", "1.234,56") stay; other mixes are codes.
+    if re.search(r"\d", token):
+        return all(len(run) <= 3 and (run in _WORDS or len(run) == 1) for run in letters)
+    return all(run in _WORDS or (len(run) == 1 and run in "aàeéiou") for run in letters)
+
+
+def _keep_invoice_words(text: str) -> str:
+    """Every word that is not an invoice word becomes [X]; runs of [X] become one."""
+    keep: list[tuple[int, int]] = [m.span() for m in _SUPPLIER_PHRASES.finditer(text)]
+    keep += [m.span() for m in _MONTH_BEFORE_YEAR.finditer(text)]
+
+    def replace(match: re.Match[str]) -> str:
+        if any(start <= match.start() < end for start, end in keep) or _known(match.group(0)):
+            return match.group(0)
+        return MASK
+
+    masked = _TOKEN_RE.sub(replace, text)
+    # Whatever is left of an account number after its label: "IBAN [X] 3350 5545 [X]".
+    masked = re.sub(r"(?i)\b(iban|bic)\b[\s:]*(?:(?:\[X\]|[A-Z]{2}\d{2}|\d{2,5})\s*)+", r"\1 [X] ", masked)
+    return re.sub(r"\[X\](?:[\s,./-]*\[X\])+", MASK, masked)
 
 
 def model_enabled() -> bool:
-    """On when a language model is configured; KAREN_INVOICE_MODEL=0 keeps invoices on the regex reader only."""
+    """On when the OpenAI model is configured; KAREN_INVOICE_MODEL=0 keeps invoices on the regex reader only."""
     if os.getenv("KAREN_INVOICE_MODEL", "1").strip() == "0":
         return False
-    return any(os.getenv(name, "").strip() for name in ("GEMINI_API_KEY", "OPENAI_API_KEY"))
+    # Only the paid OpenAI API: the free-tier Gemma route may keep what it is sent.
+    return bool(os.getenv("OPENAI_API_KEY", "").strip())
 
 
 _INSTRUCTION = """Je leest een Belgische energiefactuur (Nederlands of Frans). Persoonsgegevens zijn vervangen door [X].
@@ -115,9 +156,9 @@ Staat iets er niet duidelijk op, zet dan null. Reken niets uit en gok niets.
 
 
 def _ask_model(masked: str) -> str:
-    from .gemma_answer import _generate
+    from .gemma_answer import _generate_backup
 
-    return _generate(f"Factuurtekst:\n{masked[:MAX_MODEL_CHARS]}", _INSTRUCTION)
+    return _generate_backup(f"Factuurtekst:\n{masked[:MAX_MODEL_CHARS]}", _INSTRUCTION)
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
@@ -136,36 +177,60 @@ def _squash(text: str) -> str:
 
 
 class _Invoice:
-    """The original (unmasked) chunks, to check that a value is printed and find its page."""
+    """The original (unmasked) chunks, to check that a value is printed, next to what it means, and find its page."""
 
     def __init__(self, chunks: list[KnowledgeChunk]):
         self.chunks = sorted(chunks, key=lambda chunk: chunk.page)
         self.texts = [_squash(chunk.text) for chunk in self.chunks]
 
-    def find(self, printed: Any) -> dict[str, Any] | None:
+    def find(
+        self, printed: Any, before: re.Pattern[str] | None = None, after: re.Pattern[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """The first place `printed` stands whole, with `before` in the 120 characters before it and `after` right behind it."""
         if not isinstance(printed, str) or not printed.strip() or MASK in printed:
             return None
         needle = _squash(printed.strip())
-        if len(needle) < 1:
-            return None
         # Whole numbers only: "63,21" must not match inside "163,21" or "63,215".
         pattern = re.compile(r"(?<![\w.,])" + re.escape(needle) + r"(?![\w]|[.,]\d)", re.IGNORECASE)
         for chunk, text in zip(self.chunks, self.texts):
-            match = pattern.search(text)
-            if match:
-                start, end = max(0, match.start() - 80), min(len(text), match.end() + 80)
-                return {"value": needle, "page": chunk.page, "source": chunk.source, "excerpt": text[start:end].strip()[:360],
-                        "read_by": "model"}
+            for match in pattern.finditer(text):
+                lead, tail = text[max(0, match.start() - 120):match.start()], text[match.end():match.end() + 16]
+                if before is not None and not before.search(lead):
+                    continue
+                trailing = after.match(tail) if after is not None else None
+                if after is not None and trailing is None:
+                    continue
+                excerpt = text[max(0, match.start() - 80):min(len(text), match.end() + 80)].strip()[:360]
+                return {"value": needle, "page": chunk.page, "source": chunk.source, "excerpt": excerpt, "read_by": "model",
+                        "lead": lead, "unit": trailing.group(1).lower() if trailing and trailing.groups() else None}
         return None
 
 
-def _amount(invoice: _Invoice, printed: Any) -> dict[str, Any] | None:
+_UNIT_RE = re.compile(r"(?i)\s*(kwh|mwh|m³|m3)\b")
+_DUE_WORDS = re.compile(r"(?i)betal|saldo|terug|tegoed|voordeel|ontvang|verschuldigd|totaal|bedrag|payer|solde|montant|rembours|faveur|total")
+_REFUND_WORDS = re.compile(r"(?i)terug|tegoed|in uw voordeel|te ontvangen|creditnota|rembours|en votre faveur|à recevoir|crédit")
+_PAY_WORDS = re.compile(r"(?i)te betalen|nog te betalen|verschuldigd|à payer|montant dû|reste à payer")
+_COST_WORDS = re.compile(r"(?i)kost|totaal|total|consommation|verbruik|bedrag|montant|coût")
+_ADVANCE_WORDS = re.compile(r"(?i)voorschot|acompte|décompte|intermédiaire|gefactureerd|aangerekend|déjà|reeds")
+_NEW_ADVANCE_WORDS = re.compile(r"(?i)voorschot|acompte|intermédiaire|nieuw|nouveau|nouvelle|maandelijks|mensuel")
+_DUE_DATE_WORDS = re.compile(r"(?i)verval|vóór|voor|uiterlijk|échéance|avant|domicili|bank|overschrijv|prélev|betal")
+_DEBIT_WORDS = re.compile(r"(?i)domicili|uw bank zal|automatisch|prélèvement|afgehouden")
+_ELECTRICITY_WORDS = re.compile(r"(?i)elektr|stroom|électr|electr|dag|nacht|piek|dal|pleines|creuses|verbruik|consommation|kwh|mwh")
+_GAS_WORDS = re.compile(r"(?i)gas|gaz")
+
+
+# Money is never followed by a unit: "600 kWh" is not an amount of € 600.
+_MONEY_AFTER = re.compile(r"(?i)(?!\s*(?:kwh|mwh|kw|m³|m3|%|kva)\b)")
+
+
+def _amount(invoice: _Invoice, printed: Any, before: re.Pattern[str] | None = None, after: re.Pattern[str] | None = None) -> dict[str, Any] | None:
     from .invoice_analysis import _decimal_value
 
-    fact = invoice.find(printed)
+    after = after or _MONEY_AFTER
+    fact = invoice.find(printed, before, after)
     if fact is None:
         return None
-    value = _decimal_value(fact["value"].replace("€", "").strip().lstrip("-").strip())
+    value = _decimal_value(fact["value"].replace("€", "").replace("EUR", "").strip().lstrip("-").strip())
     if value is None:
         return None
     fact["value"] = value
@@ -174,15 +239,30 @@ def _amount(invoice: _Invoice, printed: Any) -> dict[str, Any] | None:
 
 def _energy(value: Any) -> str | None:
     text = str(value or "").lower()
-    if "gas" in text:
+    if "gas" in text or "gaz" in text:
         return "gas"
     if "elek" in text or "élec" in text or "elec" in text or "stroom" in text:
         return "elektriciteit"
     return None
 
 
+def _rows(value: Any) -> list[dict[str, Any]]:
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _clean(fact: dict[str, Any]) -> dict[str, Any]:
+    fact.pop("lead", None)
+    if fact.get("unit") is None:
+        fact.pop("unit", None)
+    return fact
+
+
+def _unit(value: Any) -> str:
+    return str(value or "").strip().lower().replace("3", "³")
+
+
 def verified_model_facts(chunks: list[KnowledgeChunk], data: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Keep only the model's values that are printed on the invoice, linked to their page."""
+    """Keep only the model's values that are printed on the invoice next to words that fit, linked to their page."""
     from .invoice_analysis import _whole
 
     invoice = _Invoice(chunks)
@@ -193,79 +273,85 @@ def verified_model_facts(chunks: list[KnowledgeChunk], data: dict[str, Any]) -> 
         facts["supplier"] = supplier
 
     kind = str(data.get("invoice_type") or "").lower()
-    if kind in ("jaarafrekening", "voorschotfactuur", "slotfactuur", "tussentijdse afrekening"):
-        facts["invoice_type"] = {"value": kind, "page": invoice.chunks[0].page if invoice.chunks else 1,
-                                 "source": invoice.chunks[0].source if invoice.chunks else "", "excerpt": "", "read_by": "model"}
+    if kind in ("jaarafrekening", "voorschotfactuur", "slotfactuur", "tussentijdse afrekening") and invoice.chunks:
+        facts["invoice_type"] = {"value": kind, "page": invoice.chunks[0].page, "source": invoice.chunks[0].source,
+                                 "excerpt": "", "read_by": "model"}
 
     period = data.get("billing_period")
-    if isinstance(period, dict):
-        start, end = invoice.find(period.get("from")), invoice.find(period.get("to"))
-        if start and end and start["page"] == end["page"]:
-            start["value"] = f"{start['value']} tot {end['value']}"
+    if isinstance(period, dict) and isinstance(period.get("to"), str):
+        # Both dates of one period, printed together: "01/01/2025 tot 31/12/2025".
+        start = invoice.find(period.get("from"), after=re.compile(r"\s*(?:tot(?: en met)?|t/m|au|à|-|–)\s*" + re.escape(_squash(period["to"].strip()))))
+        if start:
+            start["value"] = f"{start['value']} tot {_squash(period['to'].strip())}"
             facts["billing_period"] = start
 
     due = data.get("amount_due")
-    if isinstance(due, dict):
-        fact = _amount(invoice, due.get("amount"))
+    if isinstance(due, dict) and isinstance(due.get("refund", False), bool):
+        fact = _amount(invoice, due.get("amount"), _DUE_WORDS)
         if fact:
-            if due.get("refund") is True and fact["value"] > 0:
-                fact["value"] = -fact["value"]
-            facts["amount_due"] = fact
+            # The direction comes from the invoice: a minus sign or a refund word before the amount.
+            printed_refund = bool(re.search(r"-\s*(?:€|EUR)?\s*$", fact["lead"]) or fact["value"] < 0 or _REFUND_WORDS.search(fact["lead"][-70:]))
+            printed_pay = bool(_PAY_WORDS.search(fact["lead"][-70:]))
+            refund = due.get("refund") is True
+            # A refund the invoice does not show, or a payment where it shows a refund, is not taken.
+            if refund == printed_refund and (refund or printed_pay or not _REFUND_WORDS.search(fact["lead"])):
+                fact["value"] = -abs(fact["value"]) if refund else abs(fact["value"])
+                facts["amount_due"] = fact
 
-    for key in ("total_energy_cost", "advances_paid"):
-        fact = _amount(invoice, data.get(key))
+    for key, words in (("total_energy_cost", _COST_WORDS), ("advances_paid", _ADVANCE_WORDS)):
+        fact = _amount(invoice, data.get(key), words)
         if fact:
             facts[key] = fact
 
     electricity = data.get("electricity")
     if isinstance(electricity, dict):
-        unit = str(electricity.get("unit") or "kWh").lower()
-        fact = _amount(invoice, electricity.get("amount"))
-        if fact is None and isinstance(electricity.get("parts"), list) and len(electricity["parts"]) >= 2:
-            parts = [_amount(invoice, part) for part in electricity["parts"]]
-            if all(parts):
+        unit = _unit(electricity.get("unit") or "kwh")
+        fact = _amount(invoice, electricity.get("amount"), _ELECTRICITY_WORDS, _UNIT_RE)
+        if fact is None and len(_parts := electricity.get("parts") or []) >= 2 and isinstance(_parts, list):
+            parts = [_amount(invoice, part, _ELECTRICITY_WORDS, _UNIT_RE) for part in _parts]
+            if all(parts) and len({part["unit"] for part in parts}) == 1:
                 fact = dict(parts[0], value=sum(part["value"] for part in parts))
-        if fact and unit in ("kwh", "mwh"):
+        # The unit printed behind the number must be the unit the model gave.
+        if fact and unit in ("kwh", "mwh") and fact["unit"] == unit:
             fact["value"], fact["unit"] = (_whole(fact["value"] * 1000), "kwh") if unit == "mwh" else (fact["value"], "kwh")
             facts["electricity_kwh"] = fact
 
     gas = data.get("gas")
     if isinstance(gas, dict):
-        fact = _amount(invoice, gas.get("amount"))
-        unit = str(gas.get("unit") or "").lower().replace("3", "³")
-        if fact and unit in ("kwh", "m³"):
+        unit = _unit(gas.get("unit"))
+        fact = _amount(invoice, gas.get("amount"), _GAS_WORDS, _UNIT_RE)
+        if fact and unit in ("kwh", "m³") and _unit(fact["unit"]) == unit:
             fact["unit"] = "m³" if unit == "m³" else "kwh"
             facts["gas_kwh"] = fact
 
-    rows = []
-    first = None
-    for row in data.get("new_advance") or []:
-        if isinstance(row, dict):
-            fact = _amount(invoice, row.get("amount"))
-            if fact:
-                rows.append({"energy": _energy(row.get("energy")), "frequency": row.get("frequency"), "old": None, "new": fact["value"]})
-                first = first or fact
+    rows, first = [], None
+    for row in _rows(data.get("new_advance")):
+        fact = _amount(invoice, row.get("amount"), _NEW_ADVANCE_WORDS)
+        if fact:
+            frequency = row.get("frequency") if isinstance(row.get("frequency"), str) else None
+            rows.append({"energy": _energy(row.get("energy")), "frequency": frequency, "old": None, "new": fact["value"]})
+            first = first or fact
     if rows:
         facts["new_advance"] = dict(first, value=rows)
 
-    due_date = invoice.find(data.get("due_date"))
+    due_date = invoice.find(data.get("due_date"), _DUE_DATE_WORDS)
     if due_date and re.search(r"\d", due_date["value"]):
-        if data.get("direct_debit") is True:
+        if data.get("direct_debit") is True and _DEBIT_WORDS.search(due_date["lead"] + due_date["excerpt"]):
             due_date["direct_debit"] = True
         facts["due_date"] = due_date
 
     if kind == "voorschotfactuur":
-        lines = []
-        first = None
-        for row in data.get("advance_lines") or []:
-            if isinstance(row, dict) and _energy(row.get("energy")):
-                fact = _amount(invoice, row.get("amount"))
-                if fact:
-                    lines.append({"energy": _energy(row.get("energy")), "period": str(row.get("period") or ""), "amount": fact["value"]})
-                    first = first or fact
+        lines, first = [], None
+        for row in _rows(data.get("advance_lines")):
+            energy = _energy(row.get("energy"))
+            words = _GAS_WORDS if energy == "gas" else _ELECTRICITY_WORDS
+            fact = _amount(invoice, row.get("amount"), words) if energy else None
+            if fact:
+                lines.append({"energy": energy, "period": str(row.get("period") or ""), "amount": fact["value"]})
+                first = first or fact
         if lines:
             facts["advance_lines"] = dict(first, value=lines, vat=None)
-    return facts
+    return {key: _clean(fact) for key, fact in facts.items()}
 
 
 def needs_model(facts: dict[str, Any]) -> bool:
@@ -283,10 +369,10 @@ def read_invoice_with_model(chunks: list[KnowledgeChunk], names: tuple[str, ...]
         return {}
     text = " ".join(chunk.text for chunk in sorted(chunks, key=lambda chunk: chunk.page))
     try:
-        data = _parse_json(_ask_model(mask_invoice_text(text, names)))
+        return verified_model_facts(chunks, _parse_json(_ask_model(mask_invoice_text(text, names))))
     except Exception:
+        # A model that is down, slow or answers in an unexpected shape leaves the invoice to the rules.
         return {}
-    return verified_model_facts(chunks, data)
 
 
 def adds_up(total: Decimal, advances: Decimal, due: Decimal) -> bool:

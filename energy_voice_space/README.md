@@ -48,8 +48,14 @@ Gemma API; visitors are told not to include personal information in those
 questions. Do not use this free-tier route for personal bills.
 
 When a visitor uploads a PDF, the file is sent to this Hugging Face backend.
-The backend extracts selectable text and creates a rule-based first read without
-calling Google or OpenAI. Retrieved PDF chunks stay in a bounded server-side
+The backend extracts selectable text and creates a rule-based first read. Only
+when the rules miss a fact the first answer needs, and `OPENAI_API_KEY` is set,
+the text goes to the OpenAI model (never the free-tier Gemma route) after names,
+addresses, IBAN, EAN, phone, customer and invoice numbers, and every word that is
+not on `luminus_harness/invoice_words.txt`, are replaced by `[X]`. Karen keeps a
+model value only when it is printed on the bill next to words that fit it, and
+`/api/upload` then reports `processing: masked-model`. `KAREN_INVOICE_MODEL=0`
+turns this off. Retrieved PDF chunks stay in a bounded server-side
 session for at most 60 minutes and can be deleted from the UI. Text follow-ups
 retrieve and display matching page excerpts locally. The Gradio OpenAI voice
 route is blocked while an uploaded PDF is active, so bill text is not sent to
@@ -74,8 +80,8 @@ submit it or send visitor contact details.
 ## Framer answer API
 
 - The Gradio UI is served at `/ui/` (the Space root redirects there).
-- `POST /api/upload` accepts multipart field `file` with a PDF, performs local
-  extraction/analysis, and returns an opaque `session_id` plus page-linked
+- `POST /api/upload` accepts multipart field `file` with a PDF, performs
+  extraction/analysis (rules first, masked model only for missing facts), and returns an opaque `session_id` plus page-linked
   evidence. Upload limit: 15 MB, 30 pages, 120,000 extracted characters.
 - `POST /api/answer` accepts `{ "question": "...", "session_id": "..." }`.
   With a session ID it returns local retrieval excerpts without calling a model;
@@ -104,7 +110,8 @@ submit it or send visitor contact details.
   PDF first; invoice text never goes to Browser Use.
 - `DELETE /api/session/{session_id}` deletes the uploaded-text session early;
   otherwise it expires after 60 minutes. The in-memory session store is bounded.
-- `GET /api/health` reports API availability, model, and local-only PDF handling.
+- `GET /api/health` reports API availability, model, and PDF handling
+  (`local-only` or `masked-model`).
 - Set `FRAMER_ALLOWED_ORIGINS` to a comma-separated list of exact published
   custom origins if Framer uses a domain outside `framer.app` or
   `framer.website`.

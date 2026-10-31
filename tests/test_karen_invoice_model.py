@@ -9,6 +9,7 @@ from luminus_harness import invoice_model
 from luminus_harness.invoice_analysis import analyze_invoice_chunks
 from luminus_harness.invoice_model import mask_invoice_text, verified_model_facts
 from luminus_harness.knowledge import KnowledgeChunk, load_pdf_chunks_from_bytes
+from luminus_harness.rate_limit import SlidingWindowRateLimiter
 
 FIXTURES = Path(__file__).parent / "fixtures" / "invoices"
 
@@ -16,7 +17,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "invoices"
 BILL = (
     "Dhr. Jan Peeters Kerkstraat 12 bus 3, 2000 Antwerpen Klantnummer: 123456789 "
     "Factuurnummer: 2026-0042 IBAN BE68 5390 0754 7034 EAN 54 1448 8200 4455 6677 "
-    "Uw afrekening Zonnig Stroom NV Periode 01/02/2025 - 31/01/2026 "
+    "Uw afrekening Kanaal Energie Periode 01/02/2025 - 31/01/2026 "
     "Kosten in totaal € 1.111,10 Reeds gefactureerd -€ 1.000,00 Saldo € 111,10 "
     "Stroom dag 1.400 kWh nacht 600 kWh Betalen voor 20/02/2026 +++123/4567/89012+++"
 )
@@ -30,8 +31,15 @@ def test_masking_hides_the_person_and_keeps_the_numbers() -> None:
     masked = mask_invoice_text(BILL, ("Jan Peeters",))
     for private in ("Peeters", "Kerkstraat", "2000 Antwerpen", "123456789", "2026-0042", "BE68", "1448 8200", "4567/89012"):
         assert private not in masked
-    for kept in ("Zonnig Stroom NV", "01/02/2025 - 31/01/2026", "€ 1.111,10", "-€ 1.000,00", "€ 111,10", "1.400 kWh", "600 kWh", "20/02/2026"):
+    for kept in ("Kanaal Energie", "01/02/2025 - 31/01/2026", "€ 1.111,10", "-€ 1.000,00", "€ 111,10", "1.400 kWh", "600 kWh", "20/02/2026"):
         assert kept in masked
+
+
+def test_names_without_a_title_and_customer_companies_are_masked() -> None:
+    masked = mask_invoice_text("ANNA JANSSENS Facture annuelle Bakkerij Verhoeven BV Totaal te betalen € 89,00 Frank Energie")
+    for private in ("ANNA", "JANSSENS", "Bakkerij", "Verhoeven"):
+        assert private not in masked
+    assert "Facture annuelle" in masked and "Totaal te betalen € 89,00" in masked and "Frank Energie" in masked
 
 
 def test_masking_keeps_dates_that_look_like_a_postcode() -> None:
@@ -42,7 +50,7 @@ def test_masking_keeps_dates_that_look_like_a_postcode() -> None:
 
 
 MODEL_ANSWER = {
-    "supplier": "Zonnig Stroom NV",
+    "supplier": "Kanaal Energie",
     "invoice_type": "jaarafrekening",
     "billing_period": {"from": "01/02/2025", "to": "31/01/2026"},
     "amount_due": {"amount": "111,10", "refund": False},
@@ -63,7 +71,7 @@ def test_only_printed_values_survive() -> None:
     assert str(facts["total_energy_cost"]["value"]) == "1111.10"
     assert facts["electricity_kwh"]["value"] == 2000
     assert facts["billing_period"]["value"] == "01/02/2025 tot 31/01/2026"
-    assert facts["supplier"]["page"] == 1 and "Zonnig" in facts["supplier"]["excerpt"]
+    assert facts["supplier"]["page"] == 1 and "Kanaal" in facts["supplier"]["excerpt"]
     # "3.000" kWh gas is not on the bill: invented, so dropped.
     assert "gas_kwh" not in facts
 
@@ -73,8 +81,28 @@ def test_a_number_inside_a_longer_number_is_not_printed() -> None:
     assert facts == {}
 
 
+def test_unit_must_be_the_printed_unit() -> None:
+    chunks = _chunks("Uw consommation 50 kWh Gasverbruik: 1.150 m³")
+    facts = verified_model_facts(chunks, {"electricity": {"amount": "50", "unit": "MWh"}, "gas": {"amount": "1.150", "unit": "kWh"}})
+    assert facts == {}
+    facts = verified_model_facts(chunks, {"electricity": {"amount": "50", "unit": "kWh"}, "gas": {"amount": "1.150", "unit": "m³"}})
+    assert facts["electricity_kwh"]["value"] == 50 and facts["gas_kwh"]["unit"] == "m³"
+
+
+def test_payment_direction_must_be_printed() -> None:
+    to_pay = _chunks("Totaal te betalen € 111,10")
+    assert verified_model_facts(to_pay, {"amount_due": {"amount": "111,10", "refund": True}}) == {}
+    refund = _chunks("Bedrag in uw voordeel € 150,00 wordt teruggestort")
+    assert verified_model_facts(refund, {"amount_due": {"amount": "150,00", "refund": False}}) == {}
+    assert str(verified_model_facts(refund, {"amount_due": {"amount": "150,00", "refund": True}})["amount_due"]["value"]) == "-150.00"
+
+
+def test_money_is_not_a_consumption() -> None:
+    assert verified_model_facts(_chunks("Saldo nacht 600 kWh"), {"amount_due": {"amount": "600", "refund": False}}) == {}
+
+
 def test_model_amounts_that_do_not_add_up_are_dropped() -> None:
-    wrong = dict(MODEL_ANSWER, amount_due={"amount": "600", "refund": False})
+    wrong = dict(MODEL_ANSWER, amount_due={"amount": "1.111,10", "refund": False})
     analysis = analyze_invoice_chunks(_chunks(BILL), verified_model_facts(_chunks(BILL), wrong))
     facts = analysis["facts"]
     assert facts["amount_due"] is None and facts["total_energy_cost"] is None and facts["advances_paid"] is None
@@ -91,6 +119,7 @@ def test_model_fills_only_what_the_rules_missed() -> None:
 def test_upload_sends_masked_text_only_when_the_rules_fall_short(monkeypatch) -> None:
     import energy_voice_app
 
+    monkeypatch.setattr(energy_voice_app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-present")
     sent: list[str] = []
 
@@ -103,14 +132,28 @@ def test_upload_sends_masked_text_only_when_the_rules_fall_short(monkeypatch) ->
     client = TestClient(energy_voice_app.api_app)
 
     payload = client.post("/api/upload", files={"file": ("bill.pdf", b"%PDF-1.4", "application/pdf")}).json()
+    assert payload["processing"] == "masked-model"
     assert len(sent) == 1 and "Peeters" not in sent[0] and "BE68" not in sent[0]
     assert payload["facts"]["amount_due"]["value"] is not None
-    assert "111,10" in payload["answer"] and "Zonnig Stroom NV" in payload["answer"]
+    assert "111,10" in payload["answer"] and "Kanaal Energie" in payload["answer"]
 
     full = (FIXTURES / "13-nl-jaarafrekening-nieuw-voorschot-tabel.pdf").read_bytes()
     monkeypatch.setattr(energy_voice_app, "_pdf_chunks", lambda data, name: load_pdf_chunks_from_bytes(data, source=name))
-    client.post("/api/upload", files={"file": ("13.pdf", full, "application/pdf")})
-    assert len(sent) == 1
+    payload = client.post("/api/upload", files={"file": ("13.pdf", full, "application/pdf")}).json()
+    assert len(sent) == 1 and payload["processing"] == "local-only"
+
+
+def test_unexpected_model_output_falls_back_to_the_rules(monkeypatch) -> None:
+    import energy_voice_app
+
+    monkeypatch.setattr(energy_voice_app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-present")
+    monkeypatch.setattr(energy_voice_app, "_pdf_chunks", lambda data, name: _chunks(BILL))
+    client = TestClient(energy_voice_app.api_app)
+    for answer in ('{"new_advance": 42}', '{"amount_due": "111,10", "billing_period": [1]}', '{"electricity": {"parts": 7}}', "[1, 2]"):
+        monkeypatch.setattr(invoice_model, "_ask_model", lambda masked, answer=answer: answer)
+        upload = client.post("/api/upload", files={"file": ("bill.pdf", b"%PDF-1.4", "application/pdf")})
+        assert upload.status_code == 200 and upload.json()["answer"]
 
 
 def test_switch_keeps_invoices_on_the_rules(monkeypatch) -> None:
