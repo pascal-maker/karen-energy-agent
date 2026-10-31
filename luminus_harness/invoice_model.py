@@ -1,15 +1,17 @@
 """Read any invoice layout with the language model, on masked text, and keep only values Karen can check.
 
-The model sees the invoice text after names, addresses, IBAN, EAN, phone numbers and customer, contract
-and invoice numbers are replaced by [X], and after every word that is not on Karen's list of invoice words
-(invoice_words.txt) is replaced too, so a name without a title or label never reaches the model. It copies
-each value exactly as printed; Karen keeps a value only when that exact text is on the invoice next to words
-that fit its meaning (its unit, a refund or payment label), and drops amounts that do not add up. The regex reader in
-invoice_analysis stays first: the model only fills what the rules did not find.
+Off unless KAREN_INVOICE_MODEL=1 and OPENAI_API_KEY are set. Only passages around amounts, dates and
+quantities leave the server, and in them every word that is not on Karen's list of invoice words
+(invoice_words.txt) and every number that is not an amount with cents, a date or a quantity with its unit
+becomes [X]. The model copies each value exactly as printed; Karen keeps a value only when that exact text
+is on the invoice next to words that fit it (its energy and unit, its sign and refund or payment label, a
+total incl. btw), and keeps the model's amounts only when costs minus advances is the amount due. The
+regex reader in invoice_analysis stays first: the model only fills what the rules did not find.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -20,7 +22,10 @@ from typing import Any
 from .knowledge import KnowledgeChunk
 
 MASK = "[X]"
-MAX_MODEL_CHARS = 12000
+MAX_MODEL_CHARS = 6000
+MODEL_DEADLINE_SECONDS = 30
+# At most two invoices at the model at once; a third visitor gets the rules' reading.
+_MODEL_SLOTS = 2
 
 _IDENTIFIER_LABELS = (
     r"klantnummer|klantnr\.?|klant nr\.?|klantreferentie|contractnummer|contract nr\.?|factuurnummer|factuurnr\.?"
@@ -48,28 +53,13 @@ _NAME_RE = re.compile(
     r"|Dhr\.?|Mevr\.?|Mr\.?|Mw\.?|De heer|Mevrouw|Meneer|Madame|Monsieur|Mme\.?|Beste|Geachte|Cher|Chère)\s*:?\s+"
     rf"((?:{_NAME_WORD}\s+){{0,3}}{_NAME_WORD})"
 )
-_STREET_WORD = (
-    r"[\wÀ-ÿ'’-]*(?:straat|laan|weg|plein|lei|dreef|steenweg|baan|kaai|hof|dijk|markt|singel|vest|wal|pad|berg|veld)"
-)
-_FR_STREET = r"(?:rue|avenue|av\.|chaussée|boulevard|bd|place|chemin|allée|square|clos|impasse|quai|drève|sentier)"
-_POSTCODE = r"(?:[,\s]+(?:B-)?(?<![\d/.-])\d{4}\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]+(?:[ -][A-ZÀ-Ý][\wÀ-ÿ'’-]+)?)?"
-_ADDRESS_RE = re.compile(
-    rf"(?i:\b{_STREET_WORD})\s+\d+[A-Za-z]?(?:\s*(?:bus|bte|boîte)\s*\w+)?{_POSTCODE}"
-    rf"|(?i:\b{_FR_STREET})\s+(?:[\wÀ-ÿ'’-]+\s+){{0,4}}?\d+[A-Za-z]?(?:\s*(?:bus|bte|boîte)\s*\w+)?{_POSTCODE}"
-)
-_ADDRESS_LABEL_RE = re.compile(
-    r"(?i)\b(?:adres|adresse|leveringsadres|verbruiksadres|afnameadres|facturatieadres|adresse de (?:livraison|fourniture|facturation))\s*:?\s*"
-    r"([^:\n]{0,80}?\b(?:B-)?(?<![\d/.-])\d{4}\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]+)"
-)
-# What is left of an address once its street is masked: "[X]/6R 2600 BERCHEM", "[X] - 2640 Mortsel".
-_ADDRESS_REST_RE = re.compile(r"\[X\][^\s:]*(?:\s*[-,]\s*|\s+)(?:B-)?\d{4}\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]+")
-_CAPS_CITY_RE = re.compile(r"(?<![\d/.,-])\b\d{4}\s+[A-ZÀ-Ý]{3,}(?:[ -][A-ZÀ-Ý]{3,})?\b(?![a-zà-ÿ])")
 # Query strings in links can carry customer or contract codes.
 _URL_QUERY_RE = re.compile(r"(?<=[\w/])\?[^\s]+")
 
 
 def mask_invoice_text(text: str, names: tuple[str, ...] = ()) -> str:
-    """Replace what identifies a person or a contract by [X]; amounts, dates, kWh and supplier stay."""
+    """Labelled identifiers and titled names first, then everything that is not an invoice word, an amount,
+    a date or a quantity: streets, cities, names and numbers of any other shape become [X]."""
     masked = text
     for name in names:
         if name and len(name) > 2:
@@ -79,10 +69,6 @@ def mask_invoice_text(text: str, names: tuple[str, ...] = ()) -> str:
     masked = _IBAN_RE.sub(MASK, masked)
     masked = _LONG_NUMBER_RE.sub(MASK, masked)
     masked = _IDENTIFIER_RE.sub(lambda match: match.group(0).replace(match.group(1), MASK), masked)
-    masked = _ADDRESS_LABEL_RE.sub(lambda match: match.group(0).replace(match.group(1), MASK), masked)
-    masked = _ADDRESS_RE.sub(MASK, masked)
-    masked = _ADDRESS_REST_RE.sub(MASK, masked)
-    masked = _CAPS_CITY_RE.sub(MASK, masked)
     masked = _URL_QUERY_RE.sub("", masked)
     masked = _NAME_RE.sub(lambda match: match.group(0).replace(match.group(1), MASK), masked)
     masked = _PHONE_RE.sub(MASK, masked)
@@ -96,39 +82,63 @@ _WORDS = frozenset(
 # Supplier names whose words are also first names; kept only together.
 _SUPPLIER_PHRASES = re.compile(r"(?i)\b(?:frank energie|dats 24|octa\+|wase wind)\b")
 # "jan 2026" is a month; "Jan" alone may be a name.
-_MONTH_BEFORE_YEAR = re.compile(r"(?i)\bjan(?=\.?\s+\d{2,4}\b)")
-_TOKEN_RE = re.compile(r"\[X\]|[^\W\d_](?:[\w’'.+-]*\w)?|\w*\d\w*(?:[-./]\w+)*")
+_MONTH_BEFORE_YEAR = re.compile(r"(?i)\bjan(?=\.?\s+\d{4}\b)")
+_MONTHS = (
+    r"januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december"
+    r"|janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre"
+    r"|jan|feb|mrt|maa|apr|jun|jul|aug|sep|sept|okt|nov|dec|janv|févr|avr|juil|déc"
+)
+# The only numbers that may leave the server: an amount with cents, a date, or a quantity with its unit.
+_ALLOWED_NUMBER_RE = re.compile(
+    r"(?i)(?<![\w.,/])(?:"
+    r"-?\s?(?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)[,.]\d{2}(?![\d.,/])"
+    r"|\d{1,2}[./-]\d{1,2}[./-](?:\d{4}|\d{2})(?![\d./-])"
+    rf"|(?:\d{{1,2}}\s+)?(?:{_MONTHS})\.?\s+(?:19|20)\d{{2}}(?!\d)"
+    r"|(?:\d{1,3}(?:[. ]\d{3})+|\d+)(?:,\d{1,3})?\s?(?:kwh|mwh|kw|kva|m³|m3|%|€/kwh|c€/kwh)(?![\w])"
+    r")"
+)
+_TOKEN_RE = re.compile(r"\[X\]|[^\W\d_](?:[\w’'.+-]*\w)?|[\w.,/+-]*\d[\w.,/+-]*")
 
 
-def _known(token: str) -> bool:
-    if token == MASK or token.isdigit() or re.fullmatch(r"[\d.,/-]+", token):
+def _known_word(token: str) -> bool:
+    if token == MASK:
         return True
-    letters = [run.lower() for run in re.findall(r"[^\W\d_]+", token)]
-    # Numbers with a unit or a short marker ("8u30", "21%", "1.234,56") stay; other mixes are codes.
-    if re.search(r"\d", token):
-        return all(len(run) <= 3 and (run in _WORDS or len(run) == 1) for run in letters)
-    return all(run in _WORDS or (len(run) == 1 and run in "aàeéiou") for run in letters)
+    return all(run.lower() in _WORDS or (len(run) == 1 and run.lower() in "aàeéiou") for run in re.findall(r"[^\W\d_]+", token))
 
 
 def _keep_invoice_words(text: str) -> str:
-    """Every word that is not an invoice word becomes [X]; runs of [X] become one."""
+    """Fail closed: every word that is not an invoice word and every other number becomes [X]."""
     keep: list[tuple[int, int]] = [m.span() for m in _SUPPLIER_PHRASES.finditer(text)]
     keep += [m.span() for m in _MONTH_BEFORE_YEAR.finditer(text)]
+    keep += [m.span() for m in _ALLOWED_NUMBER_RE.finditer(text)]
 
     def replace(match: re.Match[str]) -> str:
-        if any(start <= match.start() < end for start, end in keep) or _known(match.group(0)):
+        if any(start <= match.start() and match.end() <= end for start, end in keep):
+            return match.group(0)
+        if not re.search(r"\d", match.group(0)) and _known_word(match.group(0)):
             return match.group(0)
         return MASK
 
     masked = _TOKEN_RE.sub(replace, text)
-    # Whatever is left of an account number after its label: "IBAN [X] 3350 5545 [X]".
-    masked = re.sub(r"(?i)\b(iban|bic)\b[\s:]*(?:(?:\[X\]|[A-Z]{2}\d{2}|\d{2,5})\s*)+", r"\1 [X] ", masked)
-    return re.sub(r"\[X\](?:[\s,./-]*\[X\])+", MASK, masked)
+    return re.sub(r"\[X\](?:[\s,./:+()-]*\[X\])+", MASK, masked)
+
+
+def model_passages(text: str) -> str:
+    """Only the passages around amounts, dates and quantities (and the heading), not the whole invoice."""
+    spans = [(0, min(len(text), 240))]
+    spans += [(max(0, m.start() - 90), min(len(text), m.end() + 40)) for m in _ALLOWED_NUMBER_RE.finditer(text)]
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return " … ".join(text[start:end] for start, end in merged)[:MAX_MODEL_CHARS]
 
 
 def model_enabled() -> bool:
-    """On when the OpenAI model is configured; KAREN_INVOICE_MODEL=0 keeps invoices on the regex reader only."""
-    if os.getenv("KAREN_INVOICE_MODEL", "1").strip() == "0":
+    """Off by default: only KAREN_INVOICE_MODEL=1 with an OpenAI key lets masked invoice passages leave the server."""
+    if os.getenv("KAREN_INVOICE_MODEL", "0").strip() != "1":
         return False
     # Only the paid OpenAI API: the free-tier Gemma route may keep what it is sent.
     return bool(os.getenv("OPENAI_API_KEY", "").strip())
@@ -155,10 +165,17 @@ Staat iets er niet duidelijk op, zet dan null. Reken niets uit en gok niets.
 }"""
 
 
-def _ask_model(masked: str) -> str:
-    from .gemma_answer import _generate_backup
+async def _ask_model(masked: str) -> str:
+    """One request, no retries, not stored at OpenAI; cancelling it closes the connection."""
+    from openai import AsyncOpenAI
 
-    return _generate_backup(f"Factuurtekst:\n{masked[:MAX_MODEL_CHARS]}", _INSTRUCTION)
+    model = os.getenv("KAREN_BACKUP_MODEL", "gpt-5-mini").strip()
+    options: dict[str, Any] = {"reasoning": {"effort": "minimal"}} if model.startswith("gpt-5") else {}
+    async with AsyncOpenAI(timeout=MODEL_DEADLINE_SECONDS, max_retries=0) as client:
+        result = await client.responses.create(
+            model=model, instructions=_INSTRUCTION, input=f"Factuurtekst:\n{masked[:MAX_MODEL_CHARS]}", store=False, **options
+        )
+    return result.output_text or ""
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
@@ -182,11 +199,14 @@ class _Invoice:
     def __init__(self, chunks: list[KnowledgeChunk]):
         self.chunks = sorted(chunks, key=lambda chunk: chunk.page)
         self.texts = [_squash(chunk.text) for chunk in self.chunks]
+        self.text = " ".join(self.texts)
 
     def find(
         self, printed: Any, before: re.Pattern[str] | None = None, after: re.Pattern[str] | None = None,
+        accept: Any = None, used: set[str] | None = None,
     ) -> dict[str, Any] | None:
-        """The first place `printed` stands whole, with `before` in the 120 characters before it and `after` right behind it."""
+        """The first place `printed` stands whole with `before` in the 120 characters before it, `after` right behind
+        it and `accept(fact)` true; a place whose row (`key`) is in `used` was already taken by another value."""
         if not isinstance(printed, str) or not printed.strip() or MASK in printed:
             return None
         needle = _squash(printed.strip())
@@ -194,15 +214,21 @@ class _Invoice:
         pattern = re.compile(r"(?<![\w.,])" + re.escape(needle) + r"(?![\w]|[.,]\d)", re.IGNORECASE)
         for chunk, text in zip(self.chunks, self.texts):
             for match in pattern.finditer(text):
-                lead, tail = text[max(0, match.start() - 120):match.start()], text[match.end():match.end() + 16]
+                lead, tail = text[max(0, match.start() - 120):match.start()], text[match.end():match.end() + 24]
                 if before is not None and not before.search(lead):
                     continue
                 trailing = after.match(tail) if after is not None else None
                 if after is not None and trailing is None:
                     continue
                 excerpt = text[max(0, match.start() - 80):min(len(text), match.end() + 80)].strip()[:360]
-                return {"value": needle, "page": chunk.page, "source": chunk.source, "excerpt": excerpt, "read_by": "model",
-                        "lead": lead, "unit": trailing.group(1).lower() if trailing and trailing.groups() else None}
+                fact = {"value": needle, "page": chunk.page, "source": chunk.source, "excerpt": excerpt, "read_by": "model",
+                        "lead": lead, "tail": tail, "key": lead[-40:] + needle,
+                        "unit": trailing.group(1).lower() if trailing and trailing.groups() else None}
+                if used is not None and fact["key"] in used:
+                    continue
+                if accept is not None and not accept(fact):
+                    continue
+                return fact
         return None
 
 
@@ -210,26 +236,52 @@ _UNIT_RE = re.compile(r"(?i)\s*(kwh|mwh|m³|m3)\b")
 _DUE_WORDS = re.compile(r"(?i)betal|saldo|terug|tegoed|voordeel|ontvang|verschuldigd|totaal|bedrag|payer|solde|montant|rembours|faveur|total")
 _REFUND_WORDS = re.compile(r"(?i)terug|tegoed|in uw voordeel|te ontvangen|creditnota|rembours|en votre faveur|à recevoir|crédit")
 _PAY_WORDS = re.compile(r"(?i)te betalen|nog te betalen|verschuldigd|à payer|montant dû|reste à payer")
-_COST_WORDS = re.compile(r"(?i)kost|totaal|total|consommation|verbruik|bedrag|montant|coût")
+_TOTAL_WORDS = re.compile(r"(?i)totaal|totale|total|incl|tvac")
+_EXCL_WORDS = re.compile(r"(?i)excl|hors|htva|zonder btw|sans tva")
 _ADVANCE_WORDS = re.compile(r"(?i)voorschot|acompte|décompte|intermédiaire|gefactureerd|aangerekend|déjà|reeds")
-_NEW_ADVANCE_WORDS = re.compile(r"(?i)voorschot|acompte|intermédiaire|nieuw|nouveau|nouvelle|maandelijks|mensuel")
-_DUE_DATE_WORDS = re.compile(r"(?i)verval|vóór|voor|uiterlijk|échéance|avant|domicili|bank|overschrijv|prélev|betal")
+_NEW_ADVANCE_WORDS = re.compile(r"(?i)voorschot|acompte|intermédiaire")
+_DUE_DATE_WORDS = re.compile(r"(?i)verval|vóór|uiterlijk|échéance|avant le|domicili|uw bank zal|overschrijv|prélev|betalen voor")
 _DEBIT_WORDS = re.compile(r"(?i)domicili|uw bank zal|automatisch|prélèvement|afgehouden")
-_ELECTRICITY_WORDS = re.compile(r"(?i)elektr|stroom|électr|electr|dag|nacht|piek|dal|pleines|creuses|verbruik|consommation|kwh|mwh")
-_GAS_WORDS = re.compile(r"(?i)gas|gaz")
-
-
+# Words that say which energy a number belongs to; the nearest one before the number decides.
+_ENERGY_WORDS = re.compile(
+    r"(?i)(?P<gas>aardgas|gas|gaz)|(?P<elektriciteit>elektr|stroom|électr|electr|\bdag\b|\bnacht\b|\bpiek|\bdal\b|pleines|creuses|\bjour\b|\bnuit\b)"
+)
+_FREQUENCIES = (
+    (re.compile(r"(?i)tweemaandelijks|bimestriel|om de twee maanden"), "tweemaandelijks"),
+    (re.compile(r"(?i)maandelijks|mensuel|per maand|par mois"), "maandelijks"),
+    (re.compile(r"(?i)kwartaal|trimestriel"), "per kwartaal"),
+    (re.compile(r"(?i)jaarlijks|annuel|per jaar"), "jaarlijks"),
+)
+_INVOICE_TYPES = {
+    "jaarafrekening": re.compile(r"(?i)jaarafrekening|afrekening|facture annuelle|décompte annuel|régularisation"),
+    "voorschotfactuur": re.compile(r"(?i)voorschotfactuur|maandelijks voorschot|facture d.acompte|facture intermédiaire|uw (?:maandelijks |tweemaandelijks )?voorschot"),
+    "slotfactuur": re.compile(r"(?i)slotfactuur|eindafrekening|facture de clôture|facture finale"),
+    "tussentijdse afrekening": re.compile(r"(?i)tussentijdse afrekening|facture de régularisation intermédiaire"),
+}
 # Money is never followed by a unit: "600 kWh" is not an amount of € 600.
 _MONEY_AFTER = re.compile(r"(?i)(?!\s*(?:kwh|mwh|kw|m³|m3|%|kva)\b)")
 
 
-def _amount(invoice: _Invoice, printed: Any, before: re.Pattern[str] | None = None, after: re.Pattern[str] | None = None) -> dict[str, Any] | None:
+def _energy_before(lead: str) -> str | None:
+    """The energy named closest before a number, within the 80 characters before it."""
+    found = None
+    for match in _ENERGY_WORDS.finditer(lead[-80:]):
+        found = match.lastgroup
+    return found
+
+
+def _negative(fact: dict[str, Any]) -> bool:
+    """A minus printed with the number: "-111,10", "- € 111,10", "€ -111,10", "111,10-"."""
+    return fact["value"].lstrip().startswith("-") or bool(re.search(r"-\s*(?:€|EUR)?\s*$", fact["lead"])) or fact["tail"].startswith("-")
+
+
+def _amount(invoice: _Invoice, printed: Any, before: re.Pattern[str] | None = None, after: re.Pattern[str] | None = None, **checks: Any) -> dict[str, Any] | None:
     from .invoice_analysis import _decimal_value
 
-    after = after or _MONEY_AFTER
-    fact = invoice.find(printed, before, after)
+    fact = invoice.find(printed, before, after or _MONEY_AFTER, **checks)
     if fact is None:
         return None
+    fact["negative"] = _negative(fact)
     value = _decimal_value(fact["value"].replace("€", "").replace("EUR", "").strip().lstrip("-").strip())
     if value is None:
         return None
@@ -251,7 +303,8 @@ def _rows(value: Any) -> list[dict[str, Any]]:
 
 
 def _clean(fact: dict[str, Any]) -> dict[str, Any]:
-    fact.pop("lead", None)
+    for key in ("lead", "tail", "key", "negative"):
+        fact.pop(key, None)
     if fact.get("unit") is None:
         fact.pop("unit", None)
     return fact
@@ -259,6 +312,38 @@ def _clean(fact: dict[str, Any]) -> dict[str, Any]:
 
 def _unit(value: Any) -> str:
     return str(value or "").strip().lower().replace("3", "³")
+
+
+def _total_incl_vat(fact: dict[str, Any]) -> bool:
+    """A total, not a line or an amount excl. btw: "Totale energiekosten € 1.234,56", "TVA incl.€ 6.179,17"."""
+    label = re.split(r"\d", fact["lead"])[-1][-60:]  # the words since the previous number
+    return bool(_TOTAL_WORDS.search(label)) and not _EXCL_WORDS.search(label + fact["tail"][:16])
+
+
+def _consumption(invoice: _Invoice, data: Any, energy: str) -> dict[str, Any] | None:
+    """A consumption printed with its unit, after a word for this energy; a sum of parts only from distinct rows."""
+    if not isinstance(data, dict):
+        return None
+    unit = _unit(data.get("unit") or ("kwh" if energy == "elektriciteit" else ""))
+
+    def fits(fact: dict[str, Any]) -> bool:
+        printed_unit = _unit(fact["unit"])
+        named = _energy_before(fact["lead"]) or ("gas" if printed_unit == "m³" else None)
+        return named == energy and printed_unit == unit
+
+    fact = _amount(invoice, data.get("amount"), after=_UNIT_RE, accept=fits)
+    parts = data.get("parts") if energy == "elektriciteit" else None
+    if fact is None and isinstance(parts, list) and len(parts) >= 2:
+        used: set[str] = set()
+        found = []
+        for part in parts:
+            row = _amount(invoice, part, after=_UNIT_RE, accept=fits, used=used)
+            if row is None:
+                return None
+            used.add(row["key"])
+            found.append(row)
+        fact = dict(found[0], value=sum(row["value"] for row in found))
+    return fact
 
 
 def verified_model_facts(chunks: list[KnowledgeChunk], data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -273,9 +358,16 @@ def verified_model_facts(chunks: list[KnowledgeChunk], data: dict[str, Any]) -> 
         facts["supplier"] = supplier
 
     kind = str(data.get("invoice_type") or "").lower()
-    if kind in ("jaarafrekening", "voorschotfactuur", "slotfactuur", "tussentijdse afrekening") and invoice.chunks:
-        facts["invoice_type"] = {"value": kind, "page": invoice.chunks[0].page, "source": invoice.chunks[0].source,
-                                 "excerpt": "", "read_by": "model"}
+    if kind in _INVOICE_TYPES and invoice.chunks:
+        # The invoice must say so itself.
+        for chunk, text in zip(invoice.chunks, invoice.texts):
+            heading = _INVOICE_TYPES[kind].search(text)
+            if heading:
+                facts["invoice_type"] = {"value": kind, "page": chunk.page, "source": chunk.source,
+                                         "excerpt": heading.group(0), "read_by": "model"}
+                break
+        else:
+            kind = ""
 
     period = data.get("billing_period")
     if isinstance(period, dict) and isinstance(period.get("to"), str):
@@ -287,67 +379,65 @@ def verified_model_facts(chunks: list[KnowledgeChunk], data: dict[str, Any]) -> 
 
     due = data.get("amount_due")
     if isinstance(due, dict) and isinstance(due.get("refund", False), bool):
-        fact = _amount(invoice, due.get("amount"), _DUE_WORDS)
-        if fact:
-            # The direction comes from the invoice: a minus sign or a refund word before the amount.
-            printed_refund = bool(re.search(r"-\s*(?:€|EUR)?\s*$", fact["lead"]) or fact["value"] < 0 or _REFUND_WORDS.search(fact["lead"][-70:]))
+        refund = due.get("refund") is True
+
+        def direction(fact: dict[str, Any]) -> bool:
+            # The direction comes from the invoice: its sign, or a refund or payment word just before the amount.
+            printed_refund = fact["negative"] or bool(_REFUND_WORDS.search(fact["lead"][-70:]))
             printed_pay = bool(_PAY_WORDS.search(fact["lead"][-70:]))
-            refund = due.get("refund") is True
-            # A refund the invoice does not show, or a payment where it shows a refund, is not taken.
-            if refund == printed_refund and (refund or printed_pay or not _REFUND_WORDS.search(fact["lead"])):
-                fact["value"] = -abs(fact["value"]) if refund else abs(fact["value"])
-                facts["amount_due"] = fact
+            return refund == printed_refund and (refund or printed_pay or not _REFUND_WORDS.search(fact["lead"]))
 
-    for key, words in (("total_energy_cost", _COST_WORDS), ("advances_paid", _ADVANCE_WORDS)):
-        fact = _amount(invoice, data.get(key), words)
+        fact = _amount(invoice, due.get("amount"), _DUE_WORDS, accept=lambda fact: direction(dict(fact, negative=_negative(fact))))
         if fact:
-            facts[key] = fact
+            fact["value"] = -fact["value"] if refund else fact["value"]
+            facts["amount_due"] = fact
 
-    electricity = data.get("electricity")
-    if isinstance(electricity, dict):
-        unit = _unit(electricity.get("unit") or "kwh")
-        fact = _amount(invoice, electricity.get("amount"), _ELECTRICITY_WORDS, _UNIT_RE)
-        if fact is None and len(_parts := electricity.get("parts") or []) >= 2 and isinstance(_parts, list):
-            parts = [_amount(invoice, part, _ELECTRICITY_WORDS, _UNIT_RE) for part in _parts]
-            if all(parts) and len({part["unit"] for part in parts}) == 1:
-                fact = dict(parts[0], value=sum(part["value"] for part in parts))
-        # The unit printed behind the number must be the unit the model gave.
-        if fact and unit in ("kwh", "mwh") and fact["unit"] == unit:
-            fact["value"], fact["unit"] = (_whole(fact["value"] * 1000), "kwh") if unit == "mwh" else (fact["value"], "kwh")
-            facts["electricity_kwh"] = fact
+    total = _amount(invoice, data.get("total_energy_cost"), accept=lambda fact: _total_incl_vat(fact) and not _negative(fact))
+    if total:
+        facts["total_energy_cost"] = total
+    advances = _amount(invoice, data.get("advances_paid"), accept=lambda fact: bool(_ADVANCE_WORDS.search(fact["lead"][-70:])))
+    if advances:
+        facts["advances_paid"] = advances
 
-    gas = data.get("gas")
-    if isinstance(gas, dict):
-        unit = _unit(gas.get("unit"))
-        fact = _amount(invoice, gas.get("amount"), _GAS_WORDS, _UNIT_RE)
-        if fact and unit in ("kwh", "m³") and _unit(fact["unit"]) == unit:
-            fact["unit"] = "m³" if unit == "m³" else "kwh"
-            facts["gas_kwh"] = fact
+    electricity = _consumption(invoice, data.get("electricity"), "elektriciteit")
+    if electricity:
+        mwh = electricity["unit"] == "mwh"
+        electricity["value"], electricity["unit"] = (_whole(electricity["value"] * 1000) if mwh else electricity["value"]), "kwh"
+        facts["electricity_kwh"] = electricity
+    gas = _consumption(invoice, data.get("gas"), "gas")
+    if gas:
+        gas["unit"] = "m³" if _unit(gas["unit"]) == "m³" else "kwh"
+        facts["gas_kwh"] = gas
 
-    rows, first = [], None
+    rows, first, used = [], None, set()
     for row in _rows(data.get("new_advance")):
-        fact = _amount(invoice, row.get("amount"), _NEW_ADVANCE_WORDS)
+        fact = _amount(invoice, row.get("amount"), _NEW_ADVANCE_WORDS, used=used)
         if fact:
-            frequency = row.get("frequency") if isinstance(row.get("frequency"), str) else None
-            rows.append({"energy": _energy(row.get("energy")), "frequency": frequency, "old": None, "new": fact["value"]})
+            used.add(fact["key"])
+            # Energy and frequency as the invoice prints them near this amount, never as the model says.
+            near = fact["lead"][-80:] + fact["tail"]
+            frequency = next((name for pattern, name in _FREQUENCIES if pattern.search(near)), None)
+            rows.append({"energy": _energy_before(fact["lead"]), "frequency": frequency, "old": None, "new": fact["value"]})
             first = first or fact
     if rows:
         facts["new_advance"] = dict(first, value=rows)
 
     due_date = invoice.find(data.get("due_date"), _DUE_DATE_WORDS)
     if due_date and re.search(r"\d", due_date["value"]):
-        if data.get("direct_debit") is True and _DEBIT_WORDS.search(due_date["lead"] + due_date["excerpt"]):
+        if _DEBIT_WORDS.search(due_date["lead"] + due_date["tail"]):
             due_date["direct_debit"] = True
         facts["due_date"] = due_date
 
     if kind == "voorschotfactuur":
-        lines, first = [], None
+        lines, first, used = [], None, set()
         for row in _rows(data.get("advance_lines")):
             energy = _energy(row.get("energy"))
-            words = _GAS_WORDS if energy == "gas" else _ELECTRICITY_WORDS
-            fact = _amount(invoice, row.get("amount"), words) if energy else None
+            fact = _amount(invoice, row.get("amount"), accept=lambda fact, energy=energy: energy is not None and _energy_before(fact["lead"]) == energy, used=used)
             if fact:
-                lines.append({"energy": energy, "period": str(row.get("period") or ""), "amount": fact["value"]})
+                used.add(fact["key"])
+                period_text = row.get("period") if isinstance(row.get("period"), str) else ""
+                period_text = period_text if period_text and period_text in fact["lead"][-80:] else ""
+                lines.append({"energy": energy, "period": period_text, "amount": fact["value"]})
                 first = first or fact
         if lines:
             facts["advance_lines"] = dict(first, value=lines, vat=None)
@@ -355,24 +445,38 @@ def verified_model_facts(chunks: list[KnowledgeChunk], data: dict[str, Any]) -> 
 
 
 def needs_model(facts: dict[str, Any]) -> bool:
-    """Only when the rules missed something the first answer needs: the text then leaves the server, masked."""
+    """Only when the rules missed something the first answer needs: the passages then leave the server, masked."""
     advance_bill = (facts.get("invoice_type") or {}).get("value") == "voorschotfactuur"
-    wanted = ("supplier", "amount_due", "advance_lines") if advance_bill else (
-        "supplier", "billing_period", "amount_due", "total_energy_cost", "advances_paid", "electricity_kwh"
-    )
-    return any(facts.get(key) is None for key in wanted)
+    wanted = ["supplier", "amount_due", "advance_lines"] if advance_bill else [
+        "supplier", "billing_period", "amount_due", "total_energy_cost", "advances_paid"
+    ]
+    # A gas-only bill has no electricity: one consumption is enough.
+    missing_usage = not advance_bill and facts.get("electricity_kwh") is None and facts.get("gas_kwh") is None
+    return missing_usage or any(facts.get(key) is None for key in wanted)
 
 
-def read_invoice_with_model(chunks: list[KnowledgeChunk], names: tuple[str, ...] = ()) -> dict[str, dict[str, Any]]:
-    """Masked text to the model, verified facts back; {} when the model is off, fails or answers nonsense."""
+_slots: asyncio.Semaphore | None = None
+
+
+async def read_invoice_with_model(chunks: list[KnowledgeChunk], names: tuple[str, ...] = ()) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Masked passages to the model, verified facts back, and whether anything was sent.
+
+    ({}, False) when the model is off or busy; {} when it is slow, fails or answers nonsense."""
+    global _slots
     if not chunks or not model_enabled():
-        return {}
+        return {}, False
+    _slots = _slots or asyncio.Semaphore(_MODEL_SLOTS)
+    if _slots.locked():
+        return {}, False
     text = " ".join(chunk.text for chunk in sorted(chunks, key=lambda chunk: chunk.page))
-    try:
-        return verified_model_facts(chunks, _parse_json(_ask_model(mask_invoice_text(text, names))))
-    except Exception:
-        # A model that is down, slow or answers in an unexpected shape leaves the invoice to the rules.
-        return {}
+    async with _slots:
+        try:
+            # The deadline cancels the request itself, so nothing keeps running after the rules have answered.
+            raw = await asyncio.wait_for(_ask_model(model_passages(mask_invoice_text(text, names))), MODEL_DEADLINE_SECONDS)
+            return verified_model_facts(chunks, _parse_json(raw)), True
+        except Exception:
+            # A model that is down, slow or answers in an unexpected shape leaves the invoice to the rules.
+            return {}, True
 
 
 def adds_up(total: Decimal, advances: Decimal, due: Decimal) -> bool:

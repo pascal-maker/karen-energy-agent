@@ -31,7 +31,7 @@ def no_live_invoice_model(monkeypatch):
     """Uploads never reach the hosted model in tests; a test that needs it patches invoice_model._ask_model."""
     from luminus_harness import invoice_model
 
-    def unavailable(masked: str) -> str:
+    async def unavailable(masked: str) -> str:
         raise RuntimeError("no hosted model in tests")
 
     monkeypatch.setattr(invoice_model, "_ask_model", unavailable)

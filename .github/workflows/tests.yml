@@ -1,0 +1,31 @@
+name: Tests
+
+# Runs the test suite on every pull request and on main, so a PR shows a check
+# before it is merged. Tests never call hosted models (tests/conftest.py).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/energy-voice-demo.txt
+
+      - run: pip install -r requirements/energy-voice-demo.txt pytest pytest-asyncio httpx
+
+      - run: python -m pytest -q tests -p no:warnings

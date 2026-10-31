@@ -831,13 +831,14 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
     processing = "local-only"
     if needs_model(analysis["facts"]) and model_enabled():
         customer = (analysis["facts"].get("customer") or {}).get("value") or ""
-        processing = "masked-model"
         try:
-            model_facts = await asyncio.wait_for(asyncio.to_thread(read_invoice_with_model, chunks, (customer,)), timeout=45)
+            model_facts, sent = await read_invoice_with_model(chunks, (customer,))
+            processing = "masked-model" if sent else processing
             if model_facts:
                 analysis = analyze_invoice_chunks(chunks, model_facts)
         except Exception:
             # Whatever goes wrong with the model, the rules' reading stands.
+            processing = "masked-model"
             analysis = analyze_invoice_chunks(chunks)
     if photo:
         analysis["answer"] = analysis["answer"].replace("uit de PDF", "van de foto").replace(" (PDF-pagina 1)", "")

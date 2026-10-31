@@ -49,13 +49,16 @@ questions. Do not use this free-tier route for personal bills.
 
 When a visitor uploads a PDF, the file is sent to this Hugging Face backend.
 The backend extracts selectable text and creates a rule-based first read. Only
-when the rules miss a fact the first answer needs, and `OPENAI_API_KEY` is set,
-the text goes to the OpenAI model (never the free-tier Gemma route) after names,
-addresses, IBAN, EAN, phone, customer and invoice numbers, and every word that is
-not on `luminus_harness/invoice_words.txt`, are replaced by `[X]`. Karen keeps a
-model value only when it is printed on the bill next to words that fit it, and
-`/api/upload` then reports `processing: masked-model`. `KAREN_INVOICE_MODEL=0`
-turns this off. Retrieved PDF chunks stay in a bounded server-side
+when `KAREN_INVOICE_MODEL=1` and `OPENAI_API_KEY` are set (off by default) and
+the rules miss a fact the first answer needs, the passages around amounts, dates
+and quantities go to the OpenAI model (never the free-tier Gemma route), with
+every word not on `luminus_harness/invoice_words.txt` and every number that is
+not an amount with cents, a date or a quantity with its unit replaced by `[X]`.
+The request is sent with `store=false`, no retries and a 30-second deadline that
+cancels it; OpenAI's API policy still allows up to 30 days of abuse-monitoring
+retention. Karen keeps a model value only when it is printed next to words that
+fit it (energy, unit, sign, total incl. btw) and its amounts add up, and
+`/api/upload` then reports `processing: masked-model`. Retrieved PDF chunks stay in a bounded server-side
 session for at most 60 minutes and can be deleted from the UI. Text follow-ups
 retrieve and display matching page excerpts locally. The Gradio OpenAI voice
 route is blocked while an uploaded PDF is active, so bill text is not sent to
