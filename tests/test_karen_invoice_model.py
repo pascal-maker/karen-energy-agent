@@ -251,3 +251,50 @@ def test_model_is_off_unless_switched_on(monkeypatch) -> None:
     assert asyncio.run(invoice_model.read_invoice_with_model(_chunks(BILL))) == ({}, False)
     monkeypatch.setenv("KAREN_INVOICE_MODEL", "0")
     assert asyncio.run(invoice_model.read_invoice_with_model(_chunks(BILL))) == ({}, False)
+
+
+@pytest.mark.parametrize("text, private", [
+    ("Customer ID: 1234.56 Totaal te betalen € 89,00", "1234.56"),
+    ("Code 1234,56 Totaal te betalen € 89,00", "1234,56"),
+    ("Lidnummer 1234,56 Totaal te betalen € 89,00", "1234,56"),
+])
+def test_a_decimal_looking_code_is_not_sent_as_money(text, private) -> None:
+    payload = model_passages(mask_invoice_text(text))
+    assert private not in payload and "te betalen € 89,00" in payload
+
+
+def _one_page_pdf(text: str) -> bytes:
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=595, height=842)
+    font = writer._add_object(DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Helvetica"),
+    }))
+    page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})})
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 6 Tf 10 800 Td (" + text.encode("latin-1") + b") Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+def test_one_printed_row_in_the_chunk_overlap_counts_once() -> None:
+    chunks = load_pdf_chunks_from_bytes(_one_page_pdf("x " * 430 + "Stroom dag 600 kWh " + "z " * 150), source="bill.pdf")
+    assert len(chunks) == 2 and all("600 kWh" in chunk.text for chunk in chunks)
+    parts = {"electricity": {"amount": None, "unit": "kWh", "parts": ["600", "600"]}}
+    assert verified_model_facts(chunks, parts) == {}
+    assert verified_model_facts(chunks, {"electricity": {"amount": "600", "unit": "kWh"}})["electricity_kwh"]["value"] == 600
+
+
+def test_units_are_allowed_per_energy_and_converted() -> None:
+    assert verified_model_facts(_chunks("Stroom 10 m³"), {"electricity": {"amount": "10", "unit": "m³"}}) == {}
+    gas = verified_model_facts(_chunks("Gas 2 MWh"), {"gas": {"amount": "2", "unit": "MWh"}})["gas_kwh"]
+    assert gas["value"] == 2000 and gas["unit"] == "kwh"
+    assert verified_model_facts(_chunks("Gas 2 MWh"), {"gas": {"amount": "2", "unit": "kWh"}}) == {}
+    assert verified_model_facts(_chunks("Gas 2 MWh"), {"gas": {"amount": "2", "unit": "GJ"}}) == {}

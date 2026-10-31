@@ -34,6 +34,8 @@ _IDENTIFIER_LABELS = (
     r"|numéro de client|n° (?:de )?client|numéro de contrat|numéro de facture|n° (?:de )?facture"
     r"|r[ée]f[ée]rence|numéro d[’']entreprise|numéro de tva|numéro de compte|numéro de compteur"
     r"|communication structurée|communication|code ean"
+    r"|customer (?:id|number|no\.?)|client (?:id|number|no\.?)|account (?:id|number|no\.?)|invoice (?:number|no\.?)"
+    r"|contract (?:id|number|no\.?)|order (?:number|no\.?)|reference|ref\.?|id|nr\.?|no\.?|n°|nummer|number|code"
 )
 # The value after a label must hold a digit: "Klantnummer: TEST-KLANT-001", "EAN 541448..." but not "Factuurdatum".
 _IDENTIFIER_RE = re.compile(
@@ -98,6 +100,22 @@ _ALLOWED_NUMBER_RE = re.compile(
     r")"
 )
 _TOKEN_RE = re.compile(r"\[X\]|[^\W\d_](?:[\w’'.+-]*\w)?|[\w.,/+-]*\d[\w.,/+-]*")
+# An amount with cents is money only next to a euro sign or a money label; a decimal-looking number after
+# any other label ("Customer ID: 1234.56") may be a code and stays masked.
+_MONEY_SHAPE_RE = re.compile(r"-?\s?(?:\d{1,3}(?:[.\u00a0 ]\d{3})+|\d+)[,.]\d{2}")
+_MONEY_LABEL_RE = re.compile(
+    r"(?i)€|\beur\b|euro|bedrag|totaal|totale|total|saldo|btw|tva|voorschot|kost|prijs|montant|acompte|décompte"
+    r"|solde|betal|payer|terug|tegoed|vergoeding|korting|incl|excl|hors|htva|tvac|gefactureerd|aangerekend|facturé"
+)
+_ID_LABEL_RE = re.compile(r"(?i)\b(?:id|nr|no|n°|nummer|number|ref|reference|référence|code|klant|customer|client|account|contract|order)\b")
+
+
+def _is_money(text: str, start: int, end: int) -> bool:
+    label = re.split(r"\d|\[X\]", text[max(0, start - 50):start])[-1]
+    tail = text[end:end + 4]
+    if _ID_LABEL_RE.search(label):
+        return False
+    return bool(_MONEY_LABEL_RE.search(label) or re.match(r"(?i)\s*(?:€|eur\b)", tail))
 
 
 def _known_word(token: str) -> bool:
@@ -110,7 +128,10 @@ def _keep_invoice_words(text: str) -> str:
     """Fail closed: every word that is not an invoice word and every other number becomes [X]."""
     keep: list[tuple[int, int]] = [m.span() for m in _SUPPLIER_PHRASES.finditer(text)]
     keep += [m.span() for m in _MONTH_BEFORE_YEAR.finditer(text)]
-    keep += [m.span() for m in _ALLOWED_NUMBER_RE.finditer(text)]
+    keep += [
+        m.span() for m in _ALLOWED_NUMBER_RE.finditer(text)
+        if not _MONEY_SHAPE_RE.fullmatch(m.group(0)) or _is_money(text, m.start(), m.end())
+    ]
 
     def replace(match: re.Match[str]) -> str:
         if any(start <= match.start() and match.end() <= end for start, end in keep):
@@ -197,16 +218,27 @@ class _Invoice:
     """The original (unmasked) chunks, to check that a value is printed, next to what it means, and find its page."""
 
     def __init__(self, chunks: list[KnowledgeChunk]):
-        self.chunks = sorted(chunks, key=lambda chunk: chunk.page)
-        self.texts = [_squash(chunk.text) for chunk in self.chunks]
-        self.text = " ".join(self.texts)
+        # One text per page, with the chunker's overlap removed, so every printed value has one place.
+        from .invoice_analysis import _overlap_length
+
+        self.chunks: list[KnowledgeChunk] = []
+        self.texts: list[str] = []
+        previous: KnowledgeChunk | None = None
+        for chunk in sorted(chunks, key=lambda chunk: (chunk.source, chunk.page)):
+            if previous is not None and (previous.source, previous.page) == (chunk.source, chunk.page):
+                rest = chunk.text[_overlap_length(previous, chunk):]
+                self.texts[-1] = _squash(self.texts[-1] + " " + rest).strip()
+            else:
+                self.chunks.append(chunk)
+                self.texts.append(_squash(chunk.text))
+            previous = chunk
 
     def find(
         self, printed: Any, before: re.Pattern[str] | None = None, after: re.Pattern[str] | None = None,
         accept: Any = None, used: set[str] | None = None,
     ) -> dict[str, Any] | None:
         """The first place `printed` stands whole with `before` in the 120 characters before it, `after` right behind
-        it and `accept(fact)` true; a place whose row (`key`) is in `used` was already taken by another value."""
+        it and `accept(fact)` true; a place (`key`: page and offset) in `used` was already taken by another value."""
         if not isinstance(printed, str) or not printed.strip() or MASK in printed:
             return None
         needle = _squash(printed.strip())
@@ -222,7 +254,7 @@ class _Invoice:
                     continue
                 excerpt = text[max(0, match.start() - 80):min(len(text), match.end() + 80)].strip()[:360]
                 fact = {"value": needle, "page": chunk.page, "source": chunk.source, "excerpt": excerpt, "read_by": "model",
-                        "lead": lead, "tail": tail, "key": lead[-40:] + needle,
+                        "lead": lead, "tail": tail, "key": f"{chunk.source}:{chunk.page}:{match.start()}",
                         "unit": trailing.group(1).lower() if trailing and trailing.groups() else None}
                 if used is not None and fact["key"] in used:
                     continue
@@ -320,11 +352,17 @@ def _total_incl_vat(fact: dict[str, Any]) -> bool:
     return bool(_TOTAL_WORDS.search(label)) and not _EXCL_WORDS.search(label + fact["tail"][:16])
 
 
+# Electricity in kWh or MWh; gas in kWh, MWh or m³. Anything else (stroom in m³) is not a consumption.
+_ENERGY_UNITS = {"elektriciteit": ("kwh", "mwh"), "gas": ("kwh", "mwh", "m³")}
+
+
 def _consumption(invoice: _Invoice, data: Any, energy: str) -> dict[str, Any] | None:
     """A consumption printed with its unit, after a word for this energy; a sum of parts only from distinct rows."""
     if not isinstance(data, dict):
         return None
     unit = _unit(data.get("unit") or ("kwh" if energy == "elektriciteit" else ""))
+    if unit not in _ENERGY_UNITS[energy]:
+        return None
 
     def fits(fact: dict[str, Any]) -> bool:
         printed_unit = _unit(fact["unit"])
@@ -399,15 +437,14 @@ def verified_model_facts(chunks: list[KnowledgeChunk], data: dict[str, Any]) -> 
     if advances:
         facts["advances_paid"] = advances
 
-    electricity = _consumption(invoice, data.get("electricity"), "elektriciteit")
-    if electricity:
-        mwh = electricity["unit"] == "mwh"
-        electricity["value"], electricity["unit"] = (_whole(electricity["value"] * 1000) if mwh else electricity["value"]), "kwh"
-        facts["electricity_kwh"] = electricity
-    gas = _consumption(invoice, data.get("gas"), "gas")
-    if gas:
-        gas["unit"] = "m³" if _unit(gas["unit"]) == "m³" else "kwh"
-        facts["gas_kwh"] = gas
+    for key, energy, data_key in (("electricity_kwh", "elektriciteit", "electricity"), ("gas_kwh", "gas", "gas")):
+        fact = _consumption(invoice, data.get(data_key), energy)
+        if fact:
+            # Everything Karen says is in kWh, or m³ for gas measured in m³: "25 MWh" is 25.000 kWh.
+            printed = _unit(fact["unit"])
+            fact["value"] = _whole(fact["value"] * 1000) if printed == "mwh" else fact["value"]
+            fact["unit"] = "m³" if printed == "m³" else "kwh"
+            facts[key] = fact
 
     rows, first, used = [], None, set()
     for row in _rows(data.get("new_advance")):
