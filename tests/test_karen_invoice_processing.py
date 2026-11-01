@@ -310,3 +310,177 @@ def test_the_gradio_chat_answers_from_the_same_facts() -> None:
     messages, *_ = asyncio.run(app.answer_text_turn("Hoeveel moet ik nog betalen?", state))
 
     assert messages[-1]["content"] == "Volgens deze factuur moet je nog € 300,00 betalen (PDF-pagina 2)."
+
+
+def test_a_misspelled_summary_request_gets_the_invoice_summary() -> None:
+    chunks = _synthetic_bill_a()
+    analysis = analyze_invoice_chunks(chunks)
+
+    result = answer_uploaded_pdf_question("wat is de smaenvatting hiervn", chunks, analysis["facts"], analysis.get("invoice"))
+
+    assert result["answer"].startswith("Samenvatting van je factuur")
+    assert "Nog te betalen: € 300,00 (PDF-pagina 2)" in result["answer"]
+    assert result["sources"]
+
+
+# --- Structured invoice (invoice_schema.Invoice) and summaries ---------------------------------------
+
+import json
+from pathlib import Path
+
+import pytest
+
+from luminus_harness.invoice_schema import Invoice, is_summary_request
+from luminus_harness.knowledge import load_pdf_chunks_from_bytes
+
+FIXTURES = Path(__file__).parent / "fixtures" / "invoices"
+
+
+def _fixture(name: str) -> tuple[list[KnowledgeChunk], dict]:
+    chunks = load_pdf_chunks_from_bytes((FIXTURES / name).read_bytes(), source=name)
+    return chunks, analyze_invoice_chunks(chunks)
+
+
+@pytest.mark.parametrize("question", [
+    "wat is de smaenvatting hiervn", "Wat is de samenvatting hiervan?", "Vat deze factuur samen",
+    "kan je dit samenvatten", "geef een samenvattng", "Résumé de la facture", "summarize this invoice",
+])
+def test_summary_requests_are_recognised(question) -> None:
+    assert is_summary_request(question)
+
+
+@pytest.mark.parametrize("question", [
+    "Hoeveel moet ik nog betalen?", "Wat is mijn verbruik?", "Wat staat er over Eneco?", "Wie is mijn leverancier?", "samen met gas?",
+])
+def test_other_questions_are_not_summary_requests(question) -> None:
+    assert not is_summary_request(question)
+
+
+def test_summary_requests_answer_from_the_structured_invoice() -> None:
+    chunks, analysis = _fixture("01-nl-afrekening-gegroepeerd.pdf")
+    for question in ("Wat is de samenvatting hiervan?", "Vat deze factuur samen"):
+        result = answer_uploaded_pdf_question(question, chunks, analysis["facts"], analysis["invoice"])
+        assert result["answer"].splitlines() == [
+            "Samenvatting van je jaarafrekening van Kanaal Energie:",
+            "- Periode: 01/01/2025 tot 31/12/2025 (PDF-pagina 1)",
+            "- Verbruik elektriciteit: 2708 kWh (PDF-pagina 1)",
+            "- Verbruik gas: 6000 kWh (PDF-pagina 1)",
+            "- Totale energiekosten: € 1.234,56 (PDF-pagina 1)",
+            "- Al aangerekende voorschotten: € 1.000,00 (PDF-pagina 1)",
+            "- Nog te betalen: € 234,56 (PDF-pagina 1)",
+            "- Nieuw voorschot: € 105,00 per maand (PDF-pagina 1)",
+        ]
+        assert result["sources"][0]["title"] == "01-nl-afrekening-gegroepeerd.pdf"
+
+
+def test_structured_invoice_holds_extracted_and_calculated_values_apart() -> None:
+    _, analysis = _fixture("01-nl-afrekening-gegroepeerd.pdf")
+    invoice = analysis["invoice"]
+    assert invoice.schema_version == "1.0" and invoice.document_type == "annual_settlement"
+    assert invoice.source == "01-nl-afrekening-gegroepeerd.pdf"
+    assert (invoice.supplier.value, invoice.supplier.page) == ("Kanaal Energie", 1) and "Kanaal Energie" in invoice.supplier.excerpt
+    assert (invoice.billing_period.start, invoice.billing_period.end) == ("2025-01-01", "2025-12-31")
+    assert invoice.consumption.electricity.value == "2708" and invoice.consumption.electricity.unit == "kWh"
+    assert invoice.amounts.total_energy_cost.value_eur == "1234.56"
+    assert invoice.amounts.advances_paid.value_eur == "1000.00"
+    assert invoice.amounts.amount_due.value_eur == "234.56" and invoice.amounts.credit is None
+    assert invoice.calculated.costs_minus_advances_eur == "234.56"
+    assert invoice.calculated.inputs == ["total_energy_cost", "advances_paid"]
+    assert [(row.energy, row.frequency, row.amount_eur) for row in invoice.new_advances] == [(None, "monthly", "105.00")]
+    assert invoice.warnings == []
+
+
+def test_structured_invoice_serialises_to_json_with_decimal_strings() -> None:
+    _, analysis = _fixture("13-nl-jaarafrekening-nieuw-voorschot-tabel.pdf")
+    payload = json.loads(analysis["invoice"].model_dump_json())
+    assert payload["schema_version"] == "1.0"
+    assert payload["amounts"]["amount_due"]["value_eur"] == "412.30"
+    assert payload["amounts"]["credit"] is None and payload["customer"]["value"] == "Alex Doe"
+    assert payload["due_date"] == {
+        "source": "13-nl-jaarafrekening-nieuw-voorschot-tabel.pdf", "page": 1, "excerpt": payload["due_date"]["excerpt"],
+        "read_by": "rules", "printed": "28/10/2026", "date": "2026-10-28", "direct_debit": False,
+    }
+    assert [(row["energy"], row["frequency"], row["amount_eur"], row["previous_amount_eur"]) for row in payload["new_advances"]] == [
+        ("electricity", "monthly", "95.00", "80.00"), ("gas", "monthly", "120.00", "110.00"),
+    ]
+    assert Invoice.model_validate_json(json.dumps(payload)) == analysis["invoice"]
+
+
+def test_a_credit_is_money_back_not_an_amount_due() -> None:
+    chunks, analysis = _fixture("03-nl-tegoed.pdf")
+    invoice = analysis["invoice"]
+    assert invoice.amounts.amount_due is None and invoice.amounts.credit.value_eur == "150.00"
+    assert "- Je krijgt terug: € 150,00 (PDF-pagina 1)" in answer_uploaded_pdf_question("vat samen", chunks, analysis["facts"], invoice)["answer"]
+
+
+def test_a_zero_balance_has_nothing_to_pay() -> None:
+    chunks, analysis = _fixture("05-nl-nulafrekening.pdf")
+    assert analysis["invoice"].amounts.amount_due.value_eur == "0.00"
+    summary = answer_uploaded_pdf_question("samenvatting", chunks, analysis["facts"], analysis["invoice"])["answer"]
+    assert "- Nog te betalen: niets (PDF-pagina 1)" in summary
+
+
+def test_gas_in_cubic_metres_keeps_its_unit() -> None:
+    chunks, analysis = _fixture("15-nl-jaarafrekening-gas-m3.pdf")
+    gas = analysis["invoice"].consumption.gas
+    assert (gas.value, gas.unit) == ("1150", "m³") and analysis["invoice"].consumption.electricity is None
+    assert "- Verbruik gas: 1150 m³ (PDF-pagina 1)" in answer_uploaded_pdf_question("samenvatting", chunks, analysis["facts"])["answer"]
+
+
+def test_missing_values_are_null_and_said_in_the_summary() -> None:
+    chunks, analysis = _fixture("09-nl-ontbrekende-bedragen.pdf")
+    invoice = analysis["invoice"]
+    assert invoice.amounts.model_dump() == {"total_energy_cost": None, "advances_paid": None, "amount_due": None, "credit": None}
+    assert invoice.consumption.electricity is None and invoice.calculated.costs_minus_advances_eur is None
+    assert {"missing:amount_due", "missing:total_energy_cost", "missing:advances_paid", "missing:consumption"} <= set(invoice.warnings)
+    summary = answer_uploaded_pdf_question("Vat deze factuur samen", chunks, analysis["facts"], invoice)["answer"]
+    assert summary.endswith("Niet duidelijk gevonden op de factuur: het bedrag te betalen of terug te krijgen, het verbruik.")
+
+
+def test_an_advance_bill_summary_lists_its_lines_and_direct_debit() -> None:
+    chunks, analysis = _fixture("11-nl-voorschot-domiciliering.pdf")
+    assert analysis["invoice"].document_type == "advance_invoice"
+    summary = answer_uploaded_pdf_question("samenvatting", chunks, analysis["facts"], analysis["invoice"])["answer"]
+    assert summary.splitlines() == [
+        "Samenvatting van je voorschotfactuur van Kanaal Energie:",
+        "- Voorschot elektriciteit okt 2026: € 63,21 (PDF-pagina 1)",
+        "- Voorschot gas okt 2026: € 105,66 (PDF-pagina 1)",
+        "- Nog te betalen: € 179,00 (PDF-pagina 1)",
+        "- Betaald via domiciliëring op 31.10.2026 (PDF-pagina 1)",
+    ]
+
+
+def test_field_questions_and_passages_keep_working_with_the_invoice() -> None:
+    chunks = _synthetic_bill_a()
+    analysis = analyze_invoice_chunks(chunks)
+    paid = answer_uploaded_pdf_question("Hoeveel moet ik nog betalen?", chunks, analysis["facts"], analysis["invoice"])
+    assert paid["answer"] == "Volgens deze factuur moet je nog € 300,00 betalen (PDF-pagina 2)."
+    passage = answer_uploaded_pdf_question("Wat staat er over Luminus?", chunks, analysis["facts"], analysis["invoice"])
+    assert passage["answer"].startswith("Ik vond een relevante passage op PDF-pagina 1")
+
+
+def test_upload_returns_the_invoice_and_follow_ups_summarise_it_locally(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    import energy_voice_app
+
+    monkeypatch.setattr(energy_voice_app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
+
+    async def no_hosted_answer(*args, **kwargs):
+        raise AssertionError("an uploaded invoice never reaches a hosted model or search")
+
+    monkeypatch.setattr(energy_voice_app, "answer_energy_question", no_hosted_answer)
+    monkeypatch.setattr(energy_voice_app, "standalone_question", no_hosted_answer)
+    client = TestClient(energy_voice_app.api_app)
+    pdf = (FIXTURES / "01-nl-afrekening-gegroepeerd.pdf").read_bytes()
+
+    upload = client.post("/api/upload", files={"file": ("01.pdf", pdf, "application/pdf")}).json()
+    assert {"session_id", "filename", "answer", "facts", "sources", "invoice", "processing"} <= set(upload)
+    assert upload["processing"] == "local-only"
+    assert upload["invoice"]["schema_version"] == "1.0" and upload["invoice"]["amounts"]["amount_due"]["value_eur"] == "234.56"
+
+    reply = client.post("/api/answer", json={"question": "wat is de smaenvatting hiervn", "session_id": upload["session_id"]}).json()
+    assert reply["processing"] == "local-only"
+    assert reply["answer"].startswith("Samenvatting van je jaarafrekening van Kanaal Energie:")
+    assert "- Nog te betalen: € 234,56 (PDF-pagina 1)" in reply["answer"]
+    assert reply["sources"][0]["detail"] == "PDF · pagina 1"
