@@ -327,7 +327,8 @@ async def answer_text_turn(question: str | None, state: dict[str, Any] | None):
                 for chunk in session.get("knowledge_chunks", [])
                 if chunk.get("source") == session["knowledge_name"]
             ]
-            result = answer_uploaded_pdf_question(clean_question, uploaded_chunks, analyze_invoice_chunks(uploaded_chunks)["facts"])
+            analysis = analyze_invoice_chunks(uploaded_chunks)
+            result = answer_uploaded_pdf_question(clean_question, uploaded_chunks, analysis["facts"], analysis["invoice"])
             status_html = _status("Passage gevonden", "Verwerkt op Karen’s backend zonder generatief model")
         else:
             result = await answer_energy_question(clean_question, BASE_KNOWLEDGE)
@@ -850,6 +851,7 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
         "answer": analysis["answer"],
         "facts": analysis["facts"],
         "sources": analysis["sources"],
+        "invoice": analysis["invoice"].model_dump(mode="json"),
         "processing": processing,
     }
 
@@ -977,7 +979,9 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         session = _get_upload_session(body.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Deze PDF-sessie is verlopen. Upload de PDF opnieuw.")
-        result = answer_uploaded_pdf_question(body.question.strip(), session["chunks"], session["analysis"].get("facts"))
+        result = answer_uploaded_pdf_question(
+            body.question.strip(), session["chunks"], session["analysis"].get("facts"), session["analysis"].get("invoice")
+        )
         if session["analysis"].get("photo"):
             result["answer"] = result["answer"].replace(" (PDF-pagina 1)", "").replace("PDF-pagina 1", "de foto")
         return {**result, "processing": "local-only", "filename": session["filename"]}

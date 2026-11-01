@@ -370,7 +370,17 @@ def _advance_lines_vat(text: str, amounts: list[Decimal | None], amount_due: dic
 def analyze_invoice_chunks(chunks: list[KnowledgeChunk], model_facts: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Extract conservative, page-linked facts and calculate only labeled totals.
 
-    `model_facts` (invoice_model.read_invoice_with_model) fill only what the rules did not find."""
+    `model_facts` (invoice_model.read_invoice_with_model) fill only what the rules did not find. The result also
+    holds `invoice`, the same facts as one validated invoice_schema.Invoice for the API and follow-up questions."""
+    from .invoice_schema import build_invoice
+
+    analysis = _analyze(chunks, model_facts)
+    source = next((chunk.source for chunk in chunks), "")
+    analysis["invoice"] = build_invoice(analysis["facts"], source)
+    return analysis
+
+
+def _analyze(chunks: list[KnowledgeChunk], model_facts: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
     ordered = sorted(chunks, key=lambda chunk: chunk.page)
     facts: dict[str, dict[str, Any] | None] = {
         "supplier": None,
@@ -859,9 +869,18 @@ def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def answer_uploaded_pdf_question(
-    question: str, chunks: list[KnowledgeChunk], facts: dict[str, Any] | None = None
+    question: str, chunks: list[KnowledgeChunk], facts: dict[str, Any] | None = None, invoice: Any = None,
 ) -> dict[str, Any]:
-    """Answer locally from the facts read at upload, else by returning matched PDF passages, without hosted inference."""
+    """Answer locally from the invoice read at upload, else by returning matched PDF passages, without hosted inference.
+
+    A summary request ("vat samen", "samenvatting", typos included) is answered from `invoice`
+    (invoice_schema.Invoice), built from `facts` when not given."""
+    from .invoice_schema import build_invoice, is_summary_request, summarize_invoice
+
+    if is_summary_request(question) and (invoice is not None or facts):
+        if invoice is None:
+            invoice = build_invoice(facts, next((chunk.source for chunk in chunks), ""))
+        return summarize_invoice(invoice)
     if facts:
         direct = _fact_answer(question, facts)
         if direct is not None:
