@@ -52,7 +52,9 @@ class Quantity(Evidence):
 
 
 class Money(Evidence):
-    value_eur: str  # exact decimal string, never negative; the field says which way the money goes
+    # Exact decimal string. amount_due and credit are never negative (the field says which way the money
+    # goes); total_energy_cost and advances_paid keep the sign printed on the bill.
+    value_eur: str
 
 
 class DueDate(Evidence):
@@ -72,6 +74,7 @@ class AdvanceLine(Evidence):
     energy: Energy
     period: str
     amount_eur: str
+    vat_included: bool | None  # null when the bill does not say whether the lines include btw
 
 
 class Consumption(_Strict):
@@ -125,6 +128,10 @@ def _decimal(value: Decimal) -> str:
 
 def _money(value: Decimal) -> str:
     return str(abs(value).quantize(Decimal("0.01")))
+
+
+def _signed_money(value: Decimal) -> str:
+    return str(value.quantize(Decimal("0.01")))
 
 
 _FRENCH_MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre")
@@ -200,7 +207,7 @@ def build_invoice(facts: dict[str, Any], source: str) -> Invoice:
     amounts: dict[str, Any] = {}
     for key in ("total_energy_cost", "advances_paid"):
         if facts.get(key):
-            amounts[key] = {**_evidence(facts[key]), "value_eur": _money(facts[key]["value"])}
+            amounts[key] = {**_evidence(facts[key]), "value_eur": _signed_money(facts[key]["value"])}
     due = facts.get("amount_due")
     if due:
         amounts["credit" if due["value"] < 0 else "amount_due"] = {**_evidence(due), "value_eur": _money(due["value"])}
@@ -225,8 +232,12 @@ def build_invoice(facts: dict[str, Any], source: str) -> Invoice:
         ]
     lines = facts.get("advance_lines")
     if lines:
+        vat_included = {"incl. btw": True, "excl. btw": False}.get(lines.get("vat") or "")
         data["advance_lines"] = [
-            {**_evidence(lines), "energy": _ENERGIES[row["energy"]], "period": str(row["period"]), "amount_eur": _money(row["amount"])}
+            {
+                **_evidence(lines), "energy": _ENERGIES[row["energy"]], "period": str(row["period"]),
+                "amount_eur": _money(row["amount"]), "vat_included": vat_included,
+            }
             for row in lines["value"] if row.get("amount") is not None and row.get("energy") in _ENERGIES
         ]
 
@@ -305,7 +316,8 @@ def summarize_invoice(invoice: Invoice) -> dict[str, Any]:
         if quantity:
             add(f"Verbruik {_DUTCH_ENERGIES[energy]}: {quantity.value} {quantity.unit}", quantity)
     for line in invoice.advance_lines:
-        add(f"Voorschot {_DUTCH_ENERGIES[line.energy]} {line.period}: {_euro(line.amount_eur)}".replace("  ", " "), line)
+        vat = {True: " incl. btw", False: " excl. btw", None: ""}[line.vat_included]
+        add(f"Voorschot {_DUTCH_ENERGIES[line.energy]} {line.period}: {_euro(line.amount_eur)}{vat}".replace("  ", " "), line)
     amounts = invoice.amounts
     if amounts.total_energy_cost:
         add(f"Totale energiekosten: {_euro(amounts.total_energy_cost.value_eur)}", amounts.total_energy_cost)
@@ -318,7 +330,7 @@ def summarize_invoice(invoice: Invoice) -> dict[str, Any]:
     elif amounts.amount_due:
         add(f"Nog te betalen: {_euro(amounts.amount_due.value_eur)}", amounts.amount_due)
     if invoice.due_date:
-        how = "betaald via domiciliëring op" if invoice.due_date.direct_debit else "betalen vóór"
+        how = "wordt via domiciliëring afgehouden op" if invoice.due_date.direct_debit else "betalen vóór"
         add(f"{how[0].upper()}{how[1:]} {invoice.due_date.printed}", invoice.due_date)
     for advance in invoice.new_advances:
         parts = [part for part in (

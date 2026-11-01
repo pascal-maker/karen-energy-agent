@@ -330,7 +330,7 @@ from pathlib import Path
 
 import pytest
 
-from luminus_harness.invoice_schema import Invoice, is_summary_request
+from luminus_harness.invoice_schema import Invoice, build_invoice, is_summary_request, summarize_invoice
 from luminus_harness.knowledge import load_pdf_chunks_from_bytes
 
 FIXTURES = Path(__file__).parent / "fixtures" / "invoices"
@@ -443,11 +443,45 @@ def test_an_advance_bill_summary_lists_its_lines_and_direct_debit() -> None:
     summary = answer_uploaded_pdf_question("samenvatting", chunks, analysis["facts"], analysis["invoice"])["answer"]
     assert summary.splitlines() == [
         "Samenvatting van je voorschotfactuur van Kanaal Energie:",
-        "- Voorschot elektriciteit okt 2026: € 63,21 (PDF-pagina 1)",
-        "- Voorschot gas okt 2026: € 105,66 (PDF-pagina 1)",
+        "- Voorschot elektriciteit okt 2026: € 63,21 excl. btw (PDF-pagina 1)",
+        "- Voorschot gas okt 2026: € 105,66 excl. btw (PDF-pagina 1)",
         "- Nog te betalen: € 179,00 (PDF-pagina 1)",
-        "- Betaald via domiciliëring op 31.10.2026 (PDF-pagina 1)",
+        "- Wordt via domiciliëring afgehouden op 31.10.2026 (PDF-pagina 1)",
     ]
+    assert [line.vat_included for line in analysis["invoice"].advance_lines] == [False, False]
+
+
+def test_advance_lines_keep_unknown_or_included_vat() -> None:
+    lines = {**_fact("lines"), "value": [{"energy": "gas", "period": "okt 2026", "amount": Decimal("100.00")}]}
+    assert build_invoice({"advance_lines": lines}, "x.pdf").advance_lines[0].vat_included is None
+    invoice = build_invoice({"advance_lines": {**lines, "vat": "incl. btw"}}, "x.pdf")
+    assert invoice.advance_lines[0].vat_included is True
+    assert "- Voorschot gas okt 2026: € 100,00 incl. btw (PDF-pagina 1)" in summarize_invoice(invoice)["answer"]
+
+
+def test_a_negative_cost_keeps_its_sign() -> None:
+    facts = {
+        "total_energy_cost": {**_fact("Totale energiekosten: - 120,00 EUR"), "value": Decimal("-120.00")},
+        "advances_paid": {**_fact("Voorschotten: 300,00 EUR"), "value": Decimal("300.00")},
+        "amount_due": {**_fact("Terug te krijgen: 420,00 EUR"), "value": Decimal("-420.00")},
+        "calculated_difference": {"value": Decimal("-420.00")},
+    }
+    invoice = build_invoice(facts, "x.pdf")
+    assert invoice.amounts.total_energy_cost.value_eur == "-120.00"
+    assert invoice.amounts.credit.value_eur == "420.00"
+    assert invoice.calculated.costs_minus_advances_eur == "-420.00"
+    assert "calculated_difference_differs_from_amount_due" not in invoice.warnings
+    assert "- Totale energiekosten: € -120,00 (PDF-pagina 1)" in summarize_invoice(invoice)["answer"]
+
+
+def test_a_bill_paid_by_hand_says_pay_before() -> None:
+    date = {**_fact("Te betalen voor 15/11/2026"), "value": "15/11/2026"}
+    summary = summarize_invoice(build_invoice({"due_date": date}, "x.pdf"))["answer"]
+    assert "- Betalen vóór 15/11/2026 (PDF-pagina 1)" in summary
+
+
+def _fact(excerpt: str) -> dict:
+    return {"source": "x.pdf", "page": 1, "excerpt": excerpt}
 
 
 def test_field_questions_and_passages_keep_working_with_the_invoice() -> None:
