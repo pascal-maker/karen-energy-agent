@@ -102,3 +102,43 @@ def test_small_talk_names_the_topics_only_when_it_helps():
     instruction = gemma_answer._SMALL_TALK_INSTRUCTION
     assert "Noem alleen bij een eerste begroeting of een vraag buiten energie" in instruction
     assert "Vraag niet hoe het met de gebruiker gaat als die dat zelf niet vroeg" in instruction
+
+
+# --- Review of 6a2554f -------------------------------------------------------------------------
+
+from datetime import date, timedelta
+
+
+def test_after_midnight_the_cheapest_hours_come_from_the_day_dated_today():
+    yesterday = (date.fromisoformat(TODAY) - timedelta(days=1)).isoformat()
+    data = market(date=yesterday, cheapest_hours=[1, 2, 3])
+    data["spot"]["tomorrow"] = {"date": TODAY, "avg": 100.0, "min": 50.0, "max": 150.0, "cheapest_hours": [13, 14, 15]}
+    answer = market_prices.cheapest_time_reply(data, "nl")["answer"]
+    assert answer.startswith("Vandaag is stroom op de groothandelsmarkt het goedkoopst rond 13u, 14u en 15u (de dag loopt van 5,0 tot 15,0 cent")
+
+
+def test_old_spot_data_is_never_called_today():
+    yesterday = (date.fromisoformat(TODAY) - timedelta(days=1)).isoformat()
+    answer = market_prices.cheapest_time_reply(market(date=yesterday), "nl")["answer"]
+    assert answer.startswith(f"Op {yesterday} was stroom op de groothandelsmarkt het goedkoopst rond 0u, 3u en 4u")
+
+
+@pytest.mark.parametrize("question", [
+    "wanneer zijn vliegtickets het goedkoopst", "wanneer is tanken het goedkoopst", "when are flights cheapest",
+])
+def test_cheap_hours_need_an_electricity_subject(question):
+    assert not market_prices.is_cheapest_time_question(question)
+
+
+@pytest.mark.parametrize("question, first_line", [
+    ("ik verbruik 500 kWh per maand, is dat veel?", "500 kWh stroom per maand is ongeveer 6.000 kWh per jaar: meer dan een gemiddeld gezin van 4 personen."),
+    ("is 250 kwh per maand normaal", "250 kWh stroom per maand is ongeveer 3.000 kWh per jaar: ongeveer wat een gemiddeld gezin van 3 personen verbruikt."),
+    ("ik verbruik 3500 kwh per jaar is dat veel", "3.500 kWh stroom per jaar is ongeveer wat een gemiddeld gezin van 3 personen verbruikt."),
+])
+def test_usage_per_month_is_turned_into_a_year(question, first_line):
+    assert market_prices.usage_reply(question)["answer"].splitlines()[0] == first_line
+
+
+def test_a_small_usage_without_a_period_gets_a_question_back():
+    answer = market_prices.usage_reply("ik verbruik 400 kwh is dat veel")["answer"]
+    assert answer == "Is dat 400 kWh per maand of per jaar? Dan zet ik het naast het gemiddelde van een gezin."

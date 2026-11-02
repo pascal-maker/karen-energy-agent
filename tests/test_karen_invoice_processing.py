@@ -604,3 +604,21 @@ def test_a_question_the_invoice_cannot_answer_goes_to_karen_without_the_invoice(
     local = client.post("/api/answer", json={"question": "wat betekent dit", "session_id": session_id, "history": history}).json()
     assert local["processing"] == "local-only" and local["answer"].startswith("Wat deze jaarafrekening betekent:")
     assert len(seen) == 1
+
+
+def test_no_next_year_estimate_for_a_bill_shorter_than_a_year() -> None:
+    def fact(value, excerpt="x"):
+        return {"source": "x.pdf", "page": 1, "excerpt": excerpt, "value": value}
+
+    facts = {
+        "invoice_type": fact("Jaarafrekening"),
+        "billing_period": fact("01/01/2025 tot 30/06/2025"),
+        "total_energy_cost": fact(Decimal("600.00")), "advances_paid": fact(Decimal("600.00")),
+        "amount_due": fact(Decimal("0.00")), "calculated_difference": fact(Decimal("0.00")),
+        "new_advance": fact([{"energy": None, "frequency": "maandelijks", "new": Decimal("100.00"), "old": None}]),
+    }
+    answer = answer_uploaded_pdf_question("wat betekent dit", [], facts)["answer"]
+    assert "- Je nieuwe voorschot is € 1.200,00 per jaar. Deze factuur dekt geen volledig jaar, dus een schatting voor volgend jaar maak ik niet (PDF-pagina 1)" in answer
+    assert "volgend jaar ongeveer" not in answer
+    full = {**facts, "billing_period": fact("01/01/2025 tot 31/12/2025")}
+    assert "Blijven je verbruik en de prijzen gelijk" in answer_uploaded_pdf_question("wat betekent dit", [], full)["answer"]

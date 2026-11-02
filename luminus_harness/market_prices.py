@@ -184,6 +184,13 @@ def _visual_group(kind: str, cards: list[dict[str, Any]], lang: str, digits: int
     return {"title": labels[kind], "items": items}
 
 
+def _current_spot_day(spot: dict[str, Any]) -> dict[str, Any]:
+    """The spot day dated today; the daily job runs in the evening, so after midnight its "tomorrow" is today."""
+    today = datetime.now(BRUSSELS).date().isoformat()
+    later = spot.get("tomorrow") or {}
+    return later if later.get("date") == today and (spot.get("today") or {}).get("date") != today else spot.get("today") or {}
+
+
 def _day_label(day: str, lang: str) -> str:
     today = datetime.now(BRUSSELS).date().isoformat()
     if day == today:
@@ -194,10 +201,7 @@ def _day_label(day: str, lang: str) -> str:
 def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | None:
     """Karen's reply from market.json, or None when the file has no usable spot day."""
     spot = data.get("spot") or {}
-    # The daily job runs in the evening, so after midnight its "tomorrow" is today.
-    today = datetime.now(BRUSSELS).date().isoformat()
-    later = spot.get("tomorrow") or {}
-    day = later if later.get("date") == today and (spot.get("today") or {}).get("date") != today else spot.get("today") or {}
+    day = _current_spot_day(spot)
     if spot.get("unit") != "EUR/MWh" or not all(isinstance(day.get(key), (int, float)) for key in ("avg", "min", "max")):
         return None
     # EUR/MWh divided by 10 is eurocent per kWh.
@@ -501,9 +505,15 @@ _WHEN = re.compile(
 _CHEAP = re.compile(r"\b(?:goedko\w*|voordelig\w*|cheap\w*|moins\s+ch[eè]re?)\b", re.IGNORECASE)
 
 
+_ELECTRICITY = re.compile(
+    r"\b(?:stroom\w*|elektri\w*|electri\w*|[ée]lectricit[ée]|energie\w*|[ée]nergie|energy|kwh|wasmachine|vaatwas\w*|droogkast|"
+    r"(?:op)?laden|laadpaal|warmtepomp|power)\b", re.IGNORECASE,
+)
+
+
 def is_cheapest_time_question(question: str) -> bool:
-    """'Wanneer is stroom het goedkoopst?': the hours, not the supplier cards."""
-    return bool(_WHEN.search(question) and _CHEAP.search(question)) and not _GAS.search(question)
+    """'Wanneer is stroom het goedkoopst?': the hours, not the supplier cards. Not flights, not fuel, not gas."""
+    return bool(_WHEN.search(question) and _CHEAP.search(question) and _ELECTRICITY.search(question)) and not _GAS.search(question)
 
 
 _CHEAPEST_TIME = {
@@ -528,16 +538,29 @@ _CHEAPEST_TIME = {
 }
 
 
+# "Vandaag is stroom … het goedkoopst" -> "Op 2026-11-01 was stroom … het goedkoopst".
+_PAST_DAY = {
+    "nl": ("Vandaag is ", "{when} was "),
+    "en": ("Today wholesale electricity is", "{when} wholesale electricity was"),
+    "fr": ("Aujourd'hui, l'électricité est", "{when}, l'électricité était"),
+}
+
+
 def cheapest_time_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | None:
     """Today's cheapest hours first, then what they mean for the kind of contract; None without spot data."""
     spot = data.get("spot") or {}
-    day = spot.get("today") or {}
+    day = _current_spot_day(spot)
     hours = [hour for hour in day.get("cheapest_hours") or [] if isinstance(hour, int)][:3]
     if spot.get("unit") != "EUR/MWh" or not hours or not all(isinstance(day.get(key), (int, float)) for key in ("min", "max")):
         return None
     labels = [f"{h}:00" if lang == "en" else f"{h}{'h' if lang == 'fr' else 'u'}" for h in hours]
     lines = _CHEAPEST_TIME.get(lang, _CHEAPEST_TIME["nl"])
     first = lines[0].format(hours=_join(labels, lang), low=_cents(day["min"] / 10, lang), high=_cents(day["max"] / 10, lang))
+    if day.get("date") != datetime.now(BRUSSELS).date().isoformat():
+        # Old data is never called today.
+        label = _day_label(str(day.get("date", "")), lang)
+        now_word, then = _PAST_DAY.get(lang, _PAST_DAY["nl"])
+        first = first.replace(now_word, then.format(when=label[0].upper() + label[1:]), 1)
     return {
         "answer": "\n".join([first, *lines[1:]]),
         "sources": [source for source in data.get("sources") or [] if isinstance(source, dict)][:1],
@@ -553,6 +576,17 @@ _HOW_MUCH = re.compile(r"\b(?:veel|weinig|normaal|gemiddeld\w*|hoog|laag|a\s+lot
 _USAGE_ELSEWHERE = re.compile(r"\b(?:kost\w*|prijs\w*|betaal\w*|cost\w*|price|prix|co[uû]t\w*|combien)\b", re.IGNORECASE)
 
 
+# How the usage is counted, and how many of that period make a year.
+_PERIODS = {
+    "per jaar": (re.compile(r"\b(?:per\s+jaar|jaarlijks\w*|op\s+een\s+jaar|a\s+year|per\s+year|par\s+an)\b", re.IGNORECASE), 1),
+    "per maand": (re.compile(r"\b(?:per\s+maand|maandelijks\w*|in\s+een\s+maand|a\s+month|per\s+month|par\s+mois)\b", re.IGNORECASE), 12),
+    "per twee maanden": (re.compile(r"\b(?:per\s+twee\s+maanden|tweemaandelijks\w*)\b", re.IGNORECASE), 6),
+    "per kwartaal": (re.compile(r"\b(?:per\s+kwartaal|per\s+trimester|driemaandelijks\w*|a\s+quarter|par\s+trimestre)\b", re.IGNORECASE), 4),
+    "per week": (re.compile(r"\b(?:per\s+week|wekelijks\w*|a\s+week|par\s+semaine)\b", re.IGNORECASE), 52),
+    "per dag": (re.compile(r"\b(?:per\s+dag|dagelijks\w*|a\s+day|per\s+day|par\s+jour)\b", re.IGNORECASE), 365),
+}
+
+
 def _kwh(value: int) -> str:
     return f"{value:,}".replace(",", ".")
 
@@ -562,7 +596,15 @@ def usage_reply(question: str) -> dict[str, Any] | None:
     number = _USAGE_NUMBER.search(question)
     if not number or not _HOW_MUCH.search(question) or _GAS.search(question) or _USAGE_ELSEWHERE.search(question):
         return None
-    kwh = int(re.sub(r"\D", "", number.group(1)))
+    amount = int(re.sub(r"\D", "", number.group(1)))
+    period = next((name for name, (pattern, _) in _PERIODS.items() if pattern.search(question)), None)
+    if period is None and amount < 1000:
+        # 400 kWh is a month or two, not a year: ask rather than call it low.
+        return {
+            "answer": f"Is dat {_kwh(amount)} kWh per maand of per jaar? Dan zet ik het naast het gemiddelde van een gezin.",
+            "sources": [], "live_source_status": "not-needed", "processing": "usage-yardstick",
+        }
+    kwh = amount * (_PERIODS[period][1] if period else 1)
     if kwh < HOUSEHOLD_KWH[2] * 0.85:
         verdict = "minder dan een gemiddeld gezin van 2 personen"
     elif kwh > HOUSEHOLD_KWH[4] * 1.15:
@@ -573,7 +615,8 @@ def usage_reply(question: str) -> dict[str, Any] | None:
     averages = ", ".join(f"{people} personen {_kwh(value)} kWh" for people, value in HOUSEHOLD_KWH.items())
     return {
         "answer": "\n".join([
-            f"{_kwh(kwh)} kWh stroom per jaar is {verdict}.",
+            (f"{_kwh(amount)} kWh stroom {period} is ongeveer {_kwh(kwh)} kWh per jaar: {verdict}." if period and period != "per jaar"
+             else f"{_kwh(kwh)} kWh stroom per jaar is {verdict}."),
             f"- **Gemiddeld volgens de VREG:** {averages}.",
             "- **Wat meetelt:** een warmtepomp, een elektrische auto of elektrisch koken doen je verbruik flink stijgen.",
             "- **Zonnepanelen:** dan telt wat je van het net haalt, niet wat je zelf opwekt.",

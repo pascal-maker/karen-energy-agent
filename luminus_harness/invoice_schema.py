@@ -406,6 +406,16 @@ def is_explanation_request(question: str) -> bool:
     return not rest
 
 
+def _covers_a_year(period: Period | None) -> bool:
+    """A billing period of about a year (330 to 400 days), read from its printed start and end dates."""
+    if period is None or not period.start or not period.end:
+        return False
+    from datetime import date
+
+    days = (date.fromisoformat(period.end) - date.fromisoformat(period.start)).days + 1
+    return 330 <= days <= 400
+
+
 _PER_YEAR = {"monthly": 12, "bimonthly": 6, "quarterly": 4, "yearly": 1}
 
 
@@ -456,7 +466,10 @@ def explain_invoice(invoice: Invoice, question: str = "") -> dict[str, Any]:
         yearly = sum(Decimal(advance.amount_eur) * _PER_YEAR[advance.frequency] for advance in advances)
         text = f"Je nieuwe voorschot is {_euro(str(yearly))} per jaar"
         cost = amounts.total_energy_cost
-        if cost and invoice.document_type != "advance_invoice":
+        if cost and invoice.document_type != "advance_invoice" and not _covers_a_year(invoice.billing_period):
+            # Twelve months of advances against six months of costs would promise money that isn't there.
+            text += ". Deze factuur dekt geen volledig jaar, dus een schatting voor volgend jaar maak ik niet"
+        elif cost and invoice.document_type != "advance_invoice":
             gap = yearly - Decimal(cost.value_eur)
             outcome = (f"krijg je volgend jaar ongeveer {_euro(str(gap))} terug" if gap > 0
                        else f"betaal je volgend jaar ongeveer {_euro(str(-gap))} bij" if gap < 0
