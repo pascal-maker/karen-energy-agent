@@ -210,6 +210,17 @@ def score_feedback(trace_id: str, rating: str, comment: str = "") -> None:
     ))
 
 
+def masked(value: Any) -> Any:
+    """`value` with private identifiers masked in every text, also inside lists and mappings."""
+    if isinstance(value, str):
+        return mask_private(value)
+    if isinstance(value, dict):
+        return {key: masked(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [masked(item) for item in value]
+    return value
+
+
 def _quietly(send: Callable[[], Any]) -> None:
     try:
         send()
@@ -249,10 +260,11 @@ class BenchmarkExperiment:
             if not case_id:
                 continue
             try:
+                # A direct API call, not a span: mask_otel_spans does not see it, so mask here.
                 self.items[case_id] = langfuse.create_dataset_item(
-                    dataset_name=DATASET, id=case_id, input=case.get("question", ""),
-                    expected_output=case.get("expert_answer", ""),
-                    metadata={"expert_id": case.get("expert_id"), "source_url": case.get("source_url")},
+                    dataset_name=DATASET, id=case_id, input=masked(case.get("question", "")),
+                    expected_output=masked(case.get("expert_answer", "")),
+                    metadata=masked({"expert_id": case.get("expert_id"), "source_url": case.get("source_url")}),
                 )
             except Exception:
                 pass

@@ -236,3 +236,30 @@ def test_a_benchmark_without_langfuse_runs_as_before(monkeypatch):
     run = asyncio.run(expert_judge.run_benchmark(answer, [{"id": "q1", "question": "?", "expert_answer": "Ja."}], lambda run: None,
                                                  start_experiment=langfuse_trace.benchmark_experiment))
     assert run["results"][0]["karen_answer"] == "Ja." and run["summary"]["judged"] == 1
+
+
+def test_benchmark_dataset_items_are_masked(monkeypatch):
+    items = []
+
+    class Client:
+        def create_trace_id(self, seed):
+            return "e" * 32
+
+        def create_dataset(self, **dataset):
+            pass
+
+        def create_dataset_item(self, **item):
+            items.append(item)
+            return item
+
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    monkeypatch.setattr(langfuse_trace, "_client", Client())
+    langfuse_trace.benchmark_experiment({"id": "r1", "started_at": "2026-11-02T14:14"}, [{
+        "id": "q1", "question": "Mail fictief@example.com?", "expert_answer": "Stort op BE68 5390 0754 7034.",
+        "expert_id": "fictief@example.com", "source_url": "https://example.com/?m=fictief@example.com",
+    }])
+    sent = json.dumps(items, ensure_ascii=False)
+    for private in ("fictief@example.com", "BE68 5390 0754 7034"):
+        assert private not in sent
+    assert items[0]["input"] == "Mail [verborgen]?" and items[0]["expected_output"] == "Stort op [verborgen]."
