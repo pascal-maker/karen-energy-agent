@@ -362,3 +362,36 @@ def test_stored_feedback_masks_the_question_too():
     token = sign_feedback("mail fictief@example.com, klopt mijn voorschot?", "Ja.", "hosted-public-knowledge", "ab" * 16)
     record = build_record(token, "down", None)
     assert record["question"] == "mail [verborgen], klopt mijn voorschot?"
+
+
+def test_simultaneous_first_thumbs_down_create_one_queue(monkeypatch):
+    import threading
+    import time as clock
+
+    api = _QueueApi()
+    _queue_client(monkeypatch, api)
+    slow_list = type(api).annotation_queues.fget
+
+    class SlowApi(_QueueApi):
+        @property
+        def annotation_queues(self):
+            queues = slow_list(self)
+            original = queues.list_queues
+
+            def list_queues(**kwargs):
+                page = original(**kwargs)
+                clock.sleep(0.05)  # both threads see an empty list before either creates the queue
+                return page
+
+            queues.list_queues = list_queues
+            return queues
+
+    api.__class__ = SlowApi
+    threads = [threading.Thread(target=langfuse_trace.review_thumbs_down, args=(trace_id,)) for trace_id in ("ab" * 16, "cd" * 16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(api.queues) == 1 and len(api.configs) == 1
+    assert sorted(item[1] for item in api.items) == ["ab" * 16, "cd" * 16]
+    assert {item[0] for item in api.items} == {"queue-1"}

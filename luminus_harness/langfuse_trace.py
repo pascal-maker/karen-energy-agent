@@ -225,6 +225,7 @@ REVIEW_QUEUE = "Karen 👎 nakijken"
 REVIEW_SCORE = "beoordeling"
 _REVIEW_CATEGORIES = (("goed", 1), ("onvolledig", 0.5), ("ontwijkend", 0.25), ("fout", 0))
 _review_queue_id: str | None = None
+_review_queue_lock = threading.Lock()
 
 
 def _review_queue(langfuse: Any) -> str:
@@ -232,6 +233,14 @@ def _review_queue(langfuse: Any) -> str:
     global _review_queue_id
     if _review_queue_id:
         return _review_queue_id
+    # Two first 👎 at once must not each create a queue: look up or create it once, under a lock.
+    with _review_queue_lock:
+        if not _review_queue_id:
+            _review_queue_id = _find_or_create_review_queue(langfuse)
+    return _review_queue_id
+
+
+def _find_or_create_review_queue(langfuse: Any) -> str:
     queues = langfuse.api.annotation_queues
     existing = next((queue for queue in queues.list_queues(limit=100).data if queue.name == REVIEW_QUEUE), None)
     if existing is None:
@@ -247,8 +256,7 @@ def _review_queue(langfuse: Any) -> str:
             name=REVIEW_QUEUE, score_config_ids=[config.id],
             description="Antwoorden van Karen met een 👎 van een bezoeker. Goede voorbeelden gaan naar de testset.",
         )
-    _review_queue_id = existing.id
-    return _review_queue_id
+    return existing.id
 
 
 def review_thumbs_down(trace_id: str) -> None:
