@@ -22,6 +22,7 @@ from typing import Any, Awaitable, Callable
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from . import langfuse_trace
 from .jev import DEFAULT_BASE_URL, DEFAULT_MODEL
 
 CASES_PATH = Path(__file__).with_name("expert_benchmark.json")
@@ -116,8 +117,13 @@ async def _ask(state: str, questions: dict[str, tuple[str, dict[str, str]]]) -> 
             for name, (instructions, options) in questions.items()
         },
     }
-    result = await asyncio.to_thread(_post, body)
-    answers = result.get("answers") or {} if isinstance(result, dict) else {}
+    with langfuse_trace.step(
+        "judge-answer", as_type="evaluator", metadata={"model": body["model"]},
+        input={"state": state, "questions": {name: instructions for name, (instructions, _) in questions.items()}},
+    ) as call:
+        result = await asyncio.to_thread(_post, body)
+        answers = result.get("answers") or {} if isinstance(result, dict) else {}
+        langfuse_trace.update(call, output=answers)
     return {name: _probabilities(answers.get(name), options) for name, (_, options) in questions.items()}
 
 
@@ -169,8 +175,33 @@ async def judge(question: str, expert_answer: str, karen_answer: str, published_
 AnswerFn = Callable[[str], Awaitable[dict[str, Any]]]
 
 
-async def run_benchmark(answer: AnswerFn, cases: list[dict[str, Any]], progress: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-    """Ask Karen every case, let Jev judge each answer; `progress` gets the run after every case."""
+async def _judged_row(answer: AnswerFn, case: dict[str, Any]) -> dict[str, Any]:
+    """Karen's answer to one case and Jev's verdict on it; a failure is kept in the row, never raised."""
+    started = time.monotonic()
+    row: dict[str, Any] = {key: case.get(key, "") for key in ("id", "expert_id", "source_url", "question", "expert_answer", "quote")}
+    try:
+        reply = await answer(case["question"])
+        row.update(
+            karen_answer=str(reply.get("answer", "")),
+            processing=str(reply.get("processing", "")),
+            sources=[source.get("url", "") for source in reply.get("sources") or [] if isinstance(source, dict)],
+            seconds=round(time.monotonic() - started, 1),
+        )
+        row["judge"] = await judge(
+            case["question"], case["expert_answer"], row["karen_answer"], str(case.get("published_at") or "")
+        )
+    except Exception as error:  # one failing case should not stop the run
+        row["error"] = str(error)[:300] or type(error).__name__
+    return row
+
+
+async def run_benchmark(
+    answer: AnswerFn, cases: list[dict[str, Any]], progress: Callable[[dict[str, Any]], None],
+    start_experiment: Callable[[dict[str, Any], list[dict[str, Any]]], Any] | None = None,
+) -> dict[str, Any]:
+    """Ask Karen every case, let Jev judge each answer; `progress` gets the run after every case.
+
+    With `start_experiment` (Langfuse), each case runs as an item of the experiment it returns."""
     run: dict[str, Any] = {
         "id": uuid.uuid4().hex[:12],
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -179,24 +210,16 @@ async def run_benchmark(answer: AnswerFn, cases: list[dict[str, Any]], progress:
         "results": [],
     }
     progress(run)
+    experiment = await asyncio.to_thread(start_experiment, run, cases) if start_experiment else None
     for case in cases:
-        started = time.monotonic()
-        row: dict[str, Any] = {key: case.get(key, "") for key in ("id", "expert_id", "source_url", "question", "expert_answer", "quote")}
-        try:
-            reply = await answer(case["question"])
-            row.update(
-                karen_answer=str(reply.get("answer", "")),
-                processing=str(reply.get("processing", "")),
-                sources=[source.get("url", "") for source in reply.get("sources") or [] if isinstance(source, dict)],
-                seconds=round(time.monotonic() - started, 1),
-            )
-            row["judge"] = await judge(
-                case["question"], case["expert_answer"], row["karen_answer"], str(case.get("published_at") or "")
-            )
-        except Exception as error:  # one failing case should not stop the run
-            row["error"] = str(error)[:300] or type(error).__name__
+        if experiment is None:
+            row = await _judged_row(answer, case)
+        else:
+            row = await asyncio.to_thread(experiment.run_case, case, lambda case=case: _judged_row(answer, case))
         run["results"].append(row)
         progress(run)
+    if experiment is not None:
+        await asyncio.to_thread(experiment.finish)
     run["status"] = "done"
     run["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run["summary"] = summarize(run["results"])

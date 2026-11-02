@@ -22,6 +22,7 @@ from contextvars import ContextVar
 from typing import Any
 from urllib.request import Request, urlopen
 
+from . import langfuse_trace
 from .perplexity_agent import _PRIVATE_INPUT
 from .steps import report_step
 
@@ -115,12 +116,23 @@ async def ask_choices(state: str, questions: dict[str, tuple[str, dict[str, str]
             for name, (instructions, criteria) in questions.items()
         },
     }
-    try:
-        result = await asyncio.to_thread(_post_system_one, body)
-    except Exception:
-        return {name: None for name in questions}
-    answers = (result.get("answers") or {}) if isinstance(result, dict) else {}
-    return {name: _valid_choice(answers.get(name), criteria) for name, (_, criteria) in questions.items()}
+    with langfuse_trace.step(
+        "route-question", as_type="generation", model=body["model"],
+        input={"state": state, "questions": {name: instructions for name, (instructions, _) in questions.items()}},
+    ) as call:
+        try:
+            result = await asyncio.to_thread(_post_system_one, body)
+        except Exception as error:
+            langfuse_trace.update(call, level="WARNING", status_message=str(error)[:300] or type(error).__name__)
+            return {name: None for name in questions}
+        answers = (result.get("answers") or {}) if isinstance(result, dict) else {}
+        usage = result.get("usage") if isinstance(result, dict) else None
+        usage = usage if isinstance(usage, dict) else {}
+        langfuse_trace.update(
+            call, output=answers, model=str((result.get("model") if isinstance(result, dict) else None) or body["model"]),
+            usage_details={key: int(value) for key, value in usage.items() if isinstance(value, (int, float))} or None,
+        )
+        return {name: _valid_choice(answers.get(name), criteria) for name, (_, criteria) in questions.items()}
 
 
 def _valid_choice(answer: Any, criteria: dict[str, str]) -> dict[str, Any] | None:

@@ -13,7 +13,9 @@ import os# used to load the environment variables
 import re# used to recognize electricity price questions
 import secrets
 import time
+import uuid
 from collections import OrderedDict, deque
+from contextlib import nullcontext
 from copy import deepcopy# used to create a deep copy of the state
 from pathlib import Path# used to handle file paths
 from typing import Any# used for type hints
@@ -959,16 +961,23 @@ async def _rated_answer(body: AnswerRequest) -> dict[str, Any]:
 
     reset = answer_steps.set(collect)
     started = time.monotonic()
+    record_id = uuid.uuid4().hex
+    # Only public questions are traced in Langfuse (the record id is the trace id, so a 👍/👎 finds it);
+    # a PDF session never is, also when its question falls back to a public answer.
+    turn = nullcontext(None) if body.session_id else langfuse_trace.public_turn(
+        body.question.strip(), record_id, history_turns=len(body.history)
+    )
     try:
-        reply = await _answer(body)
+        with turn as root:
+            reply = await _answer(body)
+            if root is not None:
+                langfuse_trace.finish_turn(root, reply, steps)
     finally:
         answer_steps.reset(reset)
     # Only public answers can be rated or logged; PDF and offer-comparison replies carry personal inputs.
     if not body.session_id and reply.get("processing") != "local-only" and not reply.get("comparison_status"):
-        record = build_log_record(body.question.strip(), reply, steps, time.monotonic() - started)
+        record = build_log_record(body.question.strip(), reply, steps, time.monotonic() - started, record_id=record_id)
         await asyncio.to_thread(store_log_record, record)
-        # Same masked record to Langfuse, when its keys are set; never for PDF or comparison replies.
-        langfuse_trace.in_background(lambda: langfuse_trace.send_answer(record))
         reply["feedback_token"] = sign_feedback(
             body.question.strip(), reply.get("answer", ""), str(reply.get("processing", "")), record["id"]
         )
@@ -1055,6 +1064,7 @@ async def api_feedback(body: FeedbackRequest, request: Request) -> dict[str, boo
     except FeedbackError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     await asyncio.to_thread(store_feedback, record)
+    langfuse_trace.score_feedback(record.get("log_id", ""), record["rating"], record.get("comment", ""))
     return {"stored": True}
 
 
@@ -1172,12 +1182,14 @@ async def _run_benchmark() -> None:
     def progress(run: dict[str, Any]) -> None:
         _benchmark["run"] = run
 
-    run = await expert_judge.run_benchmark(_benchmark_answer, expert_judge.load_cases(), progress)
+    # With Langfuse keys, the run is also a Langfuse experiment on the benchmark dataset.
+    run = await expert_judge.run_benchmark(
+        _benchmark_answer, expert_judge.load_cases(), progress, start_experiment=langfuse_trace.benchmark_experiment
+    )
     try:
         await asyncio.to_thread(expert_judge.save_run, run)
     except Exception:
         pass
-    langfuse_trace.in_background(lambda: langfuse_trace.send_benchmark_run(run))
 
 
 @api_app.get("/admin/benchmark", include_in_schema=False)
