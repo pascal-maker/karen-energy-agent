@@ -29,6 +29,7 @@ def main() -> None:
         "luminus_harness/invoice_analysis.py": repo_root / "luminus_harness" / "invoice_analysis.py",
         "luminus_harness/invoice_model.py": repo_root / "luminus_harness" / "invoice_model.py",
         "luminus_harness/invoice_schema.py": repo_root / "luminus_harness" / "invoice_schema.py",
+        "luminus_harness/langfuse_trace.py": repo_root / "luminus_harness" / "langfuse_trace.py",
         "luminus_harness/invoice_words.txt": repo_root / "luminus_harness" / "invoice_words.txt",
         "luminus_harness/rate_limit.py": repo_root / "luminus_harness" / "rate_limit.py",
         "luminus_harness/comparison_session.py": repo_root / "luminus_harness" / "comparison_session.py",

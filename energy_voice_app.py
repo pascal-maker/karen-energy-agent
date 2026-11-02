@@ -70,6 +70,7 @@ from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness import expert_judge
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
+from luminus_harness import langfuse_trace
 from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, today_summary
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
@@ -966,6 +967,8 @@ async def _rated_answer(body: AnswerRequest) -> dict[str, Any]:
     if not body.session_id and reply.get("processing") != "local-only" and not reply.get("comparison_status"):
         record = build_log_record(body.question.strip(), reply, steps, time.monotonic() - started)
         await asyncio.to_thread(store_log_record, record)
+        # Same masked record to Langfuse, when its keys are set; never for PDF or comparison replies.
+        langfuse_trace.in_background(lambda: langfuse_trace.send_answer(record))
         reply["feedback_token"] = sign_feedback(
             body.question.strip(), reply.get("answer", ""), str(reply.get("processing", "")), record["id"]
         )
@@ -1174,6 +1177,7 @@ async def _run_benchmark() -> None:
         await asyncio.to_thread(expert_judge.save_run, run)
     except Exception:
         pass
+    langfuse_trace.in_background(lambda: langfuse_trace.send_benchmark_run(run))
 
 
 @api_app.get("/admin/benchmark", include_in_schema=False)
