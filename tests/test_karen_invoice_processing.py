@@ -518,3 +518,107 @@ def test_upload_returns_the_invoice_and_follow_ups_summarise_it_locally(monkeypa
     assert reply["answer"].startswith("Samenvatting van je jaarafrekening van Kanaal Energie:")
     assert "- Nog te betalen: € 234,56 (PDF-pagina 1)" in reply["answer"]
     assert reply["sources"][0]["detail"] == "PDF · pagina 1"
+
+
+# --- Explaining the invoice, and questions the invoice cannot answer -------------------------------
+
+from luminus_harness.invoice_schema import is_explanation_request
+
+
+@pytest.mark.parametrize("question", [
+    "wqt bekent deze factuur geef me foresights of trends", "oke mqq4 3at beeteknt dit",
+    "oke maar wat beteknen die resulataten", "Wat betekent dit?", "wat zegt dit over volgend jaar",
+])
+def test_explanation_requests_are_recognised(question) -> None:
+    assert is_explanation_request(question)
+
+
+@pytest.mark.parametrize("question", [
+    "oke maar real of barcelona", "wat betekent capaciteitstarief", "hoe berekent Luminus het capaciteitstarief",
+    "Hoeveel moet ik betalen?", "wat is de samenvatting",
+])
+def test_other_questions_are_not_explanation_requests(question) -> None:
+    assert not is_explanation_request(question)
+
+
+def test_explaining_a_settlement_says_why_and_what_next_year_may_bring() -> None:
+    chunks, analysis = _fixture("01-nl-afrekening-gegroepeerd.pdf")
+    answer = answer_uploaded_pdf_question("oke maar wat beteknen die resulataten", chunks, analysis["facts"], analysis["invoice"])
+    assert answer["answer"].splitlines() == [
+        "Wat deze jaarafrekening betekent:",
+        "- Je betaalt € 234,56 bij, omdat je voorschotten (€ 1.000,00) lager waren dan je werkelijke energiekosten "
+        "(€ 1.234,56) (PDF-pagina 1)",
+        "- In deze periode verbruikte je 2708 kWh elektriciteit en 6000 kWh gas (PDF-pagina 1)",
+        "- Je nieuwe voorschot is € 1.260,00 per jaar. Blijven je verbruik en de prijzen gelijk, dan krijg je volgend jaar "
+        "ongeveer € 25,44 terug. Dat is een berekening van Karen, geen bedrag van de factuur (PDF-pagina 1)",
+    ]
+    assert answer["sources"][0]["detail"] == "PDF · pagina 1"
+
+
+def test_a_trend_question_says_one_invoice_shows_one_period() -> None:
+    chunks, analysis = _fixture("01-nl-afrekening-gegroepeerd.pdf")
+    answer = answer_uploaded_pdf_question(
+        "wqt bekent deze factuur geef me foresights of trends", chunks, analysis["facts"], analysis["invoice"]
+    )["answer"]
+    assert answer.startswith("Wat deze jaarafrekening betekent:")
+    assert answer.splitlines()[-1] == (
+        "Trends kan ik uit één factuur niet halen: ze toont maar één periode. Daarvoor heb je de facturen van "
+        "vorige jaren nodig, of je verbruiksgeschiedenis bij je netbeheerder (in Vlaanderen: Mijn Fluvius)."
+    )
+
+
+def test_explaining_a_credit_and_an_advance_bill() -> None:
+    chunks, analysis = _fixture("03-nl-tegoed.pdf")
+    credit = answer_uploaded_pdf_question("wat betekent dit", chunks, analysis["facts"], analysis["invoice"])["answer"]
+    assert "- Je krijgt € 150,00 terug, omdat je voorschotten (€ 950,00) hoger waren dan je werkelijke energiekosten (€ 800,00)" in credit
+    chunks, analysis = _fixture("11-nl-voorschot-domiciliering.pdf")
+    advance = answer_uploaded_pdf_question("wat betekent dit", chunks, analysis["facts"], analysis["invoice"])["answer"]
+    assert advance.splitlines()[:2] == [
+        "Wat deze voorschotfactuur betekent:",
+        "- Dit is een vast bedrag vooraf, geen afrekening van je echte verbruik. Dat gebeurt pas op je jaarafrekening.",
+    ]
+
+
+def test_a_question_the_invoice_cannot_answer_goes_to_karen_without_the_invoice(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    import energy_voice_app
+
+    monkeypatch.setattr(energy_voice_app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
+    seen = []
+
+    async def public_answer(question, history):
+        seen.append((question, history))
+        return {"answer": "Daar help ik niet mee.", "sources": [], "processing": "small-talk"}
+
+    monkeypatch.setattr(energy_voice_app, "_public_answer", public_answer)
+    client = TestClient(energy_voice_app.api_app)
+    pdf = (FIXTURES / "01-nl-afrekening-gegroepeerd.pdf").read_bytes()
+    session_id = client.post("/api/upload", files={"file": ("01.pdf", pdf, "application/pdf")}).json()["session_id"]
+    history = [{"question": "samenvatting", "answer": "Nog te betalen: € 234,56"}]
+
+    reply = client.post("/api/answer", json={"question": "oke maar real of barcelona", "session_id": session_id, "history": history}).json()
+    assert reply["answer"] == "Daar help ik niet mee."
+    assert seen == [("oke maar real of barcelona", [])]
+
+    local = client.post("/api/answer", json={"question": "wat betekent dit", "session_id": session_id, "history": history}).json()
+    assert local["processing"] == "local-only" and local["answer"].startswith("Wat deze jaarafrekening betekent:")
+    assert len(seen) == 1
+
+
+def test_no_next_year_estimate_for_a_bill_shorter_than_a_year() -> None:
+    def fact(value, excerpt="x"):
+        return {"source": "x.pdf", "page": 1, "excerpt": excerpt, "value": value}
+
+    facts = {
+        "invoice_type": fact("Jaarafrekening"),
+        "billing_period": fact("01/01/2025 tot 30/06/2025"),
+        "total_energy_cost": fact(Decimal("600.00")), "advances_paid": fact(Decimal("600.00")),
+        "amount_due": fact(Decimal("0.00")), "calculated_difference": fact(Decimal("0.00")),
+        "new_advance": fact([{"energy": None, "frequency": "maandelijks", "new": Decimal("100.00"), "old": None}]),
+    }
+    answer = answer_uploaded_pdf_question("wat betekent dit", [], facts)["answer"]
+    assert "- Je nieuwe voorschot is € 1.200,00 per jaar. Deze factuur dekt geen volledig jaar, dus een schatting voor volgend jaar maak ik niet (PDF-pagina 1)" in answer
+    assert "volgend jaar ongeveer" not in answer
+    full = {**facts, "billing_period": fact("01/01/2025 tot 31/12/2025")}
+    assert "Blijven je verbruik en de prijzen gelijk" in answer_uploaded_pdf_question("wat betekent dit", [], full)["answer"]

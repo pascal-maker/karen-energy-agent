@@ -70,7 +70,7 @@ from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness import expert_judge
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
-from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_supplier_price_question, is_gas_price_question, load_market_data, today_summary
+from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, today_summary
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -982,10 +982,22 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         result = answer_uploaded_pdf_question(
             body.question.strip(), session["chunks"], session["analysis"].get("facts"), session["analysis"].get("invoice")
         )
+        if result.pop("found", True) is False:
+            # Nothing in the PDF fits ("Real of Barcelona?"): a normal question, asked without the PDF
+            # and without the earlier turns, which hold what was read from it.
+            return await _public_answer(body.question.strip(), [])
         if session["analysis"].get("photo"):
             result["answer"] = result["answer"].replace(" (PDF-pagina 1)", "").replace("PDF-pagina 1", "de foto")
         return {**result, "processing": "local-only", "filename": session["filename"]}
-    question = await standalone_question(body.question.strip(), [turn.model_dump() for turn in body.history])
+    return await _public_answer(body.question.strip(), [turn.model_dump() for turn in body.history])
+
+
+async def _public_answer(asked: str, history: list[dict[str, Any]]) -> dict[str, Any]:
+    question = await standalone_question(asked, history)
+    # "Wanneer is stroom het goedkoopst?", "is 3500 kWh veel?", "Luminus of Engie?": a direct answer, never the price list.
+    specific = await answer_specific_price_question(question)
+    if specific is not None:
+        return _with_petra_speech(specific)
     # Jev picks the route when enabled and confident; otherwise the word lists below decide.
     route = await route_question(question)
     if route in (None, "contract_advice"):
@@ -1019,7 +1031,8 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         route = "energy_other"
     if route in ("small_talk", "off_topic"):
         return _with_petra_speech(await answer_small_talk(question, route))
-    return await _hosted_answer(question if route else body.question.strip())
+    # The rewritten follow-up ("kost dat iets" -> "Kost van leverancier veranderen iets?"), also when Jev is unsure.
+    return await _hosted_answer(question)
 
 
 async def _hosted_answer(question: str) -> dict[str, Any]:
