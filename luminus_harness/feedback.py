@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .conversation_log import mask_private
 from .perplexity_agent import _PRIVATE_INPUT
 
 TOKEN_TTL_SECONDS = 60 * 60
@@ -72,7 +73,7 @@ def build_record(token: str, rating: str, comment: str | None) -> dict[str, Any]
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "rating": rating,
         "comment": comment,
-        "question": data["q"],
+        "question": mask_private(data["q"]),
         "answer": data["a"],
         "processing": data["p"],
         "log_id": data.get("l", ""),

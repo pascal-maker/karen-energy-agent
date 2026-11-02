@@ -263,3 +263,135 @@ def test_benchmark_dataset_items_are_masked(monkeypatch):
     for private in ("fictief@example.com", "BE68 5390 0754 7034"):
         assert private not in sent
     assert items[0]["input"] == "Mail [verborgen]?" and items[0]["expected_output"] == "Stort op [verborgen]."
+
+
+class _QueueApi:
+    def __init__(self, existing=()):
+        self.queues = list(existing)
+        self.items = []
+        self.configs = []
+
+    @property
+    def annotation_queues(self):
+        api = self
+
+        class Queues:
+            def list_queues(self, **_):
+                return type("Page", (), {"data": api.queues})()
+
+            def create_queue(self, *, name, score_config_ids, description=None):
+                queue = type("Queue", (), {"id": "queue-1", "name": name, "score_config_ids": score_config_ids})()
+                api.queues.append(queue)
+                return queue
+
+            def create_queue_item(self, queue_id, *, object_id, object_type):
+                api.items.append((queue_id, object_id, str(getattr(object_type, "value", object_type))))
+
+        return Queues()
+
+    @property
+    def score_configs(self):
+        api = self
+
+        class Configs:
+            def get(self, **_):
+                return type("Page", (), {"data": api.configs})()
+
+            def create(self, *, name, data_type, categories, description=None):
+                config = type("Config", (), {"id": "config-1", "name": name, "categories": categories})()
+                api.configs.append(config)
+                return config
+
+        return Configs()
+
+
+def _queue_client(monkeypatch, api):
+    class Client:
+        def __init__(self):
+            self.api = api
+
+        def create_score(self, **_):
+            pass
+
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    monkeypatch.setattr(langfuse_trace, "_client", Client())
+    monkeypatch.setattr(langfuse_trace, "_review_queue_id", None)
+
+
+def test_a_thumbs_down_puts_the_answer_in_the_review_queue(monkeypatch):
+    api = _QueueApi()
+    _queue_client(monkeypatch, api)
+    langfuse_trace.review_thumbs_down("ab" * 16)
+    langfuse_trace.review_thumbs_down("cd" * 16)
+    assert [queue.name for queue in api.queues] == ["Karen 👎 nakijken"]
+    assert api.queues[0].score_config_ids == ["config-1"]
+    assert [config.name for config in api.configs] == ["beoordeling"]
+    assert api.items == [("queue-1", "ab" * 16, "TRACE"), ("queue-1", "cd" * 16, "TRACE")]
+
+
+def test_an_existing_review_queue_is_reused(monkeypatch):
+    queue = type("Queue", (), {"id": "queue-9", "name": "Karen 👎 nakijken"})()
+    api = _QueueApi([queue])
+    _queue_client(monkeypatch, api)
+    langfuse_trace.review_thumbs_down("ab" * 16)
+    assert api.items == [("queue-9", "ab" * 16, "TRACE")] and api.configs == []
+
+
+def test_feedback_reaches_langfuse_as_score_and_review_item(api, monkeypatch):  # noqa: F811
+    import energy_voice_app as app
+
+    calls = []
+    monkeypatch.setattr(app, "store_log_record", lambda record: None)
+    monkeypatch.setattr(app, "store_feedback", lambda record: None)
+    monkeypatch.setattr(app, "route_question", AsyncMock(return_value=None))
+    monkeypatch.setattr(app.langfuse_trace, "score_feedback", lambda *args: calls.append(("score", args[0], args[1])))
+    monkeypatch.setattr(app.langfuse_trace, "review_thumbs_down", lambda trace_id: calls.append(("review", trace_id)))
+    token = api[0].post("/api/answer", json={"question": "waarom is mijn factuur zo hoog"}).json()["feedback_token"]
+    from luminus_harness.feedback import read_feedback_token
+
+    log_id = read_feedback_token(token)["l"]
+    api[0].post("/api/feedback", json={"feedback_token": token, "rating": "up"})
+    api[0].post("/api/feedback", json={"feedback_token": token, "rating": "down"})
+    assert calls == [("score", log_id, "up"), ("score", log_id, "down"), ("review", log_id)]
+
+
+def test_stored_feedback_masks_the_question_too():
+    from luminus_harness.feedback import build_record, sign_feedback
+
+    token = sign_feedback("mail fictief@example.com, klopt mijn voorschot?", "Ja.", "hosted-public-knowledge", "ab" * 16)
+    record = build_record(token, "down", None)
+    assert record["question"] == "mail [verborgen], klopt mijn voorschot?"
+
+
+def test_simultaneous_first_thumbs_down_create_one_queue(monkeypatch):
+    import threading
+    import time as clock
+
+    api = _QueueApi()
+    _queue_client(monkeypatch, api)
+    slow_list = type(api).annotation_queues.fget
+
+    class SlowApi(_QueueApi):
+        @property
+        def annotation_queues(self):
+            queues = slow_list(self)
+            original = queues.list_queues
+
+            def list_queues(**kwargs):
+                page = original(**kwargs)
+                clock.sleep(0.05)  # both threads see an empty list before either creates the queue
+                return page
+
+            queues.list_queues = list_queues
+            return queues
+
+    api.__class__ = SlowApi
+    threads = [threading.Thread(target=langfuse_trace.review_thumbs_down, args=(trace_id,)) for trace_id in ("ab" * 16, "cd" * 16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(api.queues) == 1 and len(api.configs) == 1
+    assert sorted(item[1] for item in api.items) == ["ab" * 16, "cd" * 16]
+    assert {item[0] for item in api.items} == {"queue-1"}

@@ -1065,6 +1065,8 @@ async def api_feedback(body: FeedbackRequest, request: Request) -> dict[str, boo
         raise HTTPException(status_code=422, detail=str(error)) from error
     await asyncio.to_thread(store_feedback, record)
     langfuse_trace.score_feedback(record.get("log_id", ""), record["rating"], record.get("comment", ""))
+    if record["rating"] == "down":
+        await asyncio.to_thread(langfuse_trace.review_thumbs_down, record.get("log_id", ""))
     return {"stored": True}
 
 
