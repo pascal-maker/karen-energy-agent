@@ -221,6 +221,52 @@ def masked(value: Any) -> Any:
     return value
 
 
+REVIEW_QUEUE = "Karen 👎 nakijken"
+REVIEW_SCORE = "beoordeling"
+_REVIEW_CATEGORIES = (("goed", 1), ("onvolledig", 0.5), ("ontwijkend", 0.25), ("fout", 0))
+_review_queue_id: str | None = None
+
+
+def _review_queue(langfuse: Any) -> str:
+    """The id of the review queue for 👎 answers, created with its `beoordeling` score on first use."""
+    global _review_queue_id
+    if _review_queue_id:
+        return _review_queue_id
+    queues = langfuse.api.annotation_queues
+    existing = next((queue for queue in queues.list_queues(limit=100).data if queue.name == REVIEW_QUEUE), None)
+    if existing is None:
+        from langfuse.api import ConfigCategory
+
+        configs = langfuse.api.score_configs
+        config = next((item for item in configs.get(limit=100).data if item.name == REVIEW_SCORE), None) or configs.create(
+            name=REVIEW_SCORE, data_type="CATEGORICAL",
+            categories=[ConfigCategory(label=label, value=value) for label, value in _REVIEW_CATEGORIES],
+            description="Jouw oordeel over een antwoord dat een bezoeker 👎 gaf. 'Ontwijkend': geen duidelijk antwoord.",
+        )
+        existing = queues.create_queue(
+            name=REVIEW_QUEUE, score_config_ids=[config.id],
+            description="Antwoorden van Karen met een 👎 van een bezoeker. Goede voorbeelden gaan naar de testset.",
+        )
+    _review_queue_id = existing.id
+    return _review_queue_id
+
+
+def review_thumbs_down(trace_id: str) -> None:
+    """Put an answer a visitor gave 👎 in the Langfuse review queue (blocking; run it off the event loop)."""
+    langfuse = client()
+    if langfuse is None or not trace_id:
+        return
+
+    def add() -> None:
+        from langfuse.api import AnnotationQueueObjectType
+
+        langfuse.api.annotation_queues.create_queue_item(
+            _review_queue(langfuse), object_id=trace_id, object_type=AnnotationQueueObjectType.TRACE,
+        )
+
+    _quietly(add)
+
+
 def _quietly(send: Callable[[], Any]) -> None:
     try:
         send()
