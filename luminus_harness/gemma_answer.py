@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from . import langfuse_trace
 from .jev import search_topic
 from .browserbase_sources import ENERGY_SOURCE_SCOPES, ENERGY_SOURCES, SUPPLIER_SOURCES, fetch_energy_page, named_supplier, search_energy_pages
 from .knowledge import KnowledgeChunk, STOP_WORDS, TOKEN_RE, retrieve
@@ -253,6 +254,15 @@ _SEARCH_CACHE_SIZE = 200
 
 
 async def _search_scope(query: str, scope: str, max_pages: int = 2) -> list[dict[str, str]]:
+    with langfuse_trace.step("search-web", as_type="retriever", input={"query": query, "scope": scope}) as search:
+        pages = await _search_scope_pages(query, scope, max_pages)
+        langfuse_trace.update(search, output=[
+            {"title": page["title"], "url": page["url"], "excerpt": page.get("content", "")[:500]} for page in pages
+        ])
+        return pages
+
+
+async def _search_scope_pages(query: str, scope: str, max_pages: int) -> list[dict[str, str]]:
     _report_step("search", sites=ENERGY_SOURCE_SCOPES.get(scope, []))
     key = (" ".join(query.casefold().split()), scope, max_pages)
     cached = _SEARCH_CACHE.get(key)
@@ -583,6 +593,16 @@ async def _answer_cancellation_question(question: str) -> dict[str, Any]:
     }
 
 
+# Stable names for each kind of model call in Langfuse (evaluators and dashboards use them).
+_GENERATION_NAMES = {
+    _SYSTEM_INSTRUCTION: "generate-answer",
+    _GENERAL_INSTRUCTION: "generate-general-answer",
+    _SMALL_TALK_INSTRUCTION: "answer-small-talk",
+    _SEARCH_TRANSLATION_INSTRUCTION: "translate-search-question",
+    _FOLLOW_UP_INSTRUCTION: "rewrite-follow-up",
+}
+
+
 def _model_configured() -> bool:
     """Gemma or the backup model can answer."""
     return any(os.getenv(name, "").strip() for name in ("GEMINI_API_KEY", "OPENAI_API_KEY"))
@@ -593,6 +613,16 @@ def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, on_del
     answer with the backup model.
 
     With `on_delta`, Gemma's text is passed on piece by piece while it is written."""
+    with langfuse_trace.step(
+        _GENERATION_NAMES.get(system_instruction, "generate-answer"), as_type="generation",
+        input=[{"role": "system", "content": system_instruction}, {"role": "user", "content": prompt}],
+    ) as generation:
+        text = _generate_with_fallback(prompt, system_instruction, on_delta)
+        langfuse_trace.update(generation, output=text)
+        return text
+
+
+def _generate_with_fallback(prompt: str, system_instruction: str, on_delta: Callable[[str], None] | None) -> str:
     if not os.getenv("GEMINI_API_KEY", "").strip() and os.getenv("OPENAI_API_KEY", "").strip():
         try:
             text = _generate_backup(prompt, system_instruction)
@@ -622,6 +652,11 @@ def _generate_backup(prompt: str, system_instruction: str) -> str:
     model = os.getenv("KAREN_BACKUP_MODEL", "gpt-5-mini").strip()
     options: dict[str, Any] = {"reasoning": {"effort": "minimal"}} if model.startswith("gpt-5") else {}
     result = OpenAI(timeout=40).responses.create(model=model, instructions=system_instruction, input=prompt, **options)
+    usage = getattr(result, "usage", None)
+    langfuse_trace.note_generation(
+        model=getattr(result, "model", None) or model, model_parameters=options.get("reasoning") or None,
+        usage_details={"input": getattr(usage, "input_tokens", None), "output": getattr(usage, "output_tokens", None)},
+    )
     text = (result.output_text or "").strip()
     if not text:
         raise ValueError("The backup model returned no text")
@@ -676,6 +711,7 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
     )
     streamed: list[str] = []
     opening = ""
+    usage: dict[str, Any] = {}
     try:
         with urlopen(request, timeout=45) as response:
             if on_delta:
@@ -683,7 +719,9 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line.startswith("data:"):
                         continue
-                    piece = _answer_text(json.loads(line[5:]), "")
+                    chunk = json.loads(line[5:])
+                    usage = chunk.get("usageMetadata") or usage if isinstance(chunk, dict) else usage
+                    piece = _answer_text(chunk, "")
                     if not streamed:
                         # Hold the opening text until a leaked "thought" marker can be told apart.
                         opening += piece
@@ -701,6 +739,7 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
                 payload = None
             else:
                 payload = json.loads(response.read().decode("utf-8", errors="replace"))
+                usage = (payload.get("usageMetadata") or {}) if isinstance(payload, dict) else {}
     except HTTPError as error:
         if error.code == 400:
             try:
@@ -737,6 +776,13 @@ def _generate_gemma(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, 
     text = ("".join(streamed) if on_delta else _drop_thought_marker(_answer_text(payload))).strip()
     if not text:
         raise GemmaUnavailableError("Gemma gaf een leeg antwoord terug.")
+    langfuse_trace.note_generation(
+        model=model, model_parameters={"thinkingLevel": "minimal", "stream": bool(on_delta)},
+        usage_details={
+            "input": usage.get("promptTokenCount"), "output": usage.get("candidatesTokenCount"),
+            "output_reasoning": usage.get("thoughtsTokenCount"),
+        },
+    )
     return text
 
 

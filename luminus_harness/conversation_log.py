@@ -49,7 +49,9 @@ def mask_private(text: str) -> str:
     return _IDENTIFIERS.sub(_MASK, text)
 
 
-def build_log_record(question: str, reply: dict[str, Any], steps: list[dict[str, Any]], seconds: float) -> dict[str, Any]:
+def build_log_record(
+    question: str, reply: dict[str, Any], steps: list[dict[str, Any]], seconds: float, record_id: str | None = None,
+) -> dict[str, Any]:
     route = next((step for step in steps if step.get("kind") == "route"), None)
     sources = [
         {"title": str(source.get("title", ""))[:200], "url": str(source.get("url", ""))[:500]}
@@ -57,7 +59,7 @@ def build_log_record(question: str, reply: dict[str, Any], steps: list[dict[str,
         if isinstance(source, dict) and source.get("url")
     ]
     return {
-        "id": uuid.uuid4().hex,
+        "id": record_id or uuid.uuid4().hex,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "question": mask_private(question)[:1000],
         "answer": str(reply.get("answer", ""))[:4000],

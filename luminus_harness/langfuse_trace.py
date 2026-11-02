@@ -1,147 +1,324 @@
-"""Send Karen's public answers and expert-benchmark runs to Langfuse, when the owner sets its keys.
+"""Trace Karen's public answers and expert-benchmark runs in Langfuse, when the owner sets its keys.
 
-Off unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set (LANGFUSE_HOST defaults to the EU
-cloud). Only what the private conversation log already keeps is sent: the public question,
-Karen's answer, the route, sources and timing, with e-mail addresses, account and EAN numbers
-masked in every text field (also where Karen repeats them in her answer). PDF and photo answers never reach this module.
-Everything goes over Langfuse's public HTTP API from a background thread, and a failure is
-dropped: tracing never slows down or breaks an answer.
+Off unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set (LANGFUSE_BASE_URL, or the older
+LANGFUSE_HOST, defaults to the EU cloud). Uses the Langfuse Python SDK (OpenTelemetry), following
+https://langfuse.com/docs/observability/best-practices:
+
+- One trace per public chat turn ("karen-answer"), with a root `answer-question` agent observation
+  (input: the visitor's message, output: Karen's answer) and nested steps: Jev's routing
+  (`route-question`), each site search (`search-web`, a retriever) and each model call
+  (`rewrite-follow-up`, `translate-search-question`, `generate-answer`, ...), as generations with
+  model name and token usage.
+- A 👍/👎 on an answer becomes a `gebruiker` score on that answer's trace.
+- Benchmark runs go through the SDK's experiment runner on the `karen-expert-benchmark` dataset,
+  with Jev's verdict per question as scores.
+
+Privacy: steps are only recorded inside a public turn or a benchmark question, so PDF and photo
+answers are never traced. E-mail addresses, account and EAN numbers are masked in every input,
+output and metadata field at export time, also where Karen repeats them in her answer.
+Tracing never breaks or slows down an answer: the SDK exports in the background and drops errors.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import os
 import threading
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Callable
-from urllib.request import Request, urlopen
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Callable, Iterator
 
 from luminus_harness.conversation_log import mask_private
 
 DEFAULT_HOST = "https://cloud.langfuse.com"
 DATASET = "karen-expert-benchmark"
-TIMEOUT_SECONDS = 10
+EXPERIMENT = "Karen tegen de experts"
+TRACE_NAME = "karen-answer"
+# Span attributes that carry text written by the visitor, Karen, a web page or an expert.
+_TEXT_ATTRIBUTES = ("input", "output", "metadata", "status_message", "expected_output")
 
-
-def _config() -> tuple[str, str] | None:
-    public, secret = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip(), os.getenv("LANGFUSE_SECRET_KEY", "").strip()
-    if not public or not secret:
-        return None
-    host = (os.getenv("LANGFUSE_HOST", "").strip() or DEFAULT_HOST).rstrip("/")
-    return host, base64.b64encode(f"{public}:{secret}".encode()).decode()
+# True while a public answer or a benchmark question is being worked on: only then are steps recorded.
+_recording: ContextVar[bool] = ContextVar("karen_langfuse_recording", default=False)
+_client: Any = None
+_client_lock = threading.Lock()
 
 
 def enabled() -> bool:
-    return _config() is not None
+    return bool(os.getenv("LANGFUSE_PUBLIC_KEY", "").strip() and os.getenv("LANGFUSE_SECRET_KEY", "").strip())
 
 
-def _post(path: str, body: dict[str, Any]) -> None:
-    config = _config()
-    if config is None:
-        return
-    host, auth = config
-    request = Request(
-        f"{host}{path}", data=json.dumps(body, ensure_ascii=False).encode("utf-8"), method="POST",
-        headers={"Authorization": f"Basic {auth}", "Content-Type": "application/json"},
+def _mask_spans(*, params: Any) -> Any:
+    """Mask private identifiers in every text attribute of the spans about to be exported."""
+    from langfuse.types import MaskOtelSpansResult, OtelSpanPatch
+
+    patches = {}
+    for identifier, span in params.spans.items():
+        replacements = {}
+        for key, value in span.attributes.items():
+            if not any(part in key for part in _TEXT_ATTRIBUTES):
+                continue
+            if isinstance(value, str):
+                masked = mask_private(value)
+                if masked != value:
+                    replacements[key] = masked
+            elif isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+                masked_items = [mask_private(item) for item in value]
+                if masked_items != list(value):
+                    replacements[key] = masked_items
+        if replacements:
+            patches[identifier] = OtelSpanPatch(set_attributes=replacements)
+    return MaskOtelSpansResult(span_patches=patches)
+
+
+def build_client(**options: Any) -> Any:
+    from langfuse import Langfuse
+    from langfuse.span_filter import is_langfuse_span
+
+    return Langfuse(
+        public_key=os.getenv("LANGFUSE_PUBLIC_KEY", "").strip(),
+        secret_key=os.getenv("LANGFUSE_SECRET_KEY", "").strip(),
+        base_url=(os.getenv("LANGFUSE_BASE_URL", "").strip() or os.getenv("LANGFUSE_HOST", "").strip() or DEFAULT_HOST).rstrip("/"),
+        environment=os.getenv("LANGFUSE_TRACING_ENVIRONMENT", "").strip() or "production",
+        mask_otel_spans=_mask_spans,
+        # Only Karen's own observations: no HTTP or framework spans from other libraries.
+        should_export_span=is_langfuse_span,
+        **options,
     )
-    with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-        response.read()
 
 
-def _quietly(send: Callable[[], None]) -> None:
+def client() -> Any:
+    """The Langfuse client, or None when the keys are not set or the SDK cannot start."""
+    global _client
+    if not enabled():
+        return None
+    with _client_lock:
+        if _client is None:
+            try:
+                _client = build_client()
+            except Exception:
+                return None
+        return _client
+
+
+class _Nothing:
+    """Stands in for an observation when nothing is recorded."""
+
+    id = None
+    trace_id = None
+
+    def update(self, **_: Any) -> "_Nothing":
+        return self
+
+
+_NOTHING = _Nothing()
+
+
+@contextmanager
+def public_turn(question: str, trace_id: str, history_turns: int = 0) -> Iterator[Any]:
+    """The root of one public chat turn; steps inside it are recorded. Yields the root observation."""
+    langfuse = client()
+    if langfuse is None:
+        yield _NOTHING
+        return
+    from langfuse import propagate_attributes
+
+    try:
+        root_context = langfuse.start_as_current_observation(
+            trace_context={"trace_id": trace_id}, name="answer-question", as_type="agent",
+            input=question, metadata={"history_turns": history_turns},
+        )
+        root = root_context.__enter__()
+    except Exception:
+        yield _NOTHING
+        return
+    token = _recording.set(True)
+    try:
+        with propagate_attributes(trace_name=TRACE_NAME, tags=["chat"]):
+            yield root
+    except BaseException as error:
+        _quietly(lambda: root.update(level="ERROR", status_message=str(error)[:300] or type(error).__name__))
+        raise
+    finally:
+        _recording.reset(token)
+        _quietly(lambda: root_context.__exit__(None, None, None))
+
+
+def finish_turn(root: Any, reply: dict[str, Any], steps: list[dict[str, Any]]) -> None:
+    """Karen's answer as the trace output, with the route, sources and searches as metadata."""
+    route = next((step for step in steps if step.get("kind") == "route"), None)
+    _quietly(lambda: root.update(
+        output=str(reply.get("answer", "")),
+        metadata={
+            "processing": str(reply.get("processing", "")),
+            "route": route.get("choice") if route else None,
+            "route_confidence": route.get("confidence") if route else None,
+            "route_used": route.get("used") if route else None,
+            "sources": [
+                {"title": str(source.get("title", ""))[:200], "url": str(source.get("url", ""))[:500]}
+                for source in reply.get("sources") or [] if isinstance(source, dict)
+            ],
+            "searches": sum(1 for step in steps if step.get("kind") == "search"),
+            "search_errors": [str(step.get("message", ""))[:300] for step in steps if step.get("kind") == "search_error"],
+        },
+    ))
+
+
+@contextmanager
+def step(name: str, as_type: str = "span", **fields: Any) -> Iterator[Any]:
+    """A nested observation inside a public turn or a benchmark question; a no-op anywhere else."""
+    langfuse = client() if _recording.get() else None
+    if langfuse is None:
+        yield _NOTHING
+        return
+    try:
+        context = langfuse.start_as_current_observation(name=name, as_type=as_type, **fields)
+        observation = context.__enter__()
+    except Exception:
+        yield _NOTHING
+        return
+    try:
+        yield observation
+    except BaseException as error:
+        _quietly(lambda: observation.update(level="ERROR", status_message=str(error)[:300] or type(error).__name__))
+        raise
+    finally:
+        _quietly(lambda: context.__exit__(None, None, None))
+
+
+def update(observation: Any, **fields: Any) -> None:
+    _quietly(lambda: observation.update(**fields))
+
+
+def note_generation(model: str | None = None, usage_details: dict[str, Any] | None = None, **fields: Any) -> None:
+    """Model name and token usage on the generation being recorded, if any (Langfuse computes the cost)."""
+    langfuse = client() if _recording.get() else None
+    if langfuse is None:
+        return
+    usage = {key: int(value) for key, value in (usage_details or {}).items() if isinstance(value, (int, float))}
+    _quietly(lambda: langfuse.update_current_generation(
+        model=model or None, usage_details=usage or None, **{key: value for key, value in fields.items() if value is not None},
+    ))
+
+
+def score_feedback(trace_id: str, rating: str, comment: str = "") -> None:
+    """A visitor's 👍 (1) or 👎 (0) on an answer, as a score on that answer's trace."""
+    langfuse = client()
+    if langfuse is None or not trace_id:
+        return
+    _quietly(lambda: langfuse.create_score(
+        trace_id=trace_id, name="gebruiker", value=1 if rating == "up" else 0, data_type="BOOLEAN",
+        comment=mask_private(comment) or None,
+    ))
+
+
+def masked(value: Any) -> Any:
+    """`value` with private identifiers masked in every text, also inside lists and mappings."""
+    if isinstance(value, str):
+        return mask_private(value)
+    if isinstance(value, dict):
+        return {key: masked(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [masked(item) for item in value]
+    return value
+
+
+def _quietly(send: Callable[[], Any]) -> None:
     try:
         send()
     except Exception:
         pass
 
 
-def in_background(send: Callable[[], None]) -> None:
-    """Run `send` on a daemon thread when Langfuse is configured; never raises."""
-    if enabled():
-        threading.Thread(target=_quietly, args=(send,), name="karen-langfuse", daemon=True).start()
+# Benchmark ----------------------------------------------------------------------------------
+
+_JUDGE_SCORES = (("karen_beter", "karen"), ("meteen_antwoord", "direct"), ("tegenspraak", "contradicts"))
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+def _evaluations(row: dict[str, Any]) -> list[Any]:
+    from langfuse import Evaluation
+
+    judge = row.get("judge") or {}
+    found = [
+        Evaluation(name=name, value=float(judge[key]))
+        for name, key in _JUDGE_SCORES if isinstance(judge.get(key), (int, float))
+    ]
+    if judge.get("verdict"):
+        found.append(Evaluation(name="oordeel", value=str(judge["verdict"]), data_type="CATEGORICAL"))
+    return found
 
 
-def _masked(value: Any) -> Any:
-    """Mask e-mail addresses, account and EAN numbers in every text, also where Karen repeats them."""
-    if isinstance(value, str):
-        return mask_private(value)
-    if isinstance(value, dict):
-        return {key: _masked(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_masked(item) for item in value]
-    return value
+class BenchmarkExperiment:
+    """Runs each benchmark question as one item of a Langfuse experiment on the shared dataset."""
+
+    def __init__(self, langfuse: Any, run: dict[str, Any], cases: list[dict[str, Any]]):
+        self.langfuse = langfuse
+        self.run_name = f"{str(run.get('started_at', ''))[:16]} {run.get('id', '')}".strip()
+        self.experiment_id = langfuse.create_trace_id(seed=f"karen-benchmark-{run.get('id', '')}")
+        _quietly(lambda: langfuse.create_dataset(name=DATASET, description="Karen tegen de energie-experts"))
+        self.items: dict[str, Any] = {}
+        for case in cases:
+            case_id = str(case.get("id") or "")
+            if not case_id:
+                continue
+            try:
+                # A direct API call, not a span: mask_otel_spans does not see it, so mask here.
+                self.items[case_id] = langfuse.create_dataset_item(
+                    dataset_name=DATASET, id=case_id, input=masked(case.get("question", "")),
+                    expected_output=masked(case.get("expert_answer", "")),
+                    metadata=masked({"expert_id": case.get("expert_id"), "source_url": case.get("source_url")}),
+                )
+            except Exception:
+                pass
+
+    def run_case(self, case: dict[str, Any], work: Callable[[], Any]) -> dict[str, Any]:
+        """Run `work()` (Karen answers, Jev judges; returns the result row) as one experiment item.
+
+        Called from a worker thread; the SDK runs the coroutine on its own event loop there."""
+        item = self.items.get(str(case.get("id") or ""))
+        if item is None:
+            return _run_coroutine(work())
+        rows: list[dict[str, Any]] = []
+
+        async def task(**_: Any) -> str:
+            token = _recording.set(True)
+            try:
+                row = await work()
+            finally:
+                _recording.reset(token)
+            rows.append(row)
+            if row.get("error"):
+                raise RuntimeError(row["error"])
+            return row.get("karen_answer", "")
+
+        def evaluator(**_: Any) -> list[Any]:
+            return _evaluations(rows[0]) if rows else []
+
+        try:
+            self.langfuse.run_experiment(
+                name=EXPERIMENT, run_name=self.run_name, experiment_id=self.experiment_id,
+                description="Karen beantwoordt de expertvragen; Jev vergelijkt met het expertantwoord.",
+                data=[item], task=task, evaluators=[evaluator], max_concurrency=1,
+            )
+        except Exception:
+            pass
+        if rows:
+            return rows[0]
+        return _run_coroutine(work())
+
+    def finish(self) -> None:
+        _quietly(self.langfuse.flush)
 
 
-def _event(kind: str, body: dict[str, Any]) -> dict[str, Any]:
-    return {"id": uuid.uuid4().hex, "type": kind, "timestamp": _now(), "body": body}
+def _run_coroutine(coroutine: Any) -> Any:
+    import asyncio
+
+    return asyncio.run(coroutine)
 
 
-def answer_trace(record: dict[str, Any]) -> dict[str, Any]:
-    """One trace for one logged public answer (the conversation-log record, already masked)."""
-    metadata = {key: record.get(key) for key in (
-        "processing", "route", "route_confidence", "route_probabilities", "searches", "search_errors", "sources", "seconds",
-    )}
-    tags = [str(value) for value in (record.get("processing"), record.get("route")) if value]
-    return _event("trace-create", {
-        "id": record["id"], "timestamp": record.get("created_at") or _now(), "name": "karen-answer",
-        "input": _masked(record.get("question", "")), "output": _masked(record.get("answer", "")),
-        "metadata": _masked(metadata), "tags": tags,
-    })
-
-
-def send_answer(record: dict[str, Any]) -> None:
-    _post("/api/public/ingestion", {"batch": [answer_trace(record)]})
-
-
-def benchmark_events(run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """(dataset items, ingestion events, dataset-run links) for a finished benchmark run."""
-    items, events, links = [], [], []
-    run_name = f"{str(run.get('started_at', ''))[:16]} {run.get('id', '')}".strip()
-    for row in run.get("results") or []:
-        case_id = str(row.get("id") or "")
-        if not case_id:
-            continue
-        items.append({
-            "datasetName": DATASET, "id": case_id, "input": _masked(row.get("question", "")),
-            "expectedOutput": _masked(row.get("expert_answer", "")),
-            "metadata": _masked({"expert_id": row.get("expert_id"), "source_url": row.get("source_url")}),
-        })
-        if "karen_answer" not in row:
-            continue
-        trace_id = f"{run.get('id')}-{case_id}"
-        events.append(_event("trace-create", {
-            "id": trace_id, "name": "karen-benchmark", "input": _masked(row.get("question", "")),
-            "output": _masked(row["karen_answer"]),
-            "metadata": _masked({"processing": row.get("processing"), "sources": row.get("sources"), "seconds": row.get("seconds")}),
-            "tags": ["benchmark", str(row.get("processing") or "")],
-        }))
-        judge = row.get("judge") or {}
-        for name, key in (("karen_beter", "karen"), ("meteen_antwoord", "direct"), ("tegenspraak", "contradicts")):
-            if isinstance(judge.get(key), (int, float)):
-                events.append(_event("score-create", {"id": f"{trace_id}-{name}", "traceId": trace_id, "name": name, "value": judge[key]}))
-        if judge.get("verdict"):
-            events.append(_event("score-create", {
-                "id": f"{trace_id}-oordeel", "traceId": trace_id, "name": "oordeel", "value": judge["verdict"], "dataType": "CATEGORICAL",
-            }))
-        links.append({"runName": run_name, "datasetItemId": case_id, "traceId": trace_id,
-                      "metadata": {"run_id": run.get("id"), "karen_avg": (run.get("summary") or {}).get("karen_avg")}})
-    return items, events, links
-
-
-def send_benchmark_run(run: dict[str, Any]) -> None:
-    """The 33 questions as a dataset, and this run as an experiment on it, with Jev's scores per answer."""
-    items, events, links = benchmark_events(run)
-    _quietly(lambda: _post("/api/public/datasets", {"name": DATASET, "description": "Karen tegen de energie-experts"}))
-    for item in items:
-        _post("/api/public/dataset-items", item)
-    for start in range(0, len(events), 50):
-        _post("/api/public/ingestion", {"batch": events[start:start + 50]})
-    for link in links:
-        _post("/api/public/dataset-run-items", link)
+def benchmark_experiment(run: dict[str, Any], cases: list[dict[str, Any]]) -> BenchmarkExperiment | None:
+    langfuse = client()
+    if langfuse is None:
+        return None
+    try:
+        return BenchmarkExperiment(langfuse, run, cases)
+    except Exception:
+        return None
