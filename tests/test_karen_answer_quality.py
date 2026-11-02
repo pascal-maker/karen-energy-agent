@@ -39,6 +39,16 @@ def test_yes_no_questions_ask_for_ja_or_nee(question):
     assert '"Ja" of "Nee"' in gemma_answer._form_hint(question)
 
 
+def test_yes_no_hint_leans_ja_or_nee_and_keeps_depends_for_real_splits():
+    # Benchmark 2026-11-02: Karen opened with "Dat hangt ervan af" where the sources leaned one way
+    # ("kan niet zomaar verplichten", "waarschijnlijk duurder") and the expert simply said Nee or Ja.
+    hint = gemma_answer._YES_NO_HINT
+    assert "in één richting wijzen" in hint
+    assert "na het ja of nee" in hint
+    assert "alleen" in hint and "echt" in hint
+    assert hint.count("Dat hangt ervan af") == 2
+
+
 @pytest.mark.parametrize("question", [
     "Waarom wordt de gasprijs aan de elektriciteitsprijs gekoppeld?",
     "Hoe komt het dat ook het sociaal tarief stijgt?",
