@@ -107,3 +107,27 @@ def test_only_public_answers_are_traced_never_pdf_ones(api, keys, monkeypatch): 
     session = api[0].post("/api/upload", files={"file": ("01.pdf", pdf, "application/pdf")}).json()["session_id"]
     api[0].post("/api/answer", json={"question": "vat samen", "session_id": session})
     assert len(sent) == 1
+
+
+def test_private_details_karen_repeats_are_masked_in_the_answer_and_metadata(keys, posted):
+    reply = {"answer": "Je e-mailadres is fictief@example.com en je EAN is 541448800000000001.",
+             "processing": "hosted-public-knowledge",
+             "sources": [{"title": "Contact fictief@example.com", "url": "https://example.com/?mail=fictief@example.com"}]}
+    steps = [{"kind": "search_error", "message": "geen resultaat voor BE68 5390 0754 7034"}]
+    record = build_log_record("Mijn e-mailadres is fictief@example.com, wat kost stroom?", reply, steps, 1.0)
+    langfuse_trace.send_answer(record)
+    trace = posted[0][2]["batch"][0]["body"]
+    assert trace["input"] == "Mijn e-mailadres is [verborgen], wat kost stroom?"
+    assert trace["output"] == "Je e-mailadres is [verborgen] en je EAN is [verborgen]."
+    sent = json.dumps(posted, ensure_ascii=False)
+    for private in ("fictief@example.com", "541448800000000001", "BE68 5390 0754 7034"):
+        assert private not in sent
+
+
+def test_benchmark_answers_are_masked_too(keys, posted):
+    run = {"id": "r1", "started_at": "2026-11-02T14:14:00+00:00",
+           "results": [{"id": "q1", "question": "Vraag?", "expert_answer": "Nee.",
+                        "karen_answer": "Mail naar fictief@example.com.", "sources": [{"title": "fictief@example.com"}],
+                        "judge": {}}]}
+    langfuse_trace.send_benchmark_run(run)
+    assert "fictief@example.com" not in json.dumps(posted, ensure_ascii=False)

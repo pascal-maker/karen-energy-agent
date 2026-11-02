@@ -1,8 +1,9 @@
 """Send Karen's public answers and expert-benchmark runs to Langfuse, when the owner sets its keys.
 
 Off unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set (LANGFUSE_HOST defaults to the EU
-cloud). Only what the private conversation log already keeps is sent: the masked public question,
-Karen's answer, the route, sources and timing. PDF and photo answers never reach this module.
+cloud). Only what the private conversation log already keeps is sent: the public question,
+Karen's answer, the route, sources and timing, with e-mail addresses, account and EAN numbers
+masked in every text field (also where Karen repeats them in her answer). PDF and photo answers never reach this module.
 Everything goes over Langfuse's public HTTP API from a background thread, and a failure is
 dropped: tracing never slows down or breaks an answer.
 """
@@ -17,6 +18,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.request import Request, urlopen
+
+from luminus_harness.conversation_log import mask_private
 
 DEFAULT_HOST = "https://cloud.langfuse.com"
 DATASET = "karen-expert-benchmark"
@@ -65,6 +68,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
+def _masked(value: Any) -> Any:
+    """Mask e-mail addresses, account and EAN numbers in every text, also where Karen repeats them."""
+    if isinstance(value, str):
+        return mask_private(value)
+    if isinstance(value, dict):
+        return {key: _masked(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_masked(item) for item in value]
+    return value
+
+
 def _event(kind: str, body: dict[str, Any]) -> dict[str, Any]:
     return {"id": uuid.uuid4().hex, "type": kind, "timestamp": _now(), "body": body}
 
@@ -77,7 +91,8 @@ def answer_trace(record: dict[str, Any]) -> dict[str, Any]:
     tags = [str(value) for value in (record.get("processing"), record.get("route")) if value]
     return _event("trace-create", {
         "id": record["id"], "timestamp": record.get("created_at") or _now(), "name": "karen-answer",
-        "input": record.get("question", ""), "output": record.get("answer", ""), "metadata": metadata, "tags": tags,
+        "input": _masked(record.get("question", "")), "output": _masked(record.get("answer", "")),
+        "metadata": _masked(metadata), "tags": tags,
     })
 
 
@@ -94,16 +109,17 @@ def benchmark_events(run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
         if not case_id:
             continue
         items.append({
-            "datasetName": DATASET, "id": case_id, "input": row.get("question", ""),
-            "expectedOutput": row.get("expert_answer", ""),
-            "metadata": {"expert_id": row.get("expert_id"), "source_url": row.get("source_url")},
+            "datasetName": DATASET, "id": case_id, "input": _masked(row.get("question", "")),
+            "expectedOutput": _masked(row.get("expert_answer", "")),
+            "metadata": _masked({"expert_id": row.get("expert_id"), "source_url": row.get("source_url")}),
         })
         if "karen_answer" not in row:
             continue
         trace_id = f"{run.get('id')}-{case_id}"
         events.append(_event("trace-create", {
-            "id": trace_id, "name": "karen-benchmark", "input": row.get("question", ""), "output": row["karen_answer"],
-            "metadata": {"processing": row.get("processing"), "sources": row.get("sources"), "seconds": row.get("seconds")},
+            "id": trace_id, "name": "karen-benchmark", "input": _masked(row.get("question", "")),
+            "output": _masked(row["karen_answer"]),
+            "metadata": _masked({"processing": row.get("processing"), "sources": row.get("sources"), "seconds": row.get("seconds")}),
             "tags": ["benchmark", str(row.get("processing") or "")],
         }))
         judge = row.get("judge") or {}
