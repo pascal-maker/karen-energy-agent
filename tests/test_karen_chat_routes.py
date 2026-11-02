@@ -142,3 +142,16 @@ def test_usage_per_month_is_turned_into_a_year(question, first_line):
 def test_a_small_usage_without_a_period_gets_a_question_back():
     answer = market_prices.usage_reply("ik verbruik 400 kwh is dat veel")["answer"]
     assert answer == "Is dat 400 kWh per maand of per jaar? Dan zet ik het naast het gemiddelde van een gezin."
+
+
+@pytest.mark.parametrize("question, first_line", [
+    ("ik verbruik 20 kWh per dag, is dat veel?", "20 kWh stroom per dag is ongeveer 7.300 kWh per jaar: meer dan een gemiddeld gezin van 4 personen."),
+    ("is 50 kwh per week normaal", "50 kWh stroom per week is ongeveer 2.600 kWh per jaar: ongeveer wat een gemiddeld gezin van 2 personen verbruikt."),
+    ("is 8,5 kwh per dag veel", "8,5 kWh stroom per dag is ongeveer 3.103 kWh per jaar: ongeveer wat een gemiddeld gezin van 3 personen verbruikt."),
+])
+def test_small_daily_and_weekly_usage_is_turned_into_a_year(question, first_line):
+    assert market_prices.usage_reply(question)["answer"].splitlines()[0] == first_line
+
+
+def test_a_small_number_without_a_period_still_gets_a_question_back():
+    assert market_prices.usage_reply("ik verbruik 20 kwh is dat veel")["answer"].startswith("Is dat 20 kWh per maand of per jaar?")
