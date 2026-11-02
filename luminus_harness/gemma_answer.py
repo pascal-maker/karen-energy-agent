@@ -63,8 +63,11 @@ _YES_NO_QUESTION = re.compile(
     re.IGNORECASE,
 )
 _YES_NO_HINT = (
-    "\nVORM: dit is een ja/nee-vraag. Zeggen de bronnen of je kennis het duidelijk, begin dan met \"Ja\" of \"Nee\" "
-    "(of Yes/No, Oui/Non). Hangt het af van de situatie, begin dan met \"Dat hangt ervan af\" en zeg waarvan."
+    "\nVORM: dit is een ja/nee-vraag. Begin met \"Ja\" of \"Nee\" (of Yes/No, Oui/Non) zodra de bronnen of je kennis "
+    "in één richting wijzen, ook als er een voorwaarde of uitzondering is: zet die nuance na het ja of nee "
+    "(bijvoorbeeld \"Nee, niet zonder je akkoord\" of \"Ja, waarschijnlijk\"). Begin alleen met \"Dat hangt ervan af\" "
+    "als het antwoord echt ja is in de ene situatie en nee in de andere, en zeg dan meteen waarvan. "
+    "Begin nooit met \"Dat hangt ervan af\" als je daarna toch één richting geeft."
 )
 
 
