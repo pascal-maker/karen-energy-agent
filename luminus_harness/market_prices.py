@@ -16,6 +16,7 @@ import os
 import re
 import time
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -571,7 +572,8 @@ def cheapest_time_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any
 
 # VREG's averages for electricity a year by household size (as quoted by Selectra, checked 2 Nov 2026).
 HOUSEHOLD_KWH = {2: 2350, 3: 3200, 4: 4000}
-_USAGE_NUMBER = re.compile(r"(\d{1,2}(?:[.\s]\d{3})+|\d{3,6})\s*kwh\b", re.IGNORECASE)
+# "3.500 kWh", "3500 kWh", "20 kWh", "8,5 kWh": thousands with a dot or space, decimals with a comma.
+_USAGE_NUMBER = re.compile(r"(?<![\d,.])(\d{1,2}(?:[.\s]\d{3})+|\d{1,6}(?:,\d{1,2})?)\s*kwh\b", re.IGNORECASE)
 _HOW_MUCH = re.compile(r"\b(?:veel|weinig|normaal|gemiddeld\w*|hoog|laag|a\s+lot|much|normal|average|beaucoup|normale?)\b", re.IGNORECASE)
 _USAGE_ELSEWHERE = re.compile(r"\b(?:kost\w*|prijs\w*|betaal\w*|cost\w*|price|prix|co[uû]t\w*|combien)\b", re.IGNORECASE)
 
@@ -591,20 +593,27 @@ def _kwh(value: int) -> str:
     return f"{value:,}".replace(",", ".")
 
 
+def _usage_amount(printed: str) -> Decimal:
+    if re.fullmatch(r"\d{1,2}(?:[.\s]\d{3})+", printed):
+        return Decimal(re.sub(r"\D", "", printed))
+    return Decimal(printed.replace(",", "."))
+
+
 def usage_reply(question: str) -> dict[str, Any] | None:
     """'Ik verbruik 3500 kWh, is dat veel?' for electricity: set against VREG's household averages; else None."""
     number = _USAGE_NUMBER.search(question)
     if not number or not _HOW_MUCH.search(question) or _GAS.search(question) or _USAGE_ELSEWHERE.search(question):
         return None
-    amount = int(re.sub(r"\D", "", number.group(1)))
+    amount = _usage_amount(number.group(1))
+    shown = number.group(1) if amount != amount.to_integral_value() else _kwh(int(amount))
     period = next((name for name, (pattern, _) in _PERIODS.items() if pattern.search(question)), None)
     if period is None and amount < 1000:
         # 400 kWh is a month or two, not a year: ask rather than call it low.
         return {
-            "answer": f"Is dat {_kwh(amount)} kWh per maand of per jaar? Dan zet ik het naast het gemiddelde van een gezin.",
+            "answer": f"Is dat {shown} kWh per maand of per jaar? Dan zet ik het naast het gemiddelde van een gezin.",
             "sources": [], "live_source_status": "not-needed", "processing": "usage-yardstick",
         }
-    kwh = amount * (_PERIODS[period][1] if period else 1)
+    kwh = int((amount * (_PERIODS[period][1] if period else 1)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
     if kwh < HOUSEHOLD_KWH[2] * 0.85:
         verdict = "minder dan een gemiddeld gezin van 2 personen"
     elif kwh > HOUSEHOLD_KWH[4] * 1.15:
@@ -615,7 +624,7 @@ def usage_reply(question: str) -> dict[str, Any] | None:
     averages = ", ".join(f"{people} personen {_kwh(value)} kWh" for people, value in HOUSEHOLD_KWH.items())
     return {
         "answer": "\n".join([
-            (f"{_kwh(amount)} kWh stroom {period} is ongeveer {_kwh(kwh)} kWh per jaar: {verdict}." if period and period != "per jaar"
+            (f"{shown} kWh stroom {period} is ongeveer {_kwh(kwh)} kWh per jaar: {verdict}." if period and period != "per jaar"
              else f"{_kwh(kwh)} kWh stroom per jaar is {verdict}."),
             f"- **Gemiddeld volgens de VREG:** {averages}.",
             "- **Wat meetelt:** een warmtepomp, een elektrische auto of elektrisch koken doen je verbruik flink stijgen.",
