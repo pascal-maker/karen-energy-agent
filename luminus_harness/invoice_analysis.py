@@ -875,12 +875,13 @@ def answer_uploaded_pdf_question(
 
     A summary request ("vat samen", "samenvatting", typos included) is answered from `invoice`
     (invoice_schema.Invoice), built from `facts` when not given."""
-    from .invoice_schema import build_invoice, is_summary_request, summarize_invoice
+    from .invoice_schema import build_invoice, explain_invoice, is_explanation_request, is_summary_request, summarize_invoice
 
-    if is_summary_request(question) and (invoice is not None or facts):
+    summary, explanation = is_summary_request(question), is_explanation_request(question)
+    if (summary or explanation) and (invoice is not None or facts):
         if invoice is None:
             invoice = build_invoice(facts, next((chunk.source for chunk in chunks), ""))
-        return summarize_invoice(invoice)
+        return summarize_invoice(invoice) if summary else explain_invoice(invoice, question)
     if facts:
         direct = _fact_answer(question, facts)
         if direct is not None:
@@ -890,6 +891,7 @@ def answer_uploaded_pdf_question(
         return {
             "answer": "Ik vond geen duidelijke passage in je PDF om deze vraag mee te beantwoorden.",
             "sources": [],
+            "found": False,  # the app then answers it as a normal question, without the PDF
         }
     sources = [
         {

@@ -363,3 +363,117 @@ def summarize_invoice(invoice: Invoice) -> dict[str, Any]:
         lines = ["Ik kon op deze factuur geen leverancier, periode, verbruik of bedragen herkennen. "
                  "Vraag me gerust naar een specifiek onderdeel, dan zoek ik de passage op."]
     return {"answer": "\n".join(lines), "sources": sources}
+
+
+# --- Explaining the invoice -----------------------------------------------------------------------
+
+_MEANING_WORDS = ("betekent", "betekenen", "betekenis", "beteken", "mean", "means", "meaning", "signifie")
+_TREND_WORDS = ("trend", "foresight", "forecast", "toekomst", "voorspel", "prognose", "verwacht", "vooruitzicht", "evolutie")
+_TREND_PHRASE = re.compile(r"\b(?:volgend|vorig|komend)\w*\s+jaar\b")
+# Words that point at the invoice or the answer so far, not at a subject of their own.
+_GENERIC_WORDS = frozenset("""
+    wat wats wa dit dat deze die het de een oke ok okay oki maar en me mij ik voor nu dan dus eigenlijk precies juist
+    factuur rekening afrekening resultaten resultaat cijfers getallen bedragen alles allemaal hier hiervan daarvan
+    zeggen zegt zeg wil kan kun je jij u geef eens nog of over is zijn al wel what does do this that these those
+    results result invoice bill tell me qu que ca cela veut dire
+""".split())
+# Close to "betekent" but a different question ("hoe berekent Luminus …").
+_NOT_MEANING = frozenset(("berekent", "berekend", "berekenen", "bekend"))
+
+
+def _fuzzy(word: str, targets: tuple[str, ...] | frozenset[str], cutoff: float) -> bool:
+    return word in targets or (len(word) >= 5 and bool(difflib.get_close_matches(word, list(targets), n=1, cutoff=cutoff)))
+
+
+def _is_trend_request(plain: str) -> bool:
+    return any(word in plain for word in _TREND_WORDS) or bool(_TREND_PHRASE.search(plain))
+
+
+def is_explanation_request(question: str) -> bool:
+    """'Wat betekent dit', 'wat beteknen die resulataten', or a question about trends and next year.
+
+    A meaning word only counts when the rest of the question points at the invoice itself:
+    'wat betekent capaciteitstarief' asks about a term and keeps the passage search."""
+    plain = _plain(question)
+    if _is_trend_request(plain):
+        return True
+    # Tokens with digits are typos ("mqq4 3at"), not subjects.
+    words = [word for word in re.findall(r"[a-z0-9]+", plain) if not re.search(r"\d", word)]
+    meaning = [word for word in words if word not in _NOT_MEANING and _fuzzy(word, _MEANING_WORDS, 0.8)]
+    if not meaning:
+        return False
+    rest = [word for word in words if word not in meaning and len(word) > 3 and not _fuzzy(word, _GENERIC_WORDS, 0.85)]
+    return not rest
+
+
+_PER_YEAR = {"monthly": 12, "bimonthly": 6, "quarterly": 4, "yearly": 1}
+
+
+def explain_invoice(invoice: Invoice, question: str = "") -> dict[str, Any]:
+    """What the bill means, from the values read on it; anything worked out is said to be Karen's calculation."""
+    kind = "factuur" if invoice.document_type == "unknown" else _DUTCH_TYPES[invoice.document_type]
+    lines = [f"Wat deze {kind} betekent:"]
+    evidence: list[Evidence] = []
+
+    def add(text: str, *items: Evidence | None) -> None:
+        found = [item for item in items if item is not None]
+        lines.append(f"- {text}{_page(found[0]) if found else ''}")
+        evidence.extend(found)
+
+    amounts = invoice.amounts
+    if invoice.document_type == "advance_invoice":
+        lines.append("- Dit is een vast bedrag vooraf, geen afrekening van je echte verbruik. Dat gebeurt pas op je jaarafrekening.")
+        if amounts.amount_due:
+            add(f"Je betaalt nu {_euro(amounts.amount_due.value_eur)}", amounts.amount_due)
+    else:
+        cost, paid = amounts.total_energy_cost, amounts.advances_paid
+        differs = "calculated_difference_differs_from_amount_due" in invoice.warnings
+        if cost and paid and not differs and (amounts.amount_due or amounts.credit):
+            amount_text = f"je voorschotten ({_euro(paid.value_eur)})"
+            cost_text = f"je werkelijke energiekosten ({_euro(cost.value_eur)})"
+            if amounts.credit:
+                add(f"Je krijgt {_euro(amounts.credit.value_eur)} terug, omdat {amount_text} hoger waren dan {cost_text}", amounts.credit, cost, paid)
+            elif Decimal(amounts.amount_due.value_eur) == 0:
+                add(f"Je voorschotten dekten je energiekosten precies: je betaalt niets bij en krijgt niets terug", amounts.amount_due, cost, paid)
+            else:
+                add(f"Je betaalt {_euro(amounts.amount_due.value_eur)} bij, omdat {amount_text} lager waren dan {cost_text}", amounts.amount_due, cost, paid)
+        elif cost and paid and differs:
+            add(
+                f"Je energiekosten min je voorschotten is {_euro(invoice.calculated.costs_minus_advances_eur or '0')}, maar de factuur "
+                "vermeldt een ander bedrag: er staan dus nog andere posten op. Kijk die na of vraag het je leverancier", cost, paid,
+            )
+    used = [
+        f"{quantity.value} {quantity.unit} {_DUTCH_ENERGIES[energy]}"
+        for energy in ("electricity", "gas") if (quantity := getattr(invoice.consumption, energy))
+    ]
+    if used:
+        add(f"In deze periode verbruikte je {' en '.join(used)}", invoice.consumption.electricity or invoice.consumption.gas)
+
+    advances = invoice.new_advances
+    covered = {advance.energy for advance in advances}
+    consumed = {energy for energy in ("electricity", "gas") if getattr(invoice.consumption, energy)}
+    if advances and all(advance.frequency for advance in advances) and (covered == {None} and len(advances) == 1 or consumed <= covered):
+        yearly = sum(Decimal(advance.amount_eur) * _PER_YEAR[advance.frequency] for advance in advances)
+        text = f"Je nieuwe voorschot is {_euro(str(yearly))} per jaar"
+        cost = amounts.total_energy_cost
+        if cost and invoice.document_type != "advance_invoice":
+            gap = yearly - Decimal(cost.value_eur)
+            outcome = (f"krijg je volgend jaar ongeveer {_euro(str(gap))} terug" if gap > 0
+                       else f"betaal je volgend jaar ongeveer {_euro(str(-gap))} bij" if gap < 0
+                       else "betaal je volgend jaar ongeveer niets bij")
+            text += f". Blijven je verbruik en de prijzen gelijk, dan {outcome}. Dat is een berekening van Karen, geen bedrag van de factuur"
+        add(text, advances[0])
+
+    if len(lines) == 1:
+        return summarize_invoice(invoice)
+    if _is_trend_request(_plain(question)):
+        lines.append(
+            "Trends kan ik uit één factuur niet halen: ze toont maar één periode. Daarvoor heb je de facturen van "
+            "vorige jaren nodig, of je verbruiksgeschiedenis bij je netbeheerder (in Vlaanderen: Mijn Fluvius)."
+        )
+    sources: list[dict[str, str]] = []
+    for item in evidence:
+        source = {"title": item.source, "detail": f"PDF · pagina {item.page}", "excerpt": item.excerpt}
+        if source not in sources:
+            sources.append(source)
+    return {"answer": "\n".join(lines), "sources": sources}

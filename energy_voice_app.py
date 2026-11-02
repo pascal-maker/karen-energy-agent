@@ -982,10 +982,18 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         result = answer_uploaded_pdf_question(
             body.question.strip(), session["chunks"], session["analysis"].get("facts"), session["analysis"].get("invoice")
         )
+        if result.pop("found", True) is False:
+            # Nothing in the PDF fits ("Real of Barcelona?"): a normal question, asked without the PDF
+            # and without the earlier turns, which hold what was read from it.
+            return await _public_answer(body.question.strip(), [])
         if session["analysis"].get("photo"):
             result["answer"] = result["answer"].replace(" (PDF-pagina 1)", "").replace("PDF-pagina 1", "de foto")
         return {**result, "processing": "local-only", "filename": session["filename"]}
-    question = await standalone_question(body.question.strip(), [turn.model_dump() for turn in body.history])
+    return await _public_answer(body.question.strip(), [turn.model_dump() for turn in body.history])
+
+
+async def _public_answer(asked: str, history: list[dict[str, Any]]) -> dict[str, Any]:
+    question = await standalone_question(asked, history)
     # Jev picks the route when enabled and confident; otherwise the word lists below decide.
     route = await route_question(question)
     if route in (None, "contract_advice"):
@@ -1019,7 +1027,7 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         route = "energy_other"
     if route in ("small_talk", "off_topic"):
         return _with_petra_speech(await answer_small_talk(question, route))
-    return await _hosted_answer(question if route else body.question.strip())
+    return await _hosted_answer(question if route else asked)
 
 
 async def _hosted_answer(question: str) -> dict[str, Any]:
