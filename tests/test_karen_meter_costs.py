@@ -26,10 +26,53 @@ def test_a_free_claim_without_a_source_saying_free_is_unsupported(answer):
     assert gemma_answer._unsupported_free_claim(answer, [], [FLUVIUS_CLOSE])
 
 
-def test_a_free_claim_is_fine_when_a_source_says_so():
-    assert not gemma_answer._unsupported_free_claim("Tijdelijk sluiten is gratis.", [], [TARIFFS])
+def test_a_free_claim_is_fine_when_a_source_says_so_for_the_same_act():
+    assert not gemma_answer._unsupported_free_claim(
+        "Een digitale gasmeter tijdelijk uit dienst stellen is gratis.", [], [TARIFFS])
     gratis = {**FLUVIUS_CLOSE, "content": "Het sluiten van je meter is gratis."}
-    assert not gemma_answer._unsupported_free_claim("Het kost niets.", [], [gratis])
+    # A short answer is about the act the question names.
+    assert not gemma_answer._unsupported_free_claim("Het kost niets.", [], [gratis], "Wat kost het sluiten van mijn meter?")
+
+
+def test_free_for_another_act_or_condition_does_not_count():
+    source = {**FLUVIUS_CLOSE, "content": "Definitief afsluiten kost €105,52; tijdelijk afsluiten is gratis."}
+    assert gemma_answer._unsupported_free_claim("Definitief afsluiten is gratis.", [], [source])
+    # Dropping the condition is just as wrong: only temporary closing is free.
+    assert gemma_answer._unsupported_free_claim("Afsluiten is gratis.", [], [source])
+    assert not gemma_answer._unsupported_free_claim("Tijdelijk afsluiten is gratis.", [], [source])
+    # The tariff list: only a digital meter is free to close temporarily.
+    assert gemma_answer._unsupported_free_claim("Tijdelijk sluiten is gratis.", [], [TARIFFS])
+    assert gemma_answer._unsupported_free_claim("Een analoge gasmeter tijdelijk uit dienst stellen is gratis.", [], [TARIFFS])
+    # A free row in a tariff table does not cover the row after it.
+    table = {**TARIFFS, "content": "Uit dienst stellen (digitale elektriciteitsmeter) -€ -€ L Afsluiten elektriciteit "
+                                   "bovengronds indien geen toegang tot elektriciteitsmeter 204,60€ 247,57€"}
+    assert gemma_answer._unsupported_free_claim("Het kost niets.", [], [table], "Wat kost het om mijn meter te laten afsluiten?")
+    gratis_opening = {**FLUVIUS_CLOSE, "content": "Een nieuwe meter openen is gratis."}
+    assert gemma_answer._unsupported_free_claim("Je meter verwijderen is gratis.", [], [gratis_opening])
+
+
+@pytest.mark.parametrize("answer", ["Closing the meter is free.", "It's free.", "Ça ne coûte rien."])
+def test_plain_free_in_other_languages_counts_as_a_free_claim(answer):
+    assert gemma_answer._unsupported_free_claim(answer, [], [FLUVIUS_CLOSE])
+    assert gemma_answer._FREE_CLAIM.search(answer)
+
+
+@pytest.mark.asyncio
+async def test_a_general_answer_never_says_free(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: "Closing the meter is free.")
+    result = await gemma_answer._general_or_no_source("Is closing my meter free?", "Is closing my meter free?", "en", "checked")
+    assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["en"]
+
+
+def test_a_tariff_table_far_down_a_long_page_is_still_read(monkeypatch):
+    import asyncio
+
+    long_page = "Nieuwe aansluiting 1.491,28€ 1.804,45€ A " * 400 + TARIFFS["content"]
+    assert len(long_page) > 15000
+    monkeypatch.setattr(browserbase_sources, "_fetch_full", lambda url: long_page)
+    page = asyncio.run(browserbase_sources.fetch_energy_page("fluvius_gas_connection_tariffs", focus=r"In/Uit dienst stellen"))
+    assert "105,52" in page["content"] and len(page["content"]) <= 10000
 
 
 def test_an_answer_with_a_price_is_not_a_free_claim():

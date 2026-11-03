@@ -257,6 +257,15 @@ def _fetch_direct(url: str) -> str:
 
 
 def _fetch(url: str) -> str:# used to fetch the content of the url
+    return _fetch_full(url)[:10000]
+
+
+# The cache keeps whole pages (up to this size), so a focused read can still reach a table far down.
+_PAGE_TEXT_LIMIT = 200_000
+
+
+def _fetch_full(url: str) -> str:
+    """Page text (or a failure message), not yet cut to the 10,000 characters a prompt gets."""
     if not _is_trusted_energy_url(url):# used to check if the url is trusted
         return "Deze URL valt buiten de goedgekeurde lijst met energiebronnen."
     with _PAGE_CACHE_LOCK:
@@ -303,7 +312,7 @@ def _fetch(url: str) -> str:# used to fetch the content of the url
     content = payload.get("content", "") if isinstance(payload, dict) else ""# used to get the content
     if not isinstance(content, str) or not content.strip():# used to check if the content is not empty
         return "De bronpagina gaf geen leesbare tekst terug. Gebruik de zichtbare bronlink voor controle."
-    content = content[:10000]
+    content = content[:_PAGE_TEXT_LIMIT]
     with _PAGE_CACHE_LOCK:
         _PAGE_CACHE[url] = (time.monotonic() + _PAGE_CACHE_TTL_SECONDS, content)
         _PAGE_CACHE.move_to_end(url)
@@ -424,10 +433,16 @@ async def fetch_energy_page(source_key: str, focus: str | None = None) -> dict[s
     import asyncio
 
     title, url = source
-    content = await asyncio.to_thread(_fetch, url)# used to fetch the content
+    if not focus:
+        content = await asyncio.to_thread(_fetch, url)# used to fetch the content
+        if not is_usable_web_content(content):
+            return None
+        return {"title": title, "url": url, "content": content[:10000]}
+    # Look for the focus in the whole page before cutting it, or a table far down is already gone.
+    content = await asyncio.to_thread(_fetch_full, url)
     if not is_usable_web_content(content):
         return None
-    match = re.search(focus, content, re.IGNORECASE) if focus else None
+    match = re.search(focus, content, re.IGNORECASE)
     start = max(0, match.start() - 300) if match else 0
     return {"title": title, "url": url, "content": content[start:start + 10000]}
 

@@ -231,14 +231,31 @@ _METER_COST_QUESTION = re.compile(
 # "Free" in an answer, and in a source. "Geen huurkosten meer" is not "free": that trap made Karen
 # say closing a gas meter costs nothing.
 _FREE_CLAIM = re.compile(
-    r"\b(?:gratis|kosteloos|kost (?:je |u )?niets|betaal (?:je|u) niets|je betaalt niets|geen kosten|zonder kosten|"
-    r"free of charge|for free|costs nothing|gratuit\w*|ne co[uû]te rien)\b",
+    r"\b(?:gratis|kosteloos|kost (?:je |u )?(?:niets|niks)|betaal (?:je|u) (?:niets|niks)|je betaalt (?:niets|niks)|"
+    r"geen kosten|zonder kosten|"
+    r"(?:is|are|it's|be|remains?|stays?) (?:completely |entirely )?free\b|free of charge|for free|costs nothing|"
+    r"no (?:charge|cost)|at no cost|gratuit\w*|ne co[uû]te rien)\b",
     re.IGNORECASE,
 )
 _FREE_IN_SOURCE = re.compile(
     _FREE_CLAIM.pattern + r"|(?<![\d.,])-\s*€|€\s*-(?!\s*\d)|\b0,00\s*(?:€|euro)",
     re.IGNORECASE,
 )
+# Conditions that change the price of the same act: "free" for one never supports "free" for another.
+_FREE_CONDITIONS = {
+    "temporary": re.compile(r"\b(?:tijdelijk\w*|temporar\w*|temporaire\w*|max(?:imum|\.)? ?6 (?:mnd|maanden|months|mois))", re.IGNORECASE),
+    "permanent": re.compile(r"\b(?:definitie\w*|langdurig\w*|permanent\w*|for good|d[ée]finiti\w*)|> ?6 (?:mnd|maanden)", re.IGNORECASE),
+    "analogue": re.compile(r"\banalo\w*", re.IGNORECASE),
+    "digital": re.compile(r"\bdigita\w*|\bslimme meter|\bsmart meter", re.IGNORECASE),
+    "extra": re.compile(r"\b(?:extra|bijkomend\w*|additional|suppl[ée]mentaire\w*)\b", re.IGNORECASE),
+}
+# Words that say nothing about which act is free.
+_FREE_FILLER = {"kost", "kosten", "kosts", "betaal", "betalen", "betaalt", "gratis", "kosteloos", "niets", "euro",
+                "fluvius", "vlaanderen", "costs", "nothing", "charge", "gratuit", "laten",
+                # The meter itself is in every row; the act (open, close, remove) is what differs.
+                "meter", "meters", "gasmeter", "aardgasmeter", "elektriciteitsmeter", "compteur"}
+# Where a "free" mention's context ends: a sentence (not "max. 6 mnd"), a row, a price.
+_FREE_BOUNDARY = re.compile(r"[.!?]\s+(?=[A-Z])|[;:\n€]")
 _LIVE_REQUEST = re.compile(r"\b(?:zoek|opzoek|online|internet|actueel|vandaag|recent|nieuwste|regels?|wetgeving)\b", re.IGNORECASE)
 
 
@@ -392,12 +409,49 @@ def _meter_tariff_sources(question: str, scope: str) -> list[str]:
     return keys
 
 
-def _unsupported_free_claim(answer: str, selected: list[KnowledgeChunk], web_pages: list[dict[str, str]]) -> bool:
-    """The answer calls something free while no source it was given says so."""
-    if not _FREE_CLAIM.search(answer):
+def _free_segments(text: str, pattern: re.Pattern[str]) -> list[str]:
+    """Each "free" mention with the words around it up to the nearest sentence, row or price boundary."""
+    segments = []
+    for match in pattern.finditer(text):
+        before = text[max(0, match.start() - 200):match.start()]
+        cuts = [boundary.end() for boundary in _FREE_BOUNDARY.finditer(before)]
+        # A "-€" price ends its table row: what follows is the next row.
+        after = "" if match.group(0).rstrip().endswith("€") else text[match.end():match.end() + 160]
+        stop = _FREE_BOUNDARY.search(after)
+        segments.append(before[cuts[-1] if cuts else 0:] + match.group(0) + after[:stop.start() if stop else len(after)])
+    return segments
+
+
+def _conditions(text: str) -> set[str]:
+    return {name for name, pattern in _FREE_CONDITIONS.items() if pattern.search(text)}
+
+
+def _act_stems(text: str) -> set[str]:
+    return {
+        word.casefold()[:5] for word in TOKEN_RE.findall(text)
+        if len(word) >= 5 and word.casefold() not in STOP_WORDS and word.casefold() not in _FREE_FILLER
+    }
+
+
+def _unsupported_free_claim(
+    answer: str, selected: list[KnowledgeChunk], web_pages: list[dict[str, str]], question: str = "",
+) -> bool:
+    """The answer calls something free that no source calls free for the same act and conditions.
+
+    A source with "definitief afsluiten kost €105,52; tijdelijk afsluiten is gratis" supports
+    "tijdelijk afsluiten is gratis", not "definitief afsluiten is gratis" nor a bare "afsluiten is gratis"."""
+    claims = _free_segments(answer, _FREE_CLAIM)
+    if not claims:
         return False
     texts = [chunk.text for chunk in selected] + [page.get("content", "") for page in web_pages]
-    return not any(_FREE_IN_SOURCE.search(text) for text in texts)
+    sources = [segment for text in texts for segment in _free_segments(text, _FREE_IN_SOURCE)]
+    for claim in claims:
+        # A short answer ("Het kost niets.") is about the act the question names.
+        acts = _act_stems(claim) or _act_stems(question)
+        conditions = _conditions(claim) | (_conditions(question) if not _act_stems(claim) else set())
+        if not any(_conditions(source) == conditions and acts & _act_stems(source) for source in sources):
+            return True
+    return False
 
 
 def _web_sources(pages: list[dict[str, str]], question: str) -> list[dict[str, str]]:
@@ -1152,7 +1206,7 @@ async def _grounded_answer(question: str, selected: list[KnowledgeChunk], web_pa
         answer = await asyncio.to_thread(_generate, prompt, _SYSTEM_INSTRUCTION, stream)
     else:
         answer = await asyncio.to_thread(_generate, prompt)
-    if _unsupported_free_claim(answer, selected, web_pages):
+    if _unsupported_free_claim(answer, selected, web_pages, question):
         # "Free" that no source says is invented; like any unsupported answer, search on.
         return "Ik weet het niet zeker."
     return answer
