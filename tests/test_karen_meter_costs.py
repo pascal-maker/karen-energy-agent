@@ -197,3 +197,11 @@ def test_kwh_price_questions_still_take_the_price_route():
     from luminus_harness.voice_agent import is_electricity_price_question
     assert is_electricity_price_question("Wat kost elektriciteit per kWh nu?")
     assert is_electricity_price_question("Wat is de stroomprijs deze maand?")
+
+
+@pytest.mark.parametrize("answer", ["Definitief afsluiten van de gasmeter is gratis.", "Ja, dat kost niets."])
+def test_a_source_denying_free_never_supports_free(answer):
+    source = {**FLUVIUS_CLOSE, "content": "Definitief afsluiten van de gasmeter is niet gratis."}
+    question = "Is definitief afsluiten van mijn gasmeter gratis?"
+    assert gemma_answer._unsupported_free_claim(answer, [], [source], question)
+    assert gemma_answer._unsupported_free_claim("Ja.", [], [source], question)

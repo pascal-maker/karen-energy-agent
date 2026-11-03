@@ -425,7 +425,7 @@ def _free_segments(text: str, pattern: re.Pattern[str]) -> list[str]:
     segments = []
     for match in pattern.finditer(text):
         before = text[max(0, match.start() - 200):match.start()]
-        if pattern is _FREE_CLAIM and _FREE_NEGATION.search(before):
+        if _FREE_NEGATION.search(before):
             continue
         cuts = [boundary.end() for boundary in _FREE_BOUNDARY.finditer(before)]
         # A "-€" price ends its table row: what follows is the next row.
