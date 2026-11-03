@@ -35,3 +35,13 @@ def no_live_invoice_model(monkeypatch):
         raise RuntimeError("no hosted model in tests")
 
     monkeypatch.setattr(invoice_model, "_ask_model", unavailable)
+
+
+@pytest.fixture(autouse=True)
+def no_live_langfuse(monkeypatch):
+    """Tests never send to Langfuse, even where the shell has real keys; a test that needs it sets its own."""
+    from luminus_harness import langfuse_trace
+
+    for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL", "LANGFUSE_HOST"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(langfuse_trace, "_client", None)

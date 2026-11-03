@@ -395,3 +395,29 @@ def test_simultaneous_first_thumbs_down_create_one_queue(monkeypatch):
     assert len(api.queues) == 1 and len(api.configs) == 1
     assert sorted(item[1] for item in api.items) == ["ab" * 16, "cd" * 16]
     assert {item[0] for item in api.items} == {"queue-1"}
+
+
+def test_each_benchmark_question_is_its_own_trace_even_inside_another_span(monkeypatch):
+    # 2026-11-02: the run started from the admin page hung all 33 items under one span that was
+    # current in that request, so Langfuse showed one trace and could not compare per question.
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", f"pk-lf-{uuid.uuid4().hex}")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    client = langfuse_trace.build_client(span_exporter=exporter, tracer_provider=provider)
+    experiment = langfuse_trace.BenchmarkExperiment.__new__(langfuse_trace.BenchmarkExperiment)
+    experiment.langfuse, experiment.run_name, experiment.experiment_id = client, "run", client.create_trace_id(seed="run")
+    experiment.items = {case: {"input": case, "expected_output": "Nee."} for case in ("q1", "q2")}
+
+    async def work():
+        return {"karen_answer": "Nee.", "judge": {"verdict": "karen"}}
+
+    with provider.get_tracer("admin-request").start_as_current_span("POST /admin/benchmark"):
+        for case in ("q1", "q2"):
+            asyncio.run(asyncio.to_thread(experiment.run_case, {"id": case}, work))
+    client.flush()
+    items = [span for span in exporter.get_finished_spans() if span.name == "experiment-item-run"]
+    client.shutdown()
+    assert len(items) == 2
+    assert all(span.parent is None for span in items)
+    assert items[0].context.trace_id != items[1].context.trace_id

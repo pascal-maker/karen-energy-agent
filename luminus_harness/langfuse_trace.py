@@ -346,6 +346,11 @@ class BenchmarkExperiment:
         def evaluator(**_: Any) -> list[Any]:
             return _evaluations(rows[0]) if rows else []
 
+        # Start from an empty context: a span still current in the request that started the run
+        # would otherwise become every item's parent, and all questions would share one trace.
+        from opentelemetry import context as otel_context
+
+        token = otel_context.attach(otel_context.Context())
         try:
             self.langfuse.run_experiment(
                 name=EXPERIMENT, run_name=self.run_name, experiment_id=self.experiment_id,
@@ -354,6 +359,8 @@ class BenchmarkExperiment:
             )
         except Exception:
             pass
+        finally:
+            otel_context.detach(token)
         if rows:
             return rows[0]
         return _run_coroutine(work())
