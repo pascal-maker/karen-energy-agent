@@ -409,3 +409,30 @@ def test_the_prompt_asks_for_a_warm_tone_and_the_complaint_route():
     assert "Ombudsdienst voor Energie" in gemma_answer._SYSTEM_INSTRUCTION
     assert "bij een neutrale vraag geen begripswoorden" in gemma_answer._SYSTEM_INSTRUCTION
     assert "Ombudsdienst voor Energie" in gemma_answer._GENERAL_INSTRUCTION
+
+
+@pytest.mark.asyncio
+async def test_a_yes_no_question_with_only_related_sources_searches_on(monkeypatch):
+    # The first pages say what a supplier may propose, not what it may impose: the hint makes Karen
+    # say "Ik weet het niet zeker", and that sends her to the next sites instead of a wrong "Ja".
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    pages = {"official_energy": "Je leverancier mag een hoger voorschot voorstellen.",
+             "flanders_public": "Je kiest zelf je voorschot; je leverancier kan het niet opleggen."}
+
+    async def search(query, scope, max_pages=2):
+        content = pages.get(scope)
+        return [{"title": scope, "url": f"https://www.{scope}.test/x", "content": content}] if content else []
+
+    monkeypatch.setattr(gemma_answer, "search_energy_pages", search)
+    prompts = []
+
+    def generate(prompt, *_args):
+        prompts.append(prompt)
+        if "niet opleggen" in prompt:
+            return "Nee, je kiest zelf je voorschot."
+        return "Ik weet het niet zeker of je leverancier dat kan verplichten."
+
+    monkeypatch.setattr(gemma_answer, "_generate", generate)
+    result = await gemma_answer.answer_energy_question("Kan mijn energieleverancier een hoger voorschotbedrag verplichten?", [])
+    assert "verwante vraag" in prompts[0]
+    assert result["answer"] == "Nee, je kiest zelf je voorschot."
