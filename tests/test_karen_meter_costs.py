@@ -156,3 +156,44 @@ def test_closing_is_not_mistaken_for_a_new_connection():
     assert gemma_answer._free_acts("Een nieuwe aansluiting aanvragen") == {"connect"}
     assert gemma_answer._free_acts("De meter laten afsluiten") == {"close"}
     assert gemma_answer._free_acts("In dienst stellen na een uitdienststelling") == {"open", "close"}
+
+
+@pytest.mark.parametrize("answer", [
+    "Nee, definitief afsluiten is niet gratis: het kost 105,52 € incl. btw.",
+    "No, closing the meter for good is not free.",
+    "Non, ce n'est pas gratuit.",
+    "Het is geen gratis ingreep.",
+])
+def test_a_denied_free_is_not_a_free_claim(answer):
+    assert not gemma_answer._unsupported_free_claim(answer, [], [FLUVIUS_CLOSE], "Is definitief afsluiten gratis?")
+
+
+def test_yes_to_is_it_free_is_a_free_claim():
+    question = "Is het definitief afsluiten van mijn gasmeter gratis?"
+    assert gemma_answer._unsupported_free_claim("Ja, je hoeft niets te doen.", [], [TARIFFS], question)
+    assert not gemma_answer._unsupported_free_claim("Ja, dat mag.", [], [TARIFFS], "Mag ik mijn meter zelf afsluiten?")
+
+
+@pytest.mark.asyncio
+async def test_a_general_answer_never_says_yes_to_free(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: "Ja, dat regelt de netbeheerder voor je.")
+    result = await gemma_answer._general_or_no_source("Is definitief afsluiten gratis?", "Is definitief afsluiten gratis?", "nl", "checked")
+    assert result["answer"] == gemma_answer._NO_SOURCE_REPLY["nl"]
+
+
+@pytest.mark.parametrize("question", [
+    "Wat kost het uit dienst stellen van mijn elektriciteitsmeter in Vlaanderen in 2026?",
+    "Hoeveel kost het om mijn stroommeter te laten verwijderen?",
+    "Wat kost het afsluiten van mijn elektriciteitsmeter?",
+])
+def test_electricity_meter_costs_are_not_kwh_price_questions(question):
+    from luminus_harness.voice_agent import is_electricity_price_question
+    assert not is_electricity_price_question(question)
+    assert gemma_answer._meter_tariff_sources(question, "official_energy") == ["fluvius_electricity_connection_tariffs"]
+
+
+def test_kwh_price_questions_still_take_the_price_route():
+    from luminus_harness.voice_agent import is_electricity_price_question
+    assert is_electricity_price_question("Wat kost elektriciteit per kWh nu?")
+    assert is_electricity_price_question("Wat is de stroomprijs deze maand?")
