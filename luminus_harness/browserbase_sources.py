@@ -48,8 +48,8 @@ ENERGY_SOURCES = {
     # Fluvius' yearly connection tariff lists (PDF; the path stays the same each year): the
     # prices for opening, closing and removing a meter in Flanders. The PDF's text loses its column
     # headers, so the title says which price is which (second = first x 1.21).
-    "fluvius_gas_connection_tariffs": ("Fluvius · aansluittarieven aardgas (per regel: eerste bedrag zonder btw, tweede bedrag met 21% btw)", "https://www.fluvius.be/sites/fluvius/files/2020-12/aansluittarieven-aardgas-fluvius.pdf"),
-    "fluvius_electricity_connection_tariffs": ("Fluvius · aansluittarieven elektriciteit (per regel: eerste bedrag zonder btw, tweede bedrag met 21% btw)", "https://www.fluvius.be/sites/fluvius/files/2020-12/aansluittarieven-elektriciteit-fluvius.pdf"),
+    "fluvius_gas_connection_tariffs": ("Fluvius · aansluittarieven aardgas (per regel: eerste bedrag zonder btw, tweede bedrag met 21% btw; een meter afsluiten = 'uit dienst stellen', sloop = de hele aansluiting weghalen)", "https://www.fluvius.be/sites/fluvius/files/2020-12/aansluittarieven-aardgas-fluvius.pdf"),
+    "fluvius_electricity_connection_tariffs": ("Fluvius · aansluittarieven elektriciteit (per regel: eerste bedrag zonder btw, tweede bedrag met 21% btw; een meter afsluiten = 'uit dienst stellen', sloop = de hele aansluiting weghalen)", "https://www.fluvius.be/sites/fluvius/files/2020-12/aansluittarieven-elektriciteit-fluvius.pdf"),
 }
 
 ENERGY_SOURCE_SCOPES = {

@@ -237,6 +237,9 @@ _FREE_CLAIM = re.compile(
     r"no (?:charge|cost)|at no cost|gratuit\w*|ne co[uû]te rien)\b",
     re.IGNORECASE,
 )
+# "Niet gratis", "not free", "pas gratuit": a denial, not a claim.
+_FREE_NEGATION = re.compile(r"\b(?:niet|geen|nooit|not|never|pas|jamais)\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
+_YES_START = re.compile(r"^\W*(?:ja|yes|oui)\b", re.IGNORECASE)
 _FREE_IN_SOURCE = re.compile(
     _FREE_CLAIM.pattern + r"|(?<![\d.,])-\s*€|€\s*-(?!\s*\d)|\b0,00\s*(?:€|euro)",
     re.IGNORECASE,
@@ -422,12 +425,19 @@ def _free_segments(text: str, pattern: re.Pattern[str]) -> list[str]:
     segments = []
     for match in pattern.finditer(text):
         before = text[max(0, match.start() - 200):match.start()]
+        if _FREE_NEGATION.search(before):
+            continue
         cuts = [boundary.end() for boundary in _FREE_BOUNDARY.finditer(before)]
         # A "-€" price ends its table row: what follows is the next row.
         after = "" if match.group(0).rstrip().endswith("€") else text[match.end():match.end() + 160]
         stop = _FREE_BOUNDARY.search(after)
         segments.append(before[cuts[-1] if cuts else 0:] + match.group(0) + after[:stop.start() if stop else len(after)])
     return segments
+
+
+def _says_free(answer: str, question: str) -> bool:
+    """The answer calls something free, or says yes to a question asking whether it is free."""
+    return bool(_free_segments(answer, _FREE_CLAIM) or (_YES_START.search(answer) and _free_segments(question, _FREE_CLAIM)))
 
 
 def _conditions(text: str) -> set[str]:
@@ -466,6 +476,9 @@ def _unsupported_free_claim(
     A source with "definitief afsluiten kost €105,52; tijdelijk afsluiten is gratis" supports
     "tijdelijk afsluiten is gratis", not "definitief afsluiten is gratis" nor a bare "afsluiten is gratis"."""
     claims = _free_segments(answer, _FREE_CLAIM)
+    # "Ja." to "Is ... gratis?" claims what the question says.
+    if _YES_START.search(answer):
+        claims += _free_segments(question, _FREE_CLAIM)
     if not claims:
         return False
     texts = [chunk.text for chunk in selected] + [page.get("content", "") for page in web_pages]
@@ -1217,7 +1230,7 @@ async def _general_or_no_source(original_question: str, question: str, lang: str
     answer = _drop_thought_marker(answer).strip()
     # A number slipped in, or Gemma isn't sure either: no unsourced facts.
     # Like a price, "free" needs a source.
-    if not answer or _NOT_SURE.search(answer) or re.search(r"\d", answer) or _FREE_CLAIM.search(answer):
+    if not answer or _NOT_SURE.search(answer) or re.search(r"\d", answer) or _says_free(answer, original_question):
         return no_source
     return {"answer": answer, "sources": [], "live_source_status": "not-needed", "processing": "general-knowledge"}
 

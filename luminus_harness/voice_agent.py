@@ -127,7 +127,12 @@ def is_electricity_price_question(question: str) -> bool:
         question,
         re.I,
     )
-    return bool(has_electricity and has_price)
+    # "Wat kost het uit dienst stellen van mijn elektriciteitsmeter?" asks a Fluvius tariff, not a kWh price.
+    meter_act = re.search(r"\b\w*meter\b", question, re.I) and re.search(
+        r"\b(?:\w*sluit\w*|uit dienst|in dienst|verwijder\w*|weghal\w*|wegnem\w*|open\w*|plaats\w*|verplaats\w*)\b",
+        question, re.I,
+    )
+    return bool(has_electricity and has_price and not meter_act)
 
 
 async def search_current_electricity_price() -> list[dict[str, str]]:
