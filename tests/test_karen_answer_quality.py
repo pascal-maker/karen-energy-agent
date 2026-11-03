@@ -55,6 +55,11 @@ def test_yes_no_hint_never_picks_a_side_for_a_neighbouring_question():
     hint = gemma_answer._YES_NO_HINT
     assert "precies deze vraag" in hint
     assert "verwante vraag" in hint and "kies dan geen ja of nee" in hint
+    # Same rule as the system prompt for sources that miss the exact question, so Karen searches on
+    # instead of summarising the neighbouring answer.
+    assert '"Ik weet het niet zeker"' in hint and '"Ik weet het niet zeker"' in gemma_answer._SYSTEM_INSTRUCTION
+    assert "wel zeggen" not in hint
+    assert gemma_answer._NOT_SURE.search("Ik weet het niet zeker of je leverancier dat kan verplichten.")
 
 
 @pytest.mark.parametrize("question", [

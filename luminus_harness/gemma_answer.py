@@ -69,7 +69,7 @@ _YES_NO_HINT = (
     "als het antwoord echt ja is in de ene situatie en nee in de andere, en zeg dan meteen waarvan. "
     "Begin nooit met \"Dat hangt ervan af\" als je daarna toch één richting geeft. "
     "Gaan de bronnen over een verwante vraag (bijvoorbeeld wat de leverancier mag voorstellen, niet wat hij mag verplichten), "
-    "kies dan geen ja of nee, maar begin met wat de bronnen wel zeggen."
+    "kies dan geen ja of nee: dan beantwoorden de bronnen de vraag niet, dus begin met \"Ik weet het niet zeker\"."
 )
 
 
