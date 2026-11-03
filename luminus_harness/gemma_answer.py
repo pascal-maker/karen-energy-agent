@@ -221,6 +221,24 @@ _NOT_SURE = re.compile(
 )
 _HEATING_TOPIC = re.compile(r"\b(?:gasketel|verwarmingsketel|cv.ketel|verwarming|warmtepomp)\b", re.IGNORECASE)
 _BOILER_TOPIC = re.compile(r"\b(?:gasketel|verwarmingsketel|cv.ketel)\b", re.IGNORECASE)
+# A question about what opening, closing or removing a meter costs: Fluvius' tariff list has the price.
+_METER_COST_QUESTION = re.compile(
+    r"^(?=.*\b(?:kost\w*|prijs|betaal\w*|gratis|tarief|euro)\b)"
+    r"(?=.*\b(?:\w*meter)\b)"
+    r"(?=.*\b(?:\w*sluit\w*|uit dienst|in dienst|verwijder\w*|weghal\w*|wegnem\w*|open\w*)\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+# "Free" in an answer, and in a source. "Geen huurkosten meer" is not "free": that trap made Karen
+# say closing a gas meter costs nothing.
+_FREE_CLAIM = re.compile(
+    r"\b(?:gratis|kosteloos|kost (?:je |u )?niets|betaal (?:je|u) niets|je betaalt niets|geen kosten|zonder kosten|"
+    r"free of charge|for free|costs nothing|gratuit\w*|ne co[uû]te rien)\b",
+    re.IGNORECASE,
+)
+_FREE_IN_SOURCE = re.compile(
+    _FREE_CLAIM.pattern + r"|(?<![\d.,])-\s*€|€\s*-(?!\s*\d)|\b0,00\s*(?:€|euro)",
+    re.IGNORECASE,
+)
 _LIVE_REQUEST = re.compile(r"\b(?:zoek|opzoek|online|internet|actueel|vandaag|recent|nieuwste|regels?|wetgeving)\b", re.IGNORECASE)
 
 
@@ -358,6 +376,28 @@ async def _search_from(
         if pages:
             return pages, index + 1
     return [], len(attempts)
+
+
+def _meter_tariff_sources(question: str, scope: str) -> list[str]:
+    """Fluvius' tariff lists for a Flemish (or unnamed region) question about a meter's cost."""
+    if scope not in ("official_energy", "flanders_public") or not _METER_COST_QUESTION.search(question):
+        return []
+    gas = re.search(r"\b(?:\w*gas\w*)\b", question, re.IGNORECASE)
+    power = re.search(r"\b(?:elektri\w*|stroom\w*)\b", question, re.IGNORECASE)
+    keys = []
+    if gas or not power:
+        keys.append("fluvius_gas_connection_tariffs")
+    if power or not gas:
+        keys.append("fluvius_electricity_connection_tariffs")
+    return keys
+
+
+def _unsupported_free_claim(answer: str, selected: list[KnowledgeChunk], web_pages: list[dict[str, str]]) -> bool:
+    """The answer calls something free while no source it was given says so."""
+    if not _FREE_CLAIM.search(answer):
+        return False
+    texts = [chunk.text for chunk in selected] + [page.get("content", "") for page in web_pages]
+    return not any(_FREE_IN_SOURCE.search(text) for text in texts)
 
 
 def _web_sources(pages: list[dict[str, str]], question: str) -> list[dict[str, str]]:
@@ -1038,8 +1078,15 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
             if fallback:
                 web_pages = [fallback]
                 _report_step("read", pages=[{"title": fallback["title"], "url": fallback["url"]}])
+        tariff_keys = _meter_tariff_sources(question, scope)
+        tariffs = [page for page in await asyncio.gather(
+            *(fetch_energy_page(key, focus=r"In/Uit dienst stellen") for key in tariff_keys)) if page]
+        if tariffs:
+            _report_step("read", pages=[{"title": page["title"], "url": page["url"]} for page in tariffs])
         if not web_pages:
             web_pages, next_search = await _search_from(question, scope)
+        # The tariff list comes first, so its price is in the prompt before any page that skips it.
+        web_pages = tariffs + web_pages
         live_source_status = "checked" if web_pages else "failed"
         sources.extend(_web_sources(web_pages, question))
 
@@ -1090,7 +1137,8 @@ async def _general_or_no_source(original_question: str, question: str, lang: str
         return no_source
     answer = _drop_thought_marker(answer).strip()
     # A number slipped in, or Gemma isn't sure either: no unsourced facts.
-    if not answer or _NOT_SURE.search(answer) or re.search(r"\d", answer):
+    # Like a price, "free" needs a source.
+    if not answer or _NOT_SURE.search(answer) or re.search(r"\d", answer) or _FREE_CLAIM.search(answer):
         return no_source
     return {"answer": answer, "sources": [], "live_source_status": "not-needed", "processing": "general-knowledge"}
 
@@ -1101,5 +1149,10 @@ async def _grounded_answer(question: str, selected: list[KnowledgeChunk], web_pa
     # replaced by a searched one, which must not appear after it on screen.
     stream = answer_stream.get() if web_pages else None
     if stream:
-        return await asyncio.to_thread(_generate, prompt, _SYSTEM_INSTRUCTION, stream)
-    return await asyncio.to_thread(_generate, prompt)
+        answer = await asyncio.to_thread(_generate, prompt, _SYSTEM_INSTRUCTION, stream)
+    else:
+        answer = await asyncio.to_thread(_generate, prompt)
+    if _unsupported_free_claim(answer, selected, web_pages):
+        # "Free" that no source says is invented; like any unsupported answer, search on.
+        return "Ik weet het niet zeker."
+    return answer
