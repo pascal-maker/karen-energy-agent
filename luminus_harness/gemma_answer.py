@@ -249,6 +249,14 @@ _FREE_CONDITIONS = {
     "digital": re.compile(r"\bdigita\w*|\bslimme meter|\bsmart meter", re.IGNORECASE),
     "extra": re.compile(r"\b(?:extra|bijkomend\w*|additional|suppl[ée]mentaire\w*)\b", re.IGNORECASE),
 }
+# The act itself, apart from its conditions: free closing never supports free opening or removing.
+_FREE_ACTS = {
+    "connect": re.compile(r"\b(?:\w*aansluit\w*|connect\w*|raccord\w*)", re.IGNORECASE),
+    "close": re.compile(r"\b(?:af|dicht)?sluit\w*|\bsluiten\b|uit ?dienst\w*|\bclos\w*|\bshut\w*|\bferm\w*|\bcoup\w*", re.IGNORECASE),
+    "open": re.compile(r"\b(?:her)?open\w*|in ?dienst\w*|\bouvr\w*|\bactiv\w*", re.IGNORECASE),
+    "remove": re.compile(r"\bverwijder\w*|\bweg(?:hal|nem)\w*|\bremov\w*|\bretir\w*|\benlev\w*", re.IGNORECASE),
+    "move": re.compile(r"\bverplaats\w*|\bmov(?:e|ing)\b|\bd[ée]plac\w*", re.IGNORECASE),
+}
 # Words that say nothing about which act is free.
 _FREE_FILLER = {"kost", "kosten", "kosts", "betaal", "betalen", "betaalt", "gratis", "kosteloos", "niets", "euro",
                 "fluvius", "vlaanderen", "costs", "nothing", "charge", "gratuit", "laten",
@@ -426,11 +434,28 @@ def _conditions(text: str) -> set[str]:
     return {name for name, pattern in _FREE_CONDITIONS.items() if pattern.search(text)}
 
 
+def _free_acts(text: str) -> set[str]:
+    # "aansluiting" holds "sluit": take the connections out before looking for closing.
+    rest = _FREE_ACTS["connect"].sub(" ", text)
+    acts = {name for name, pattern in _FREE_ACTS.items() if pattern.search(rest)}
+    return acts | ({"connect"} if _FREE_ACTS["connect"].search(text) else set())
+
+
 def _act_stems(text: str) -> set[str]:
+    """Other words naming what is free, without the conditions (shared conditions are no shared act)."""
     return {
         word.casefold()[:5] for word in TOKEN_RE.findall(text)
         if len(word) >= 5 and word.casefold() not in STOP_WORDS and word.casefold() not in _FREE_FILLER
+        and not _conditions(word) and not _free_acts(word)
     }
+
+
+def _same_act(claim: str, source: str) -> bool:
+    """The claim and the source name the same act: the same known acts if any, else a shared word."""
+    claim_acts, source_acts = _free_acts(claim), _free_acts(source)
+    if claim_acts or source_acts:
+        return claim_acts == source_acts
+    return bool(_act_stems(claim) & _act_stems(source))
 
 
 def _unsupported_free_claim(
@@ -446,10 +471,10 @@ def _unsupported_free_claim(
     texts = [chunk.text for chunk in selected] + [page.get("content", "") for page in web_pages]
     sources = [segment for text in texts for segment in _free_segments(text, _FREE_IN_SOURCE)]
     for claim in claims:
-        # A short answer ("Het kost niets.") is about the act the question names.
-        acts = _act_stems(claim) or _act_stems(question)
-        conditions = _conditions(claim) | (_conditions(question) if not _act_stems(claim) else set())
-        if not any(_conditions(source) == conditions and acts & _act_stems(source) for source in sources):
+        # A short answer ("Het kost niets.") is about the act and conditions the question names.
+        if not (_free_acts(claim) or _act_stems(claim)):
+            claim = f"{question} {claim}"
+        if not any(_conditions(source) == _conditions(claim) and _same_act(claim, source) for source in sources):
             return True
     return False
 

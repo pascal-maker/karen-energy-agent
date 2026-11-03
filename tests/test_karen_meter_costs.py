@@ -138,3 +138,21 @@ async def test_an_invented_free_answer_makes_karen_search_on(monkeypatch):
     monkeypatch.setattr(gemma_answer, "_generate", lambda *_args: "Het kost niets: Fluvius rekent geen sluitingskost.")
     result = await gemma_answer.answer_energy_question("Wat kost het om mijn gasmeter te laten afsluiten als ik overstap?", [])
     assert "kost niets" not in result["answer"]
+
+
+@pytest.mark.parametrize("answer", [
+    "Tijdelijk openen van de digitale meter is gratis.",
+    "Tijdelijk verwijderen van de digitale meter is gratis.",
+])
+def test_free_for_one_act_never_covers_another_act_with_the_same_conditions(answer):
+    source = {**FLUVIUS_CLOSE, "content": "Tijdelijk afsluiten van de digitale meter is gratis."}
+    assert gemma_answer._unsupported_free_claim(answer, [], [source])
+    assert not gemma_answer._unsupported_free_claim("Tijdelijk afsluiten van de digitale meter is gratis.", [], [source])
+    # Another word for the same act still counts.
+    assert not gemma_answer._unsupported_free_claim("Een digitale meter tijdelijk uit dienst stellen is gratis.", [], [source])
+
+
+def test_closing_is_not_mistaken_for_a_new_connection():
+    assert gemma_answer._free_acts("Een nieuwe aansluiting aanvragen") == {"connect"}
+    assert gemma_answer._free_acts("De meter laten afsluiten") == {"close"}
+    assert gemma_answer._free_acts("In dienst stellen na een uitdienststelling") == {"open", "close"}
