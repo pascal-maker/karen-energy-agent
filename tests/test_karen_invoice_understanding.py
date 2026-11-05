@@ -199,3 +199,9 @@ def test_the_app_keeps_one_conversation_per_upload(monkeypatch):
     assert "Zonnestraat 12" in answer and "niet bevestigen" in answer
     elsewhere = ask(other["session_id"], "en waar woont ze?")
     assert "Zonnestraat" not in elsewhere["answer"] and elsewhere["processing"] == "local-only"
+
+
+def test_the_address_of_another_company_is_not_an_address_on_the_bill():
+    reply = _session(DELIVERY_ONLY).ask("wat is het adres van Fluvius?")
+    assert reply["found"] is False and "Zonnestraat" not in reply["answer"]
+    assert all("masked" not in source for source in _session(DELIVERY_ONLY).ask("waar woont Joy?")["sources"])

@@ -64,6 +64,8 @@ class InvoiceSession:
     def ask(self, question: str) -> dict[str, Any]:
         question = " ".join(question.split())
         result = self._answer(question)
+        for source in result.get("sources", []):
+            source.pop("masked", None)
         self._remember(question, result)
         return result
 
@@ -96,6 +98,8 @@ class InvoiceSession:
         words = re.findall(r"[^\W\d_]+", question)
         parts = self._customer_parts()
         supplier = self.invoice.supplier.value if self.invoice.supplier else ""
+        if any(_fold(word) in _OTHER_COMPANIES and _fold(word) not in _fold(supplier) for word in words):
+            return "other", None  # "het adres van Fluvius": not an address on this bill
         if re.search(r"\b(?:leverancier|fournisseur|supplier)\b", folded) or (supplier and _fold(supplier.split(" — ")[0]) in folded):
             return "supplier", None
         for word in words:
@@ -115,6 +119,8 @@ class InvoiceSession:
     def _address_answer(self, question: str, intent: AddressIntent) -> dict[str, Any]:
         customer = self.invoice.customer.value if self.invoice.customer else ""
         who, name = self._who(question)
+        if who == "other":
+            return {"answer": "Deze vraag gaat niet over een adres op je factuur.", "sources": [], "found": False}
         if who == "unknown":
             if customer:
                 return {"answer": f"Ik zie {name} niet op deze factuur; ze staat op naam van {customer}. Bedoel je {customer}?", "sources": []}
@@ -319,7 +325,10 @@ def _looks_like_a_name(word: str, position: int, supplier: str) -> bool:
         return False
     if word.lower() in _WORDS or _fold(word) in _CARD_STOP or (supplier and word.lower() in supplier.lower()):
         return False
-    return word.lower() not in {"karen", "luminus", "engie", "fluvius", "eneco", "totalenergies", "mega", "bolt", "ores", "sibelga", "belgie", "belgië"}
+    return _fold(word) not in _OTHER_COMPANIES | {"karen", "belgie"}
+
+
+_OTHER_COMPANIES = frozenset("luminus engie fluvius eneco totalenergies mega bolt ores sibelga resa elia vreg creg ombudsdienst".split())
 
 
 # --- formatting helpers ----------------------------------------------------------------------------------
