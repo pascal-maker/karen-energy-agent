@@ -85,7 +85,10 @@ def test_an_unclear_question_about_the_bill_asks_back_and_a_general_one_leaves_t
     assert _ask(ADVANCE, "wie wint Real of Barcelona?")["found"] is False
 
 
-@pytest.mark.parametrize("question", ["Wie krijgt een sociaal tarief?", "Wie moet mijn gasmeter afsluiten?", "Wie betaalt de netkosten?"])
+@pytest.mark.parametrize("question", [
+    "Wie krijgt een sociaal tarief?", "Wie moet mijn gasmeter afsluiten?", "Wie betaalt de netkosten?",
+    "Wie betaalt mijn netkosten?", "Wie moet betalen voor het afsluiten van mijn gasmeter?",
+])
 def test_other_who_questions_are_not_about_who_owes_the_bill(question):
     from luminus_harness.invoice_schema import is_payer_request
 
@@ -111,3 +114,15 @@ def test_one_energys_new_advance_is_not_a_yearly_total_for_both():
     assert "alleen het nieuwe voorschot voor elektriciteit" in answer and "gas vond ik niet" in answer
     assert "600" not in answer
     assert "€ 600,00 per jaar" in yearly_answer(invoice.model_copy(update={"new_advances": [only_power]}), "wat kost stroom per jaar?")["answer"]
+
+
+@pytest.mark.parametrize("question", ["wie moet mijn factuur betalen", "aan wie moet ik dit bedrag betalen?", "wie krijgt het geld?"])
+def test_payer_questions_about_the_bill_itself_are_still_recognised(question):
+    from luminus_harness.invoice_schema import is_payer_request
+
+    assert is_payer_request(question)
+
+
+def test_a_payment_question_about_something_else_leaves_the_payer_answer_alone():
+    for question in ("Wie betaalt mijn netkosten?", "Wie moet betalen voor het afsluiten van mijn gasmeter?"):
+        assert "verschuldigd aan" not in _ask(ADVANCE, question)["answer"]

@@ -502,7 +502,14 @@ _PAYER_WORDS = ("verschuldigd", "schuldig", "verschuldigde", "owe", "owes", "owe
 # "Wie" alone is not enough: "wie krijgt een sociaal tarief" or "wie moet mijn gasmeter afsluiten" ask something else.
 _WHO = re.compile(r"\b(?:wie|who|whom|qui)\b")
 _PAY_WORD = re.compile(r"\b(?:betal\w*|betaal\w*|betaalt|betaald|geld|bedrag|stort\w*|overschrij\w*|pay\w*|paid|money|pai\w*|argent|montant)\b")
-_PAYER_SUBJECT = re.compile(r"\bhet\s+geld\b|\bwie\s+(?:moet|moeten)\s+(?:er\s+)?(?:dit|dat|het\s+)?\s*betalen\b|\b(?:aan|naar|to|a)\s+(?:wie|whom|qui)\b|\b(?:ik|je|jij|we|wij|i)\b|\bbegunstigde\b")
+# Every other word must point at the bill itself: "wie betaalt mijn netkosten" or "wie moet betalen voor het
+# afsluiten van mijn gasmeter" name another subject and are general questions.
+_PAYER_ONLY_WORDS = frozenset("""
+    wie who whom qui aan naar to a mijn mn my moet moeten must has have er ik je jij we wij u i is ben zijn wordt worden gaat this that
+    dit dat deze die het de een the factuur rekening afrekening voorschotfactuur bedrag geld totaal bill invoice amount money
+    krijgt krijg ontvangt ontvang gets receives eigenlijk nu dan precies juist hier hiervan dus nog cette ce facture la le
+    montant argent est doit dois paie paye payer verschuldigd schuldig verschuldigde owe owes owed redevable ben begunstigde
+""".split())
 _YEAR_PHRASE = re.compile(
     r"\bjaarbasis\b|\bper\s+jaar\b|\bop\s+(?:een|1)\s+jaar\b|\bin\s+(?:een|1)\s+jaar\b|\bjaarlijks\w*\b|\b12\s+maanden\b"
     r"|\btwaalf\s+maanden\b|\bper\s+year\b|\ba\s+year\b|\byearly\b|\bpar\s+an\b"
@@ -529,9 +536,12 @@ def _words(question: str) -> list[str]:
 def is_payer_request(question: str) -> bool:
     """'Wie is dit verschuldigd' (also 'vershuldigd'), 'wie moet betalen', 'aan wie betaal ik dit'."""
     plain = _plain(question)
-    if any(_fuzzy(word, _PAYER_WORDS, 0.8) for word in _words(question)):
-        return True
-    return bool(_WHO.search(plain) and _PAY_WORD.search(plain) and (is_about_the_bill(question) or _PAYER_SUBJECT.search(plain)))
+    words = _words(question)
+    owed = [word for word in words if _fuzzy(word, _PAYER_WORDS, 0.8)]
+    if not owed and not (_WHO.search(plain) and _PAY_WORD.search(plain)):
+        return False
+    other = [word for word in words if word not in owed and not _PAY_WORD.fullmatch(word) and word not in _PAYER_ONLY_WORDS]
+    return not other
 
 
 def is_yearly_request(question: str) -> bool:
