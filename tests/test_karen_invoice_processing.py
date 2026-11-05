@@ -376,7 +376,7 @@ def test_summary_requests_answer_from_the_structured_invoice() -> None:
 def test_structured_invoice_holds_extracted_and_calculated_values_apart() -> None:
     _, analysis = _fixture("01-nl-afrekening-gegroepeerd.pdf")
     invoice = analysis["invoice"]
-    assert invoice.schema_version == "1.0" and invoice.document_type == "annual_settlement"
+    assert invoice.schema_version == "1.1" and invoice.document_type == "annual_settlement"
     assert invoice.source == "01-nl-afrekening-gegroepeerd.pdf"
     assert (invoice.supplier.value, invoice.supplier.page) == ("Kanaal Energie", 1) and "Kanaal Energie" in invoice.supplier.excerpt
     assert (invoice.billing_period.start, invoice.billing_period.end) == ("2025-01-01", "2025-12-31")
@@ -393,7 +393,7 @@ def test_structured_invoice_holds_extracted_and_calculated_values_apart() -> Non
 def test_structured_invoice_serialises_to_json_with_decimal_strings() -> None:
     _, analysis = _fixture("13-nl-jaarafrekening-nieuw-voorschot-tabel.pdf")
     payload = json.loads(analysis["invoice"].model_dump_json())
-    assert payload["schema_version"] == "1.0"
+    assert payload["schema_version"] == "1.1"
     assert payload["amounts"]["amount_due"]["value_eur"] == "412.30"
     assert payload["amounts"]["credit"] is None and payload["customer"]["value"] == "Alex Doe"
     assert payload["due_date"] == {
@@ -513,7 +513,7 @@ def test_upload_returns_the_invoice_and_follow_ups_summarise_it_locally(monkeypa
     assert upload["processing"] == "local-only"
     assert upload["suggestions"] == ["Wie moet betalen?", "Wat betekent dit?", "Wat betaal ik op jaarbasis?", "Zie je aandachtspunten?"]
     assert "TEST-2026-001" not in " ".join(source["excerpt"] for source in upload["sources"]), "Shown passages are masked"
-    assert upload["invoice"]["schema_version"] == "1.0" and upload["invoice"]["amounts"]["amount_due"]["value_eur"] == "234.56"
+    assert upload["invoice"]["schema_version"] == "1.1" and upload["invoice"]["amounts"]["amount_due"]["value_eur"] == "234.56"
 
     reply = client.post("/api/answer", json={"question": "wat is de smaenvatting hiervn", "session_id": upload["session_id"]}).json()
     assert reply["processing"] == "local-only"
