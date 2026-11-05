@@ -152,6 +152,27 @@ async function main() {
     assert.match(document.body.textContent, /Vergelijk energieaanbiedingen/, "The chat before the PDF stays")
     assert.equal(mic().disabled, false)
 
+    // A bill can be dragged onto Karen: same upload as the paperclip; other files are refused.
+    const drag = (type, file) => {
+        const event = new window.Event(type, { bubbles: true, cancelable: true })
+        event.dataTransfer = { types: ["Files"], files: file ? [file] : [], dropEffect: "none" }
+        document.querySelector(".ea-shell").dispatchEvent(event)
+        return event
+    }
+    await act(async () => { assert.ok(drag("dragover").defaultPrevented, "The browser does not open the dragged file") })
+    assert.ok(document.querySelector(".ea-drop"), "Dragging shows where to drop")
+    const uploadsBefore = requests.filter(r => r.url.endsWith("/api/upload")).length
+    await act(async () => { drag("drop", new window.File(["x"], "notes.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" })) })
+    assert.equal(document.querySelector(".ea-drop"), null)
+    assert.equal(requests.filter(r => r.url.endsWith("/api/upload")).length, uploadsBefore, "Other files are not uploaded")
+    assert.match(document.body.textContent, /Sleep een PDF of een foto/)
+    responses.push({ answer: "Gesleepte factuur gelezen", session_id: "dropped-pdf-session", filename: "drop.pdf", processing: "local-only" })
+    await act(async () => { drag("drop", new window.File(["synthetic"], "drop.pdf", { type: "application/pdf" })) })
+    assert.equal(requests.filter(r => r.url.endsWith("/api/upload")).length, uploadsBefore + 1, "A dropped PDF is uploaded")
+    assert.match(document.body.textContent, /drop\.pdf · Karen leest mee/)
+    await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent === "Verwijder").click())
+    assert.equal(mic().disabled, false)
+
     // Voice blocked: a denied microphone inside a frame names the frame, not a generic error.
     await act(async () => mic().click())
     await act(async () => recognizer.onerror({ error: "not-allowed" }))
