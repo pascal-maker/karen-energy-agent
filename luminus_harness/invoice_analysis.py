@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Callable
 
 from .knowledge import STOP_WORDS, TOKEN_RE, KnowledgeChunk, retrieve
 
@@ -870,18 +870,25 @@ def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
 
 def answer_uploaded_pdf_question(
     question: str, chunks: list[KnowledgeChunk], facts: dict[str, Any] | None = None, invoice: Any = None,
+    passages: Callable[[str, dict[str, Any] | None], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """Answer locally from the invoice read at upload, else by returning matched PDF passages, without hosted inference.
 
     Follow-ups about the bill ("wie is dit verschuldigd", "wat betaal ik op jaarbasis", "wat kunnen we afleiden",
     "vat samen", typos included) are answered from `invoice` (invoice_schema.Invoice), built from `facts` when not
     given. Account, meter and customer details are masked in every passage shown. A question about the bill that
-    matches nothing gets a clarifying question; only a question that is not about the bill leaves the PDF."""
-    result = _answer_uploaded(question, chunks, facts, invoice)
+    matches nothing gets a clarifying question; only a question that is not about the bill leaves the PDF.
+
+    `passages` (an upload session's hybrid retrieval, invoice_session) replaces the raw passage fallback with an
+    answer a passage supports, and may replace a fact answer with a more specific passage; its sources are
+    already masked for the visitor."""
+    result = _answer_uploaded(question, chunks, facts, invoice, passages)
     from .invoice_model import mask_invoice_text
 
     names = tuple(name for name in (_customer_name(facts, invoice),) if name)
     for source in result.get("sources", []):
+        if source.pop("masked", False):
+            continue
         if source.get("excerpt"):
             source["excerpt"] = mask_invoice_text(source["excerpt"], names)
     return result
@@ -899,6 +906,7 @@ _COST_WORDS = re.compile(r"(?i)\b(?:betaal\w*|kost\w*|voorschot\w*|bedrag\w*|gel
 
 def _answer_uploaded(
     question: str, chunks: list[KnowledgeChunk], facts: dict[str, Any] | None, invoice: Any,
+    passages: Callable[[str, dict[str, Any] | None], dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     from .invoice_model import mask_invoice_text
     from .invoice_schema import (
@@ -926,7 +934,15 @@ def _answer_uploaded(
     if facts:
         direct = _fact_answer(question, facts)
         if direct is not None:
-            return direct
+            better = passages(question, direct) if passages else None
+            return better or direct
+    if passages is not None:
+        supported = passages(question, None)
+        if supported is not None:
+            return supported
+        if is_about_the_bill(question):
+            return clarify_answer()
+        return {"answer": "Ik vond op je factuur geen passage die deze vraag beantwoordt.", "sources": [], "found": False}
     selected = retrieve(chunks, question, limit=3)
     if not selected:
         if is_about_the_bill(question):

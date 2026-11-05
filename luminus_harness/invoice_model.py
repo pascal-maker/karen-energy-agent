@@ -61,7 +61,15 @@ _URL_QUERY_RE = re.compile(r"(?<=[\w/])\?[^\s]+")
 
 def mask_invoice_text(text: str, names: tuple[str, ...] = ()) -> str:
     """Labelled identifiers and titled names first, then everything that is not an invoice word, an amount,
-    a date or a quantity: streets, cities, names and numbers of any other shape become [X]."""
+    a date or a quantity: streets, cities, names and numbers of any other shape become [X]. This is the masking
+    for anything that leaves the server (a hosted model) or is logged."""
+    return _keep_invoice_words(mask_identifiers(text, names))
+
+
+def mask_identifiers(text: str, names: tuple[str, ...] = ()) -> str:
+    """Only the identifiers: e-mail, IBAN, account, customer and meter numbers, phone numbers and the customer's
+    name. For passages shown back to the visitor from their own upload, which stay readable sentences; never for
+    text that leaves the server or is logged (use mask_invoice_text)."""
     masked = text
     for name in names:
         if name and len(name) > 2:
@@ -73,8 +81,7 @@ def mask_invoice_text(text: str, names: tuple[str, ...] = ()) -> str:
     masked = _IDENTIFIER_RE.sub(lambda match: match.group(0).replace(match.group(1), MASK), masked)
     masked = _URL_QUERY_RE.sub("", masked)
     masked = _NAME_RE.sub(lambda match: match.group(0).replace(match.group(1), MASK), masked)
-    masked = _PHONE_RE.sub(MASK, masked)
-    return _keep_invoice_words(masked)
+    return _PHONE_RE.sub(MASK, masked)
 
 
 _WORDS = frozenset(

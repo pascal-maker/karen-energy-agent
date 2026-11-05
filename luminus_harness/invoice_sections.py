@@ -72,6 +72,7 @@ _BILLING = re.compile(
 _ANY_ADDRESS = re.compile(r"(?i)^(?:adres|adresse|address|domicilie|woonplaats)$")
 _CUSTOMER = re.compile(r"(?i)^(?:klant|klantnaam|naam(?: klant)?|titularis|klanthouder|client|nom|titulaire|customer)$")
 _SUPPLIER = re.compile(r"(?i)^(?:leverancier|fournisseur|supplier|energieleverancier)$")
+_LABEL_COLUMN = re.compile(r"(?i)^(?:omschrijving|beschrijving|rubriek|description|libellé|libelle|désignation|product)$")
 # The line that ends an address: a Belgian (or Dutch) postcode and a place.
 _POSTCODE = re.compile(r"\b(?:\d{4}|\d{4}\s?[A-Z]{2})\s+[^\W\d_][\w'’ -]*$")
 
@@ -152,6 +153,8 @@ def _table_rows(run: list[str]) -> tuple[str, list[str], list[str]] | None:
             rows.append(f"{label}: " + " · ".join(cells))
         else:
             rows.append(label)
+    # "Omschrijving" heads the label column; it names no table.
+    caption = [line for line in caption if not _LABEL_COLUMN.match(line)]
     return " · ".join(caption), rows, run[index:]
 
 
