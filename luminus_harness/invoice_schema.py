@@ -509,7 +509,14 @@ _PAYER_ONLY_WORDS = frozenset("""
     dit dat deze die het de een the factuur rekening afrekening voorschotfactuur bedrag geld totaal bill invoice amount money
     krijgt krijg ontvangt ontvang gets receives eigenlijk nu dan precies juist hier hiervan dus nog cette ce facture la le
     montant argent est doit dois paie paye payer verschuldigd schuldig verschuldigde owe owes owed redevable ben begunstigde
+    aub alsjeblieft alstublieft svp please
 """.split())
+# "Deze factuur", "die rekening", "dit bedrag", or a bare "dit" as what is paid: the question names the bill,
+# whatever else it says ("wie moet deze factuur van Luminus betalen?").
+_NAMES_THE_BILL = re.compile(
+    r"\b(?:deze|die|dit|dat|mijn|mn|this|that|my|cette|ma|la)\s+(?:\w+\s+)?(?:factuur|rekening|afrekening|voorschotfactuur|bedrag|bill|invoice|facture|montant)\b"
+    r"|\b(?:dit|dat|this|hiervan|hiervoor|daarvoor)\b(?=\s*(?:$|[?.!,]|betal|betaal|pay|aub|alsjeblieft|eigenlijk|nu\b|dan\b|please))"
+)
 _YEAR_PHRASE = re.compile(
     r"\bjaarbasis\b|\bper\s+jaar\b|\bop\s+(?:een|1)\s+jaar\b|\bin\s+(?:een|1)\s+jaar\b|\bjaarlijks\w*\b|\b12\s+maanden\b"
     r"|\btwaalf\s+maanden\b|\bper\s+year\b|\ba\s+year\b|\byearly\b|\bpar\s+an\b"
@@ -540,6 +547,8 @@ def is_payer_request(question: str) -> bool:
     owed = [word for word in words if _fuzzy(word, _PAYER_WORDS, 0.8)]
     if not owed and not (_WHO.search(plain) and _PAY_WORD.search(plain)):
         return False
+    if _NAMES_THE_BILL.search(plain):
+        return True
     other = [word for word in words if word not in owed and not _PAY_WORD.fullmatch(word) and word not in _PAYER_ONLY_WORDS]
     return not other
 
