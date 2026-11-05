@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react"
 import { addPropertyControls, ControlType } from "framer"
 
 type SpeechResult = { transcript: string }
@@ -18,7 +18,7 @@ type SpeechRecognizer = {
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognizer; webkitSpeechRecognition?: new () => SpeechRecognizer }
 
 type Source = { title: string; detail?: string; url?: string; excerpt?: string }
-type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_status?: string; visual?: PriceVisual }
+type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_status?: string; visual?: PriceVisual; suggestions?: string[] }
 
 // What Karen does while she answers, shown in the chat as she works.
 const stepSummary = (steps: Step[]) => {
@@ -262,7 +262,10 @@ const normalizeQuestion = (text: string) => text.trim().toLocaleLowerCase("nl-BE
 
 const css = `
   * { box-sizing: border-box; }
-  .ea-shell { width:100%; height:100%; min-width:320px; container-type:inline-size; }
+  .ea-shell { position:relative; width:100%; height:100%; min-width:320px; container-type:inline-size; }
+  .ea-drop { position:absolute; inset:8px; z-index:20; display:grid; place-items:center; border:2px dashed #3f7a57; border-radius:18px; background:rgba(246,247,243,.92); pointer-events:none; }
+  .ea-drop p { margin:0; display:grid; gap:6px; text-align:center; font-size:18px; font-weight:600; color:#234f38; }
+  .ea-drop span { font-size:13px; font-weight:400; color:#56705f; }
   .ea { width:100%; height:100%; min-height:590px; display:flex; flex-direction:column; gap:14px; padding:18px; color:#1e2b23; background:#f6f7f3; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif; }
   .ea-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .ea-top .ea-brand { padding:0; border:0; }
@@ -275,6 +278,7 @@ const css = `
   .ea h1 { margin:0; font-size:20px; line-height:1.25; letter-spacing:-.02em; }
   .ea-today { padding-top:8px; border-top:1px solid #eef2ec; color:#234f38!important; }
   .ea-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 16px 56px; }
+  .ea-chips-follow { margin:12px 0 0; }
   .ea-chip { min-height:38px; padding:8px 12px; border:1px solid #d6e3d4; border-radius:999px; color:#234f38; background:#fff; font:inherit; font-size:13px; text-align:left; cursor:pointer; }
   .ea-chip:hover { background:#f2f7ef; }
   .ea-composer { padding:10px 0 4px; background:#f6f7f3; }
@@ -473,6 +477,7 @@ export default function EnergyAgentConversation({
     const [sessionId, setSessionId] = useState("")
     const [uploadName, setUploadName] = useState("")
     const [uploadError, setUploadError] = useState("")
+    const [dragging, setDragging] = useState(false)
     const [listening, setListening] = useState(false)
     const [voiceDraft, setVoiceDraft] = useState(false)
     const [voiceError, setVoiceError] = useState("")
@@ -675,6 +680,35 @@ export default function EnergyAgentConversation({
         } finally {
             setUploading(false)
         }
+    }
+
+    // A bill can also be dragged anywhere onto Karen instead of picked with the paperclip.
+    const uploadBlocked = uploading || busy || listening
+    function draggingFiles(event: DragEvent) {
+        return Array.from(event.dataTransfer?.types ?? []).includes("Files")
+    }
+    function onDragOver(event: DragEvent) {
+        if (!draggingFiles(event)) return
+        // Always stop the browser from opening the file in place of Karen.
+        event.preventDefault()
+        event.dataTransfer.dropEffect = uploadBlocked ? "none" : "copy"
+        if (!uploadBlocked) setDragging(true)
+    }
+    function onDragLeave(event: DragEvent) {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false)
+    }
+    function onDrop(event: DragEvent) {
+        if (!draggingFiles(event)) return
+        event.preventDefault()
+        setDragging(false)
+        if (uploadBlocked) return
+        const file = event.dataTransfer.files?.[0]
+        if (!file) return
+        if (!/^(application\/pdf|image\/(jpeg|png|webp))$/.test(file.type) && !/\.pdf$/i.test(file.name)) {
+            setUploadError("Sleep een PDF of een foto (JPG, PNG of WebP) van je factuur naar Karen.")
+            return
+        }
+        void uploadPdf(file)
     }
 
     async function clearPdf() {
@@ -999,7 +1033,8 @@ export default function EnergyAgentConversation({
     const sources = reply?.sources ?? []
 
     return (
-        <div className="ea-shell" style={style}>
+        <div className="ea-shell" style={style} onDragEnter={onDragOver} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} data-dragging={dragging}>
+        {dragging && <div className="ea-drop" aria-hidden="true"><p>Laat je factuur hier los<span>PDF of foto · Karen leest ze op haar eigen server</span></p></div>}
         <div className="ea">
             <style dangerouslySetInnerHTML={{ __html: css }} />
             <header className="ea-top">
@@ -1052,6 +1087,9 @@ export default function EnergyAgentConversation({
                         <button disabled={feedback === "sending"} onClick={() => void sendFeedback("down", feedbackComment)}>Verstuur feedback</button>
                     </div>}
                     {feedback === "failed" && <p className="ea-foot" role="status">Feedback versturen lukte niet. Probeer het later opnieuw.</p>}
+                    {sessionId && !busy && Boolean(reply.suggestions?.length) && <div className="ea-chips ea-chips-follow">
+                        {reply.suggestions!.slice(0, 4).map((text) => <button key={text} className="ea-chip" onClick={() => void ask(text)}>{text}</button>)}
+                    </div>}
                     {petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}
                     {petraError && <p className="ea-foot" role="status">{petraError}</p>}</>}
                 </div>
@@ -1061,7 +1099,7 @@ export default function EnergyAgentConversation({
                 {voiceError && <p className="ea-foot" role="alert" style={{ color: "#a13333" }}>{voiceError}</p>}
                 {voiceDraft && <p className="ea-foot" role="status">Controleer de herkende vraag hieronder. Je kunt die aanpassen voordat Karen zoekt.</p>}
                 <div className="ea-controls">
-                    <label className="ea-attach" title="Voeg je factuur toe (PDF of foto)" data-disabled={uploading || busy || listening}>
+                    <label className="ea-attach" title="Voeg je factuur toe (PDF of foto) of sleep ze naar Karen" data-disabled={uploading || busy || listening}>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 19.9a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8" /></svg>
                         <input type="file" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp" aria-label="Upload je energiefactuur als PDF of foto" disabled={uploading || busy || listening} onChange={(event) => { void uploadPdf(event.target.files?.[0]); event.target.value = "" }} />
                     </label>

@@ -873,21 +873,64 @@ def answer_uploaded_pdf_question(
 ) -> dict[str, Any]:
     """Answer locally from the invoice read at upload, else by returning matched PDF passages, without hosted inference.
 
-    A summary request ("vat samen", "samenvatting", typos included) is answered from `invoice`
-    (invoice_schema.Invoice), built from `facts` when not given."""
-    from .invoice_schema import build_invoice, explain_invoice, is_explanation_request, is_summary_request, summarize_invoice
+    Follow-ups about the bill ("wie is dit verschuldigd", "wat betaal ik op jaarbasis", "wat kunnen we afleiden",
+    "vat samen", typos included) are answered from `invoice` (invoice_schema.Invoice), built from `facts` when not
+    given. Account, meter and customer details are masked in every passage shown. A question about the bill that
+    matches nothing gets a clarifying question; only a question that is not about the bill leaves the PDF."""
+    result = _answer_uploaded(question, chunks, facts, invoice)
+    from .invoice_model import mask_invoice_text
 
-    summary, explanation = is_summary_request(question), is_explanation_request(question)
-    if (summary or explanation) and (invoice is not None or facts):
-        if invoice is None:
-            invoice = build_invoice(facts, next((chunk.source for chunk in chunks), ""))
-        return summarize_invoice(invoice) if summary else explain_invoice(invoice, question)
+    names = tuple(name for name in (_customer_name(facts, invoice),) if name)
+    for source in result.get("sources", []):
+        if source.get("excerpt"):
+            source["excerpt"] = mask_invoice_text(source["excerpt"], names)
+    return result
+
+
+def _customer_name(facts: dict[str, Any] | None, invoice: Any) -> str:
+    if invoice is not None and getattr(invoice, "customer", None):
+        return invoice.customer.value
+    customer = (facts or {}).get("customer")
+    return str(customer["value"]) if customer else ""
+
+
+_COST_WORDS = re.compile(r"(?i)\b(?:betaal\w*|kost\w*|voorschot\w*|bedrag\w*|geld|euro|€|pay\w*|cost\w*|pai\w*|co[uû]t\w*)")
+
+
+def _answer_uploaded(
+    question: str, chunks: list[KnowledgeChunk], facts: dict[str, Any] | None, invoice: Any,
+) -> dict[str, Any]:
+    from .invoice_model import mask_invoice_text
+    from .invoice_schema import (
+        build_invoice, clarify_answer, explain_invoice, insights_answer, is_about_the_bill, is_explanation_request,
+        is_insight_request, is_other_payer_question, is_payer_request, is_summary_request, is_yearly_request, payer_answer, summarize_invoice,
+        yearly_answer,
+    )
+
+    if invoice is None and facts:
+        invoice = build_invoice(facts, next((chunk.source for chunk in chunks), ""))
+    if invoice is not None:
+        if is_payer_request(question):
+            return payer_answer(invoice)
+        if is_other_payer_question(question):
+            # "Wie betaalt mijn netkosten?": a general question about who pays something else, not about this bill.
+            return {"answer": "Deze vraag gaat niet over je factuur.", "sources": [], "found": False}
+        if is_yearly_request(question) and _COST_WORDS.search(question):
+            return yearly_answer(invoice, question)
+        if is_insight_request(question):
+            return insights_answer(invoice)
+        if is_summary_request(question):
+            return summarize_invoice(invoice)
+        if is_explanation_request(question):
+            return explain_invoice(invoice, question)
     if facts:
         direct = _fact_answer(question, facts)
         if direct is not None:
             return direct
     selected = retrieve(chunks, question, limit=3)
     if not selected:
+        if is_about_the_bill(question):
+            return clarify_answer()
         return {
             "answer": "Ik vond geen duidelijke passage in je PDF om deze vraag mee te beantwoorden.",
             "sources": [],
@@ -901,8 +944,9 @@ def answer_uploaded_pdf_question(
         }
         for chunk in selected
     ]
-    quoted_evidence = _passage_excerpt(selected[0].text, question)
+    name = _customer_name(facts, invoice)
+    quoted_evidence = _passage_excerpt(mask_invoice_text(selected[0].text, (name,) if name else ()), question)
     return {
-        "answer": f"Ik vond een relevante passage op PDF-pagina {selected[0].page}: “{quoted_evidence}”",
+        "answer": f"Dit staat er op PDF-pagina {selected[0].page}: “{quoted_evidence}”",
         "sources": sources,
     }

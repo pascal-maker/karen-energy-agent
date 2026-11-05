@@ -178,7 +178,7 @@ def test_pdf_follow_up_says_when_a_fact_is_missing_and_other_questions_keep_pass
     missing = answer_uploaded_pdf_question("Wat is mijn verbruik?", chunks, facts)
     assert missing == {"answer": "Ik vond je verbruik niet duidelijk op deze factuur.", "sources": []}
     passage = answer_uploaded_pdf_question("Wat staat er over Eneco?", chunks, facts)
-    assert passage["answer"].startswith("Ik vond een relevante passage op PDF-pagina 1")
+    assert passage["answer"].startswith("Dit staat er op PDF-pagina 1: ")
 
 
 def test_explain_my_invoice_gives_an_overview_of_the_facts() -> None:
@@ -490,7 +490,7 @@ def test_field_questions_and_passages_keep_working_with_the_invoice() -> None:
     paid = answer_uploaded_pdf_question("Hoeveel moet ik nog betalen?", chunks, analysis["facts"], analysis["invoice"])
     assert paid["answer"] == "Volgens deze factuur moet je nog € 300,00 betalen (PDF-pagina 2)."
     passage = answer_uploaded_pdf_question("Wat staat er over Luminus?", chunks, analysis["facts"], analysis["invoice"])
-    assert passage["answer"].startswith("Ik vond een relevante passage op PDF-pagina 1")
+    assert passage["answer"].startswith("Dit staat er op PDF-pagina 1: ")
 
 
 def test_upload_returns_the_invoice_and_follow_ups_summarise_it_locally(monkeypatch) -> None:
@@ -511,6 +511,8 @@ def test_upload_returns_the_invoice_and_follow_ups_summarise_it_locally(monkeypa
     upload = client.post("/api/upload", files={"file": ("01.pdf", pdf, "application/pdf")}).json()
     assert {"session_id", "filename", "answer", "facts", "sources", "invoice", "processing"} <= set(upload)
     assert upload["processing"] == "local-only"
+    assert upload["suggestions"] == ["Wie moet betalen?", "Wat betekent dit?", "Wat betaal ik op jaarbasis?", "Zie je aandachtspunten?"]
+    assert "TEST-2026-001" not in " ".join(source["excerpt"] for source in upload["sources"]), "Shown passages are masked"
     assert upload["invoice"]["schema_version"] == "1.0" and upload["invoice"]["amounts"]["amount_due"]["value_eur"] == "234.56"
 
     reply = client.post("/api/answer", json={"question": "wat is de smaenvatting hiervn", "session_id": upload["session_id"]}).json()

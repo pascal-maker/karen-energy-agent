@@ -73,6 +73,7 @@ from luminus_harness import expert_judge
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
 from luminus_harness import langfuse_trace
+from luminus_harness.invoice_schema import FOLLOW_UP_SUGGESTIONS
 from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, today_summary
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
@@ -770,6 +771,14 @@ def _prune_upload_sessions(now: float | None = None) -> None:
             del _upload_sessions[session_id]
 
 
+def _masked_sources(sources: list[dict[str, Any]], invoice: Any) -> list[dict[str, Any]]:
+    """Passages shown under an answer keep amounts and dates; account, meter and customer details become [X]."""
+    from luminus_harness.invoice_model import mask_invoice_text
+
+    names = (invoice.customer.value,) if getattr(invoice, "customer", None) else ()
+    return [{**source, "excerpt": mask_invoice_text(source["excerpt"], names)} if source.get("excerpt") else source for source in sources]
+
+
 def _get_upload_session(session_id: str) -> dict[str, Any] | None:
     _prune_upload_sessions()
     session = _upload_sessions.get(session_id)
@@ -853,9 +862,11 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
         "filename": filename,
         "answer": analysis["answer"],
         "facts": analysis["facts"],
-        "sources": analysis["sources"],
+        "sources": _masked_sources(analysis["sources"], analysis["invoice"]),
         "invoice": analysis["invoice"].model_dump(mode="json"),
         "processing": processing,
+        # Follow-ups Karen answers from the bill itself; the component shows them as buttons.
+        "suggestions": FOLLOW_UP_SUGGESTIONS,
     }
 
 

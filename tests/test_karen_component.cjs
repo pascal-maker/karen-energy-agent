@@ -142,6 +142,13 @@ async function main() {
         input.dispatchEvent(new window.Event("change", { bubbles: true }))
     })
     assert.equal(mic().disabled, true, "PDF session must disable external voice")
+    responses.push({ answer: "Wie het bedrag verschuldigd is", processing: "local-only", suggestions: ["Wie moet betalen?", "Zie je aandachtspunten?"] })
+    await typed("wat nu?")
+    const followUps = [...document.querySelectorAll(".ea-chips-follow button")]
+    assert.deepEqual(followUps.map(button => button.textContent), ["Wie moet betalen?", "Zie je aandachtspunten?"], "Bill follow-ups are offered as buttons")
+    responses.push({ answer: "Op naam van de klant", processing: "local-only" })
+    await act(async () => followUps[0].click())
+    assert.deepEqual(requests.at(-1).body, { question: "Wie moet betalen?", session_id: "separate-pdf-session" }, "A button asks about the same bill")
     responses.push({ answer: "Verwijder eerst je PDF", comparison_status: "pdf-blocked", processing: "local-only" })
     await typed("Vergelijk gas")
     assert.deepEqual(requests.at(-1).body, { question: "Vergelijk gas", session_id: "separate-pdf-session" })
@@ -150,6 +157,27 @@ async function main() {
     await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent === "Verwijder").click())
     assert.doesNotMatch(document.body.textContent, /Lokale PDF-analyse|Verwijder eerst je PDF/, "Removing the PDF removes its answers")
     assert.match(document.body.textContent, /Vergelijk energieaanbiedingen/, "The chat before the PDF stays")
+    assert.equal(mic().disabled, false)
+
+    // A bill can be dragged onto Karen: same upload as the paperclip; other files are refused.
+    const drag = (type, file) => {
+        const event = new window.Event(type, { bubbles: true, cancelable: true })
+        event.dataTransfer = { types: ["Files"], files: file ? [file] : [], dropEffect: "none" }
+        document.querySelector(".ea-shell").dispatchEvent(event)
+        return event
+    }
+    await act(async () => { assert.ok(drag("dragover").defaultPrevented, "The browser does not open the dragged file") })
+    assert.ok(document.querySelector(".ea-drop"), "Dragging shows where to drop")
+    const uploadsBefore = requests.filter(r => r.url.endsWith("/api/upload")).length
+    await act(async () => { drag("drop", new window.File(["x"], "notes.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" })) })
+    assert.equal(document.querySelector(".ea-drop"), null)
+    assert.equal(requests.filter(r => r.url.endsWith("/api/upload")).length, uploadsBefore, "Other files are not uploaded")
+    assert.match(document.body.textContent, /Sleep een PDF of een foto/)
+    responses.push({ answer: "Gesleepte factuur gelezen", session_id: "dropped-pdf-session", filename: "drop.pdf", processing: "local-only" })
+    await act(async () => { drag("drop", new window.File(["synthetic"], "drop.pdf", { type: "application/pdf" })) })
+    assert.equal(requests.filter(r => r.url.endsWith("/api/upload")).length, uploadsBefore + 1, "A dropped PDF is uploaded")
+    assert.match(document.body.textContent, /drop\.pdf · Karen leest mee/)
+    await act(async () => [...document.querySelectorAll("button")].find(button => button.textContent === "Verwijder").click())
     assert.equal(mic().disabled, false)
 
     // Voice blocked: a denied microphone inside a frame names the frame, not a generic error.
