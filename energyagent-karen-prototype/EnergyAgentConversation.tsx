@@ -18,7 +18,7 @@ type SpeechRecognizer = {
 type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognizer; webkitSpeechRecognition?: new () => SpeechRecognizer }
 
 type Source = { title: string; detail?: string; url?: string; excerpt?: string }
-type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_status?: string; visual?: PriceVisual }
+type Reply = { answer: string; sources?: Source[]; suggested_sources?: Source[]; petra_speech_token?: string; feedback_token?: string; processing?: string; live_source_status?: "checked" | "failed" | "not-needed"; comparison_status?: string; visual?: PriceVisual; suggestions?: string[] }
 
 // What Karen does while she answers, shown in the chat as she works.
 const stepSummary = (steps: Step[]) => {
@@ -278,6 +278,7 @@ const css = `
   .ea h1 { margin:0; font-size:20px; line-height:1.25; letter-spacing:-.02em; }
   .ea-today { padding-top:8px; border-top:1px solid #eef2ec; color:#234f38!important; }
   .ea-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 16px 56px; }
+  .ea-chips-follow { margin:12px 0 0; }
   .ea-chip { min-height:38px; padding:8px 12px; border:1px solid #d6e3d4; border-radius:999px; color:#234f38; background:#fff; font:inherit; font-size:13px; text-align:left; cursor:pointer; }
   .ea-chip:hover { background:#f2f7ef; }
   .ea-composer { padding:10px 0 4px; background:#f6f7f3; }
@@ -1086,6 +1087,9 @@ export default function EnergyAgentConversation({
                         <button disabled={feedback === "sending"} onClick={() => void sendFeedback("down", feedbackComment)}>Verstuur feedback</button>
                     </div>}
                     {feedback === "failed" && <p className="ea-foot" role="status">Feedback versturen lukte niet. Probeer het later opnieuw.</p>}
+                    {sessionId && !busy && Boolean(reply.suggestions?.length) && <div className="ea-chips ea-chips-follow">
+                        {reply.suggestions!.slice(0, 4).map((text) => <button key={text} className="ea-chip" onClick={() => void ask(text)}>{text}</button>)}
+                    </div>}
                     {petraAudioUrl && <audio className="ea-audio" controls src={petraAudioUrl} />}
                     {petraError && <p className="ea-foot" role="status">{petraError}</p>}</>}
                 </div>

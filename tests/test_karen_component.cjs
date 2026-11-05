@@ -142,6 +142,13 @@ async function main() {
         input.dispatchEvent(new window.Event("change", { bubbles: true }))
     })
     assert.equal(mic().disabled, true, "PDF session must disable external voice")
+    responses.push({ answer: "Wie het bedrag verschuldigd is", processing: "local-only", suggestions: ["Wie moet betalen?", "Zie je aandachtspunten?"] })
+    await typed("wat nu?")
+    const followUps = [...document.querySelectorAll(".ea-chips-follow button")]
+    assert.deepEqual(followUps.map(button => button.textContent), ["Wie moet betalen?", "Zie je aandachtspunten?"], "Bill follow-ups are offered as buttons")
+    responses.push({ answer: "Op naam van de klant", processing: "local-only" })
+    await act(async () => followUps[0].click())
+    assert.deepEqual(requests.at(-1).body, { question: "Wie moet betalen?", session_id: "separate-pdf-session" }, "A button asks about the same bill")
     responses.push({ answer: "Verwijder eerst je PDF", comparison_status: "pdf-blocked", processing: "local-only" })
     await typed("Vergelijk gas")
     assert.deepEqual(requests.at(-1).body, { question: "Vergelijk gas", session_id: "separate-pdf-session" })
