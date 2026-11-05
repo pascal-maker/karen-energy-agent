@@ -499,10 +499,10 @@ def explain_invoice(invoice: Invoice, question: str = "") -> dict[str, Any]:
 FOLLOW_UP_SUGGESTIONS = ["Wie moet betalen?", "Wat betekent dit?", "Wat betaal ik op jaarbasis?", "Zie je aandachtspunten?"]
 
 _PAYER_WORDS = ("verschuldigd", "schuldig", "verschuldigde", "owe", "owes", "owed", "doit", "redevable")
-_PAYER_PHRASE = re.compile(
-    r"\bwie\s+(?:moet|betaalt|betaald|krijgt|ontvangt)\b|\baan\s+wie\b|\bnaar\s+wie\b|\bwho\s+(?:pays|has\s+to\s+pay|gets)\b"
-    r"|\bto\s+whom\b|\ba\s+qui\b|\bqui\s+(?:doit|paie)\b|\bbegunstigde\b"
-)
+# "Wie" alone is not enough: "wie krijgt een sociaal tarief" or "wie moet mijn gasmeter afsluiten" ask something else.
+_WHO = re.compile(r"\b(?:wie|who|whom|qui)\b")
+_PAY_WORD = re.compile(r"\b(?:betal\w*|betaal\w*|betaalt|betaald|geld|bedrag|stort\w*|overschrij\w*|pay\w*|paid|money|pai\w*|argent|montant)\b")
+_PAYER_SUBJECT = re.compile(r"\bhet\s+geld\b|\bwie\s+(?:moet|moeten)\s+(?:er\s+)?(?:dit|dat|het\s+)?\s*betalen\b|\b(?:aan|naar|to|a)\s+(?:wie|whom|qui)\b|\b(?:ik|je|jij|we|wij|i)\b|\bbegunstigde\b")
 _YEAR_PHRASE = re.compile(
     r"\bjaarbasis\b|\bper\s+jaar\b|\bop\s+(?:een|1)\s+jaar\b|\bin\s+(?:een|1)\s+jaar\b|\bjaarlijks\w*\b|\b12\s+maanden\b"
     r"|\btwaalf\s+maanden\b|\bper\s+year\b|\ba\s+year\b|\byearly\b|\bpar\s+an\b"
@@ -529,7 +529,9 @@ def _words(question: str) -> list[str]:
 def is_payer_request(question: str) -> bool:
     """'Wie is dit verschuldigd' (also 'vershuldigd'), 'wie moet betalen', 'aan wie betaal ik dit'."""
     plain = _plain(question)
-    return bool(_PAYER_PHRASE.search(plain)) or any(_fuzzy(word, _PAYER_WORDS, 0.8) for word in _words(question))
+    if any(_fuzzy(word, _PAYER_WORDS, 0.8) for word in _words(question)):
+        return True
+    return bool(_WHO.search(plain) and _PAY_WORD.search(plain) and (is_about_the_bill(question) or _PAYER_SUBJECT.search(plain)))
 
 
 def is_yearly_request(question: str) -> bool:
@@ -610,36 +612,85 @@ def payer_answer(invoice: Invoice, today: Any = None) -> dict[str, Any]:
     return {"answer": " ".join(lines), "sources": _sources([invoice.customer, amounts.amount_due or amounts.credit, invoice.due_date, supplier])}
 
 
-def yearly_answer(invoice: Invoice) -> dict[str, Any]:
-    """Twelve months of the same advance, or the yearly total of the new advance; never a predicted settlement."""
+_GAS_WORD = re.compile(r"\b(?:aard)?gas\w*")
+_ELECTRICITY_WORD = re.compile(r"\b(?:elektric\w*|electric\w*|stroom\w*|kwh)")
+
+
+def _asked_energy(question: str) -> str | None:
+    """The one energy a question names ("wat kost gas per jaar"), or None for both or neither."""
+    plain = _plain(question)
+    gas, power = bool(_GAS_WORD.search(plain)), bool(_ELECTRICITY_WORD.search(plain))
+    return "gas" if gas and not power else "electricity" if power and not gas else None
+
+
+def yearly_answer(invoice: Invoice, question: str = "") -> dict[str, Any]:
+    """A year of the same advance, or the yearly total of the new advance, for the energy asked; never a predicted
+    settlement, and never a total when the bill shows the advance of only one of the energies it covers."""
     amounts = invoice.amounts
+    energy = _asked_energy(question)
+    name = _DUTCH_ENERGIES[energy] if energy else ""
     per_year = _advance_frequency(invoice)
+    caveat = ("Dat is een berekening van Karen, geen voorspelling van je echte energiekosten: of je bijbetaalt of geld "
+              "terugkrijgt, zie je pas op je jaarafrekening. Upload die gerust, dan vergelijk ik ze.")
+    if per_year and energy:
+        line = next((row for row in invoice.advance_lines if row.energy == energy), None)
+        if line is None:
+            return {"answer": f"Op deze factuur vond ik geen apart voorschot voor {name}, dus een bedrag per jaar daarvoor kan ik niet geven.",
+                    "sources": []}
+        amount = Decimal(line.amount_eur)
+        vat = {True: " incl. btw", False: " excl. btw", None: ""}[line.vat_included]
+        extra = " Op de factuur komt daar nog btw bij." if line.vat_included is False else ""
+        return {
+            "answer": (f"Betaal je een jaar lang hetzelfde voorschot voor {name}, dan is dat {per_year} × {_euro(str(amount))} = "
+                       f"**{_euro(str(amount * per_year))}{vat} per jaar**{_page(line)}.{extra} {caveat}"),
+            "sources": _sources([line, invoice.document_type_evidence]),
+        }
     if per_year and amounts.amount_due and Decimal(amounts.amount_due.value_eur) > 0:
         amount = Decimal(amounts.amount_due.value_eur)
         return {
-            "answer": (
-                f"Betaal je een jaar lang hetzelfde voorschot, dan is dat {per_year} × {_euro(str(amount))} = "
-                f"**{_euro(str(amount * per_year))} aan voorschotten per jaar**{_page(amounts.amount_due)}. "
-                "Dat is een berekening van Karen, geen voorspelling van je echte energiekosten: of je bijbetaalt of geld "
-                "terugkrijgt, zie je pas op je jaarafrekening. Upload die gerust, dan vergelijk ik ze."
-            ),
+            "answer": (f"Betaal je een jaar lang hetzelfde voorschot, dan is dat {per_year} × {_euro(str(amount))} = "
+                       f"**{_euro(str(amount * per_year))} aan voorschotten per jaar**{_page(amounts.amount_due)}. {caveat}"),
             "sources": _sources([amounts.amount_due, invoice.document_type_evidence]),
         }
-    advances = invoice.new_advances
-    if advances and all(advance.frequency for advance in advances):
-        yearly = sum(Decimal(advance.amount_eur) * _PER_YEAR[advance.frequency] for advance in advances)
+    advances = [advance for advance in invoice.new_advances if advance.frequency]
+    if advances and len(advances) == len(invoice.new_advances):
+        if energy:
+            chosen = [advance for advance in advances if advance.energy == energy]
+            if not chosen:
+                return {"answer": f"Op deze factuur vond ik geen apart nieuw voorschot voor {name}, dus een bedrag per jaar daarvoor kan ik niet geven.",
+                        "sources": []}
+        else:
+            covered = {advance.energy for advance in advances}
+            consumed = {kind for kind in ("electricity", "gas") if getattr(invoice.consumption, kind)}
+            if not (covered == {None} and len(advances) == 1 or consumed <= covered):
+                # Only one energy's advance was read: its yearly amount is not what the bill costs per year.
+                found = advances[0]
+                part = _DUTCH_ENERGIES.get(found.energy or "", "één energie")
+                missing = " en ".join(_DUTCH_ENERGIES[kind] for kind in sorted(consumed - covered))
+                return {
+                    "answer": (f"Ik vond op deze factuur alleen het nieuwe voorschot voor {part}: "
+                               f"{_euro(found.amount_eur)} {_DUTCH_FREQUENCIES[found.frequency]}{_page(found)}. "
+                               f"Dat voor {missing or 'de andere energie'} vond ik niet, dus een totaal per jaar kan ik niet geven."),
+                    "sources": _sources([found]),
+                }
+            chosen = advances
+        yearly = sum(Decimal(advance.amount_eur) * _PER_YEAR[advance.frequency] for advance in chosen)
+        what = f"Je nieuwe voorschot voor {name}" if energy else "Je nieuwe voorschot"
         return {
-            "answer": (f"Je nieuwe voorschot komt op **{_euro(str(yearly))} per jaar**{_page(advances[0])}. "
+            "answer": (f"{what} komt op **{_euro(str(yearly))} per jaar**{_page(chosen[0])}. "
                        "Dat is een berekening van Karen uit het voorschot op de factuur."),
-            "sources": _sources(list(advances)),
+            "sources": _sources(list(chosen)),
         }
     cost = amounts.total_energy_cost
-    if cost and _covers_a_year(invoice.billing_period):
+    if cost and _covers_a_year(invoice.billing_period) and not energy:
         return {
             "answer": (f"Over de periode {invoice.billing_period.printed} kostte je energie {_euro(cost.value_eur)}{_page(cost)}. "
                        "Dat is ongeveer een jaar; blijven verbruik en prijzen gelijk, dan is dat een redelijke schatting per jaar."),
             "sources": _sources([cost, invoice.billing_period]),
         }
+    if energy:
+        return {"answer": f"Op deze factuur staat geen apart bedrag voor {name}, dus een bedrag per jaar daarvoor kan ik niet geven.",
+                "sources": []}
     return {
         "answer": ("Met deze factuur alleen kan ik geen bedrag per jaar berekenen: ze toont geen vast voorschot per maand en "
                    "geen volledig jaar. Upload je jaarafrekening, dan reken ik het uit."),

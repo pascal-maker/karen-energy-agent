@@ -913,7 +913,7 @@ def _answer_uploaded(
         if is_payer_request(question):
             return payer_answer(invoice)
         if is_yearly_request(question) and _COST_WORDS.search(question):
-            return yearly_answer(invoice)
+            return yearly_answer(invoice, question)
         if is_insight_request(question):
             return insights_answer(invoice)
         if is_summary_request(question):

@@ -44,7 +44,7 @@ def test_payment_status_stays_unknown_before_and_after_the_debit_date():
 
 def test_money_back_and_nothing_due_keep_the_direction():
     assert "Kanaal Energie betaalt je € 150,00 terug" in _ask("03-nl-tegoed.pdf", "wie is dit verschuldigd")["answer"]
-    assert "niets meer verschuldigd" in _ask("05-nl-nulafrekening.pdf", "wie moet betalen")["answer"]
+    assert "niets meer verschuldigd" in _ask("05-nl-nulafrekening.pdf", "wie moet er betalen?")["answer"]
 
 
 @pytest.mark.parametrize("question", ["wat betaal ik op jaarbasis?", "wat kost dit per jaar?"])
@@ -83,3 +83,31 @@ def test_an_unclear_question_about_the_bill_asks_back_and_a_general_one_leaves_t
     unclear = _ask(ADVANCE, "en hiervan?")
     assert unclear.get("found", True) and unclear["suggestions"] == FOLLOW_UP_SUGGESTIONS
     assert _ask(ADVANCE, "wie wint Real of Barcelona?")["found"] is False
+
+
+@pytest.mark.parametrize("question", ["Wie krijgt een sociaal tarief?", "Wie moet mijn gasmeter afsluiten?", "Wie betaalt de netkosten?"])
+def test_other_who_questions_are_not_about_who_owes_the_bill(question):
+    from luminus_harness.invoice_schema import is_payer_request
+
+    assert not is_payer_request(question)
+
+
+def test_a_yearly_question_about_one_energy_uses_that_energys_advance():
+    gas = _ask(ADVANCE, "Wat kost gas per jaar?")["answer"]
+    assert "12 × € 105,66 = **€ 1.267,92 excl. btw per jaar**" in gas and "2.148" not in gas
+    power = _ask(ADVANCE, "wat betaal ik per jaar aan stroom?")["answer"]
+    assert "12 × € 63,21 = **€ 758,52 excl. btw per jaar**" in power
+    assert "apart bedrag voor gas" in _ask("08-fr-b2b-annuelle.pdf", "wat kost gas per jaar?")["answer"]
+
+
+def test_one_energys_new_advance_is_not_a_yearly_total_for_both():
+    from luminus_harness.invoice_schema import NewAdvance, yearly_answer
+
+    chunks = load_pdf_chunks_from_bytes((FIXTURES / "01-nl-afrekening-gegroepeerd.pdf").read_bytes(), source="01")
+    invoice = analyze_invoice_chunks(chunks)["invoice"]
+    only_power = NewAdvance(source="01", page=1, excerpt="Nieuw voorschot elektriciteit € 50,00 per maand",
+                            energy="electricity", frequency="monthly", amount_eur="50.00", previous_amount_eur=None)
+    answer = yearly_answer(invoice.model_copy(update={"new_advances": [only_power]}), "wat betaal ik per jaar?")["answer"]
+    assert "alleen het nieuwe voorschot voor elektriciteit" in answer and "gas vond ik niet" in answer
+    assert "600" not in answer
+    assert "€ 600,00 per jaar" in yearly_answer(invoice.model_copy(update={"new_advances": [only_power]}), "wat kost stroom per jaar?")["answer"]
