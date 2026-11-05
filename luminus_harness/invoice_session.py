@@ -209,7 +209,8 @@ class InvoiceSession:
             where = f"in de tabel „{caption}“ op PDF-pagina {page}" if caption else f"in de tabel op PDF-pagina {page}"
             answer = f"Dit staat {where}:\n" + "\n".join(f"- {_focus(line, question)}" for line in shown)
         elif top.unit.kind in ("fields", "address"):
-            answer = f"Op de factuur staat: {'; '.join(shown)} (PDF-pagina {page})."
+            quoted = "; ".join(f"„{line.rstrip('.')}“" for line in shown)
+            answer = f"Op de factuur staat {quoted} (PDF-pagina {page})."
         else:
             answer = f"Op PDF-pagina {page} staat: „{' '.join(shown)}“"
         return {"answer": answer, "sources": [_source(self.filename, unit, text) for unit, text in zip(units, shown)]}

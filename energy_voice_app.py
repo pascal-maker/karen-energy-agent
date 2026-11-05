@@ -12,6 +12,7 @@ import json
 import os# used to load the environment variables
 import re# used to recognize electricity price questions
 import secrets
+import threading
 import time
 import uuid
 from collections import OrderedDict, deque
@@ -712,8 +713,6 @@ api_app = FastAPI(title="EnergyAgent Karen API", version="0.1.0")
 async def _load_invoice_embeddings() -> None:
     """Load the local embedding model (about 220 MB, downloaded once) in the background, so the first visitor
     with an invoice does not wait for it; without it, invoice questions use word matching only."""
-    import threading
-
     threading.Thread(target=warm_up_invoice_embeddings, name="invoice-embeddings", daemon=True).start()
 configured_origins = [
     origin.strip() for origin in os.getenv("FRAMER_ALLOWED_ORIGINS", "").split(",")
@@ -876,6 +875,7 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
     conversation = await asyncio.to_thread(session_from_upload, chunks, analysis, pages, filename)
     analysis = conversation.analysis
     session_id = _store_upload_session(chunks, analysis, filename, conversation)
+    threading.Thread(target=conversation.index.prepare, name="invoice-index", daemon=True).start()
     return {
         "session_id": session_id,
         "filename": filename,

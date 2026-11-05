@@ -33,10 +33,9 @@ _STOP = frozenset(
     kan kun kunt moet moeten mag wil zou zal voor met naar bij of dat dit die deze er aan als ook nog niet geen wel
     te om over uit tot al dan maar zo hier daar staat staan stond the a an of to is are what how where when who which
     my i le la les un une des du et est sont ce cette mon ma mes quel quelle quels combien où quand pour par sur dans
-    eens even graag aub alsjeblieft please zeg vertel leg toon geef laat weten gaat""".split()
+    eens even graag aub alsjeblieft please zeg vertel leg toon geef laat weten gaat doen gebeurt gebeuren nodig lang"""
+    .split()
 )
-# Subject words that are on every bill: they rank a passage but never prove it answers the question.
-_WEAK = frozenset("factuur factur rekening bedrag betaal betal kost koste prijs euro totaal".split())
 
 
 def _fold(text: str) -> str:
@@ -47,6 +46,10 @@ def _stem(token: str) -> str:
     """A five-letter prefix after folding doubled vowels: betaal/betalen, verhuist/verhuizen, opzeggen/opzegtermijn."""
     token = re.sub(r"([aeiou])\1", r"\1", token)
     return token[:5]
+
+
+# Subject words that are on every bill: they rank a passage but never prove it answers the question.
+_WEAK = frozenset(_stem(word) for word in "factuur facture rekening bedrag betaal betalen kost kosten prijs euro totaal".split())
 
 
 def terms(text: str) -> list[str]:
@@ -224,6 +227,7 @@ class InvoiceIndex:
     _terms: list[list[str]] = field(default_factory=list, repr=False)
     _vectors: list[list[float]] | None = field(default=None, repr=False)
     _embedded: bool = field(default=False, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
         self._terms = [terms(unit.words) for unit in self.units]
@@ -247,10 +251,16 @@ class InvoiceIndex:
         self._ensure_vectors()
         return self._vectors is not None
 
+    def prepare(self) -> None:
+        """Embed every unit now (about 50 ms per unit on a small CPU); the app calls this in the background
+        right after an upload, so the first question rarely waits for it."""
+        self._ensure_vectors()
+
     def _ensure_vectors(self) -> None:
-        if not self._embedded:
-            self._embedded = True
-            self._vectors = embed([unit.context for unit in self.units])
+        with self._lock:
+            if not self._embedded:
+                self._vectors = embed([unit.context for unit in self.units])
+                self._embedded = True
 
     def _bm25(self, query: list[str], index: int) -> float:
         unit_terms = self._terms[index]
@@ -306,6 +316,8 @@ class InvoiceIndex:
         kind = expected_value(question) if kind is None else kind
         wanted = len(content_terms(question))
         needed = math.ceil(wanted * 2 / 3) / wanted if wanted else 1.0
+        if kind not in ("any", "amount"):
+            needed = min(needed, 0.5)  # the kind of value asked for is evidence too: half the subject suffices
         supported = []
         for hit in self.search(question):
             if not has_value(hit.unit.text, kind):
