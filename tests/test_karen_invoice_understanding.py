@@ -176,3 +176,26 @@ def test_passages_shown_stay_masked():
     shown = _shown(reply)
     for private in ("000000000000000231", "TEST-KLANT-023", "TEST-2026-023"):
         assert private not in shown
+
+
+def test_the_app_keeps_one_conversation_per_upload(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import energy_voice_app
+    from luminus_harness.rate_limit import SlidingWindowRateLimiter
+
+    monkeypatch.setattr(energy_voice_app, "_api_rate_limiter", SlidingWindowRateLimiter(requests=100, window_seconds=60, max_clients=100))
+    client = TestClient(energy_voice_app.api_app)
+    upload = client.post("/api/upload", files={"file": (DELIVERY_ONLY, (FIXTURES / DELIVERY_ONLY).read_bytes(), "application/pdf")}).json()
+    assert upload["invoice"]["schema_version"] == "1.1"
+    assert upload["invoice"]["addresses"][0]["kind"] == "delivery"
+    other = client.post("/api/upload", files={"file": (NO_ADDRESS, (FIXTURES / NO_ADDRESS).read_bytes(), "application/pdf")}).json()
+
+    def ask(session: str, question: str) -> dict:
+        return client.post("/api/answer", json={"question": question, "session_id": session}).json()
+
+    assert "Joy Doe" in ask(upload["session_id"], "wie is dit verschuldigd?")["answer"]
+    answer = ask(upload["session_id"], "en waar woont ze?")["answer"]
+    assert "Zonnestraat 12" in answer and "niet bevestigen" in answer
+    elsewhere = ask(other["session_id"], "en waar woont ze?")
+    assert "Zonnestraat" not in elsewhere["answer"] and elsewhere["processing"] == "local-only"

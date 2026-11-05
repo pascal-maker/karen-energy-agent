@@ -9,3 +9,5 @@ python-multipart>=0.0.20,<1
 uvicorn>=0.30,<1
 pytesseract>=0.3.10,<1
 langfuse>=5.1,<6
+# Local embedding model for questions about an uploaded invoice (CPU, onnxruntime; no text leaves the server).
+fastembed==0.7.3

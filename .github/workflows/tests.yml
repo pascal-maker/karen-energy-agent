@@ -28,4 +28,13 @@ jobs:
 
       - run: pip install -r requirements/energy-voice-demo.txt pytest pytest-asyncio httpx
 
+      # The invoice retrieval tests use a small local embedding model (about 220 MB from Hugging Face),
+      # downloaded once and cached; only synthetic test invoices are embedded.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/karen-embeddings
+          key: karen-embeddings-paraphrase-multilingual-minilm-l12-v2-q
+
       - run: python -m pytest -q tests -p no:warnings
+        env:
+          KAREN_EMBED_CACHE: /home/runner/.cache/karen-embeddings
