@@ -544,6 +544,12 @@ def is_payer_request(question: str) -> bool:
     return not other
 
 
+def is_other_payer_question(question: str) -> bool:
+    """'Wie betaalt mijn netkosten', 'wie moet betalen voor het afsluiten van mijn gasmeter': who pays something else."""
+    plain = _plain(question)
+    return bool(_WHO.search(plain) and _PAY_WORD.search(plain)) and not is_payer_request(question)
+
+
 def is_yearly_request(question: str) -> bool:
     return bool(_YEAR_PHRASE.search(_plain(question)))
 

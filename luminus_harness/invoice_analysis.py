@@ -903,7 +903,7 @@ def _answer_uploaded(
     from .invoice_model import mask_invoice_text
     from .invoice_schema import (
         build_invoice, clarify_answer, explain_invoice, insights_answer, is_about_the_bill, is_explanation_request,
-        is_insight_request, is_payer_request, is_summary_request, is_yearly_request, payer_answer, summarize_invoice,
+        is_insight_request, is_other_payer_question, is_payer_request, is_summary_request, is_yearly_request, payer_answer, summarize_invoice,
         yearly_answer,
     )
 
@@ -912,6 +912,9 @@ def _answer_uploaded(
     if invoice is not None:
         if is_payer_request(question):
             return payer_answer(invoice)
+        if is_other_payer_question(question):
+            # "Wie betaalt mijn netkosten?": a general question about who pays something else, not about this bill.
+            return {"answer": "Deze vraag gaat niet over je factuur.", "sources": [], "found": False}
         if is_yearly_request(question) and _COST_WORDS.search(question):
             return yearly_answer(invoice, question)
         if is_insight_request(question):

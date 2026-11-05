@@ -125,4 +125,4 @@ def test_payer_questions_about_the_bill_itself_are_still_recognised(question):
 
 def test_a_payment_question_about_something_else_leaves_the_payer_answer_alone():
     for question in ("Wie betaalt mijn netkosten?", "Wie moet betalen voor het afsluiten van mijn gasmeter?"):
-        assert "verschuldigd aan" not in _ask(ADVANCE, question)["answer"]
+        assert _ask(ADVANCE, question)["found"] is False, "A general question, answered without the bill"
