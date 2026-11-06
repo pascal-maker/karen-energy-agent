@@ -1,4 +1,4 @@
-"""Writes the fictional invoices 23-25 in tests/fixtures/invoices (addresses, tables, contract text).
+"""Writes the fictional invoices 23-26 in tests/fixtures/invoices (addresses, tables, contract text).
 
 Every name, address and number is made up. Run: python3 scripts/make_address_invoices.py
 """
@@ -44,6 +44,12 @@ INVOICES = {
         *HEADER, "Uw jaarafrekening", "Leverancier: Kanaal Energie — FICTIEF", "Klant: Lee Doe",
         "Klantnummer: TEST-KLANT-025", "Factuurnummer: TEST-2026-025", "Factuurdatum: 10/02/2026",
         "Factuurperiode: 01/01/2025 tot 31/12/2025", *TABLE, *FOOTER,
+    ],
+    # The amount due equals the gas row excl. btw (€ 700,00): "dit bedrag" must keep the field it came from.
+    "26-nl-gelijke-bedragen.pdf": [
+        *HEADER, "Uw jaarafrekening", "Leverancier: Kanaal Energie — FICTIEF", "Klant: Joy Doe",
+        *[line.replace("€ 1.100,00", "€ 572,00").replace("Totaal te betalen: € 172,00", "Totaal te betalen: € 700,00") for line in TABLE],
+        *FOOTER,
     ],
 }
 
