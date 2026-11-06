@@ -255,3 +255,45 @@ def test_this_amount_is_the_value_asked_for_not_the_first_amount_in_the_answer()
     total = _session(DELIVERY_ONLY)
     total.ask("wat kost gas inclusief btw?")
     assert "Ja" in total.ask("is dit bedrag inclusief btw?")["answer"]
+
+
+# --- Review of 208bff0 ------------------------------------------------------------------------------
+
+def _text_session(text: str):
+    from luminus_harness.invoice_session import open_text_session
+
+    return open_text_session(text, "tekst.txt")
+
+
+def test_words_around_a_fact_do_not_make_it_answer_the_question():
+    session = _text_session("Gas: €100,00 excl. btw\nBtw 6%: €6,00\nTotaal te betalen: €106,00")
+    answer = session.ask("hoeveel btw betaal ik op gas?")["answer"]
+    assert "106,00" not in answer.split("Wat er wel staat")[0], answer
+    assert "6,00" in answer
+
+
+def _equal_amounts_pdf() -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    import io
+
+    lines = [
+        "Kanaal Energie — FICTIEF", "Leverancier: Kanaal Energie — FICTIEF", "Klant: Joy Doe",
+        "Samenstelling van uw factuur", "Omschrijving", "Bedrag excl. btw", "Btw 6%", "Bedrag incl. btw",
+        "Elektriciteit", "€ 500,00", "€ 30,00", "€ 530,00", "Gas", "€ 700,00", "€ 42,00", "€ 742,00",
+        "Totale energiekosten: € 1.272,00", "Voorschotten betaald: € 572,00", "Totaal te betalen: € 700,00",
+        "Vervaldatum: 10/03/2026",
+    ]
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=A4, invariant=True)
+    for index, line in enumerate(lines):
+        page.drawString(60, 800 - index * 16, line)
+    page.save()
+    return buffer.getvalue()
+
+
+def test_an_amount_that_also_stands_in_another_field_keeps_the_field_it_came_from():
+    session = open_invoice_session(_equal_amounts_pdf(), "gelijk.pdf")
+    assert "€ 700,00" in session.ask("hoeveel moet ik betalen?")["answer"]
+    answer = session.ask("is dit bedrag inclusief btw?")["answer"]
+    assert "Totaal te betalen" in answer and "Gas" not in answer, answer

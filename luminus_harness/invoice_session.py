@@ -96,22 +96,49 @@ class InvoiceSession:
             # amounts after it (a due date's sentence, a calculation) are context. Two different amounts in the
             # leading sentence make "dit bedrag" ambiguous.
             lead = re.split(r"(?<=[.!?])\s", answer, maxsplit=1)[0]
-            refs = [self._ref_for(found) for found in dict.fromkeys(_EURO.findall(lead))]
+            amounts = list(dict.fromkeys(_EURO.findall(lead)))
             if _CALCULATION.search(lead):
-                refs = refs[-1:]  # "12 × € 179,00 = € 2.148,00": the result
+                amounts = amounts[-1:]  # "12 × € 179,00 = € 2.148,00": the result
+            excerpts = [source.get("excerpt", "") for source in result.get("sources", [])]
+            refs = [ref for amount in amounts for ref in self._refs_for(amount, excerpts)]
         customer = self.invoice.customer.value if self.invoice.customer else ""
         named = bool(customer) and customer.lower() in answer.lower()
         self.turns.append(Turn(question, answer, tuple(refs), named))
         del self.turns[:-MAX_TURNS]
 
-    def _ref_for(self, amount: str) -> AmountRef:
-        """The field on the bill that holds this amount: a table cell when one does, else the line."""
-        value = _decimal(amount)
+    def _refs_for(self, amount: str, excerpts: list[str]) -> list[AmountRef]:
+        """The field this amount was read from. The evidence passage of the answer decides when the same amount
+        stands in more than one field (€ 700,00 due and € 700,00 gas excl. btw); without evidence for one,
+        every field holding it is returned and "dit bedrag" asks which."""
+        fields = self._fields_holding(_decimal(amount))
+        evidenced = [field for field in fields if any(_label_before_value(field[1], field[2], excerpt) for excerpt in excerpts)]
+        chosen = evidenced[:1] or fields or [(None, "", "")]
+        return [AmountRef(amount, _field_text(unit, cell) if unit else "", column, unit.page if unit else 0) for unit, column, cell in chosen]
+
+    def _fields_holding(self, value: Any) -> list[tuple[Any, str, str]]:
+        """(unit, column or label, cell) for every field whose value is this amount, or this text."""
+        found = []
         for unit in self.index.units:
             for column, cell in _cells(unit.text):
-                if value in {_decimal(found) for found in _AMOUNT_IN_TEXT.findall(cell)}:
-                    return AmountRef(amount, cell if not column else f"{_row_label(unit.text)} — {column}: {cell}", column, unit.page)
-        return AmountRef(amount, "", "", 0)
+                if isinstance(value, Decimal):
+                    holds = value in {_decimal(raw) for raw in _AMOUNT_IN_TEXT.findall(cell)}
+                else:
+                    holds = bool(str(value).strip()) and _fold(str(value)) in _fold(cell)
+                if holds:
+                    found.append((unit, column, cell))
+        return found
+
+    def _fact_fields(self, fact_answer: dict[str, Any]) -> list[tuple[Any, str, str]]:
+        """The fields the fact answer was read from: its facts' values, found where their evidence puts them."""
+        fields = []
+        for source in fact_answer.get("sources", []):
+            fact = next((fact for fact in self.facts.values() if isinstance(fact, dict) and fact.get("excerpt") == source.get("excerpt")), None)
+            if fact is None or isinstance(fact.get("value"), (list, dict)):
+                continue
+            holding = self._fields_holding(fact["value"])
+            evidenced = [field for field in holding if _label_before_value(field[1], field[2], fact["excerpt"])]
+            fields.extend(evidenced[:1] or holding[:1])
+        return fields
 
     # --- people and addresses ----------------------------------------------------------------------
 
@@ -186,7 +213,7 @@ class InvoiceSession:
 
     def _this_amount_answer(self, question: str) -> dict[str, Any]:
         refs = next((turn.amounts for turn in reversed(self.turns[-2:]) if turn.amounts), ())
-        distinct = list({_decimal(ref.amount): ref for ref in refs}.values())
+        distinct = list({(_decimal(ref.amount), ref.field): ref for ref in refs}.values())
         if not distinct:
             return {"answer": "Over welk bedrag gaat het? Noem het bedrag of de regel op de factuur, dan zoek ik het op.", "sources": []}
         if len(distinct) > 1:
@@ -229,13 +256,24 @@ class InvoiceSession:
             if kind in _MUST_HOLD and not has_value(fact_text, kind):
                 return self._format(question, hits) if hits else _missing(kind)
             wanted = content_terms(question)
-            covered = _covered(wanted, fact_text)
+            # Only the fields the facts were read from count, with Karen's own sentence; the evidence passage
+            # around them ("Gas: … Btw 6%: … Totaal te betalen: €106") would make any fact look relevant.
+            fields = self._fact_fields(fact_answer)
+            covered = _covered(wanted, fact_answer["answer"] + " " + " ".join(_field_label(column, cell) for _, column, cell in fields))
             if hits and hits[0].coverage > covered:
                 return self._format(question, hits)
             if wanted and covered < _needed(len(wanted)):
                 # The fact reader matched a word ("betaal") but its value is about something else: "hoeveel
                 # btw betaal ik op gas" is not answered by the amount due. Say so, with what the bill does show.
                 return self._not_on_the_bill(question, kind)
+            lead = re.split(r"(?<=[.!?])\s", fact_answer["answer"], maxsplit=1)[0]
+            amounts = list(dict.fromkeys(_EURO.findall(lead)))
+            if len(amounts) == 1:
+                # "dit bedrag" afterwards is this value in the field it was read from, not an equal amount elsewhere.
+                value = _decimal(amounts[0])
+                field = next((field for field in fields if value in {_decimal(raw) for raw in _AMOUNT_IN_TEXT.findall(field[2])}), None)
+                if field is not None:
+                    fact_answer["refs"] = [AmountRef(amounts[0], _field_text(field[0], field[2]), field[1], field[0].page)]
             return None
         if hits:
             return self._format(question, hits)
@@ -268,12 +306,12 @@ class InvoiceSession:
             where = f"in de tabel „{caption}“ op PDF-pagina {page}" if caption else f"in de tabel op PDF-pagina {page}"
             answer = f"Dit staat {where}:\n" + "\n".join(f"- {_focus(line, question)}" for line in shown)
             refs = [
-                AmountRef(found, f"{_row_label(unit.text)} — {column}: {cell}", column, unit.page)
+                AmountRef(found, _field_text(unit, cell), column, unit.page)
                 for unit in units for column, cell in _focused_cells(unit.text, question)
                 for found in _EURO.findall(cell)
             ]
             if not refs:  # no column asked for: every amount in the rows shown, so "dit bedrag" asks which
-                refs = [AmountRef(found, f"{_row_label(unit.text)} — {column}: {cell}" if column else cell, column, unit.page)
+                refs = [AmountRef(found, _field_text(unit, cell), column, unit.page)
                         for unit in units for column, cell in _cells(unit.text) for found in _EURO.findall(cell)]
             return {"answer": answer, "sources": [_source(self.filename, unit, text) for unit, text in zip(units, shown)], "refs": refs}
         elif top.unit.kind in ("fields", "address"):
@@ -474,6 +512,29 @@ def _focus(row: str, question: str) -> str:
         return row
     label, cells = row.split(" — ", 1)
     return f"{label} — " + " · ".join(f"**{part}**" if part.strip() in focused else part for part in cells.split(" · "))
+
+
+def _field_text(unit: Any, cell: str) -> str:
+    row = _row_label(unit.text)
+    return f"{row} — {cell}" if row else cell
+
+
+def _field_label(column: str, cell: str) -> str:
+    return column or cell
+
+
+def _label_before_value(column: str, cell: str, excerpt: str) -> bool:
+    """Whether the evidence passage prints this field's label right before its value ("Totaal te betalen: € 700,00")."""
+    if not column or not excerpt:
+        return False
+    raw = cell.split(":", 1)[1] if ":" in cell else cell
+    digits = re.sub(r"\D", "", raw)
+    folded, label = _fold(excerpt), _fold(column)
+    for match in re.finditer(re.escape(label), folded):
+        following = re.sub(r"\D", "", folded[match.end():match.end() + 25])
+        if digits and following.startswith(digits):
+            return True
+    return False
 
 
 def _covered(wanted: set[str], text: str) -> float:
