@@ -14,6 +14,7 @@ and account numbers) stay masked unless the question asks for that identifier.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -23,7 +24,7 @@ from typing import Any, Literal
 from .invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
 from .invoice_model import _WORDS, mask_identifiers
 from .invoice_retrieval import Hit, InvoiceIndex, content_terms, embed, expected_value, has_value, terms
-from .invoice_schema import Invoice, build_invoice
+from .invoice_schema import FOLLOW_UP_SUGGESTIONS, Invoice, build_invoice
 from .invoice_sections import Section, addresses_from, build_sections, page_texts_from_pdf
 from .knowledge import KnowledgeChunk, load_pdf_chunks_from_bytes
 from .photo_invoice import chunks_from_text
@@ -33,10 +34,20 @@ AddressIntent = Literal["residence", "delivery", "billing", "address"]
 
 
 @dataclass(frozen=True)
+class AmountRef:
+    """An amount an answer gave as its answer, with the field it was read from."""
+
+    amount: str  # as printed: "€ 42,00", "179,00 €"
+    field: str  # the line or table cell it stands in: "Gas — Btw 6%: € 42,00", "Totaal te betalen: € 172,00"
+    column: str = ""  # the table column or field label: "Btw 6%", "Totaal te betalen"
+    page: int = 0
+
+
+@dataclass(frozen=True)
 class Turn:
     question: str
     answer: str
-    amount: str | None  # the first euro amount the answer named, as printed ("€ 179,00")
+    amounts: tuple[AmountRef, ...]  # the values the answer was about; "dit bedrag" means one of these
     named_customer: bool  # the answer named the bill's customer
 
 
@@ -64,9 +75,10 @@ class InvoiceSession:
     def ask(self, question: str) -> dict[str, Any]:
         question = " ".join(question.split())
         result = self._answer(question)
+        refs = result.pop("refs", None)
         for source in result.get("sources", []):
             source.pop("masked", None)
-        self._remember(question, result)
+        self._remember(question, result, refs)
         return result
 
     def _answer(self, question: str) -> dict[str, Any]:
@@ -77,13 +89,29 @@ class InvoiceSession:
             return self._this_amount_answer(question)
         return answer_uploaded_pdf_question(question, self.chunks, self.facts, self.invoice, passages=self._passages)
 
-    def _remember(self, question: str, result: dict[str, Any]) -> None:
+    def _remember(self, question: str, result: dict[str, Any], refs: list[AmountRef] | None) -> None:
         answer = str(result.get("answer", ""))
-        amount = _EURO.search(answer)
+        if refs is None:
+            # A fact answer names its value first ("Volgens deze factuur moet je nog € 172,00 betalen"); the
+            # amounts after it (a due date's sentence, a calculation) are context. Two different amounts in the
+            # leading sentence make "dit bedrag" ambiguous.
+            lead = re.split(r"(?<=[.!?])\s", answer, maxsplit=1)[0]
+            refs = [self._ref_for(found) for found in dict.fromkeys(_EURO.findall(lead))]
+            if _CALCULATION.search(lead):
+                refs = refs[-1:]  # "12 × € 179,00 = € 2.148,00": the result
         customer = self.invoice.customer.value if self.invoice.customer else ""
         named = bool(customer) and customer.lower() in answer.lower()
-        self.turns.append(Turn(question, answer, amount.group(0) if amount else None, named))
+        self.turns.append(Turn(question, answer, tuple(refs), named))
         del self.turns[:-MAX_TURNS]
+
+    def _ref_for(self, amount: str) -> AmountRef:
+        """The field on the bill that holds this amount: a table cell when one does, else the line."""
+        value = _decimal(amount)
+        for unit in self.index.units:
+            for column, cell in _cells(unit.text):
+                if value in {_decimal(found) for found in _AMOUNT_IN_TEXT.findall(cell)}:
+                    return AmountRef(amount, cell if not column else f"{_row_label(unit.text)} — {column}: {cell}", column, unit.page)
+        return AmountRef(amount, "", "", 0)
 
     # --- people and addresses ----------------------------------------------------------------------
 
@@ -157,27 +185,33 @@ class InvoiceSession:
     # --- "dit bedrag" ------------------------------------------------------------------------------
 
     def _this_amount_answer(self, question: str) -> dict[str, Any]:
-        earlier = next((turn.amount for turn in reversed(self.turns[-2:]) if turn.amount), None)
-        if earlier is None:
+        refs = next((turn.amounts for turn in reversed(self.turns[-2:]) if turn.amounts), ())
+        distinct = list({_decimal(ref.amount): ref for ref in refs}.values())
+        if not distinct:
             return {"answer": "Over welk bedrag gaat het? Noem het bedrag of de regel op de factuur, dan zoek ik het op.", "sources": []}
-        value = _decimal(earlier)
-        holding = [unit for unit in self.index.units if value in {_decimal(found) for found in _AMOUNT_IN_TEXT.findall(unit.text)}]
-        if not holding:
-            return {"answer": f"Ik vond {earlier} niet terug als regel op de factuur.", "sources": []}
-        holding.sort(key=lambda unit: bool(_VAT_STATE.search(unit.words)), reverse=True)
-        unit = holding[0]
-        shown = _shown(unit, question, self._names())
-        source = [_source(self.filename, unit, shown)]
-        if re.search(r"(?i)btw|tva|vat", question):
-            state = _VAT_STATE.search(unit.words)
-            if state is None:
-                return {"answer": f"Bij {earlier} staat niet of het inclusief of exclusief btw is: „{shown}“ (PDF-pagina {unit.page}).", "sources": source}
-            included = state.group(1).lower().startswith(("incl", "tvac", "ttc"))
-            asked_included = not re.search(r"(?i)\bexcl|exclusief|hors|htva", question)
-            verdict = "Ja" if included == asked_included else "Nee"
-            what = "inclusief" if included else "exclusief"
-            return {"answer": f"{verdict}: {earlier} staat op de factuur als „{shown}“, dus {what} btw (PDF-pagina {unit.page}).", "sources": source}
-        return {"answer": f"{earlier} staat op de factuur als „{shown}“ (PDF-pagina {unit.page}).", "sources": source}
+        if len(distinct) > 1:
+            options = "; ".join(f"{ref.amount} ({ref.field or ref.column})" if (ref.field or ref.column) else ref.amount for ref in distinct[:4])
+            return {"answer": f"Welk bedrag bedoel je? Mijn vorige antwoord noemde er meer: {options}.", "sources": []}
+        ref = distinct[0]
+        if not ref.field:
+            return {"answer": f"Ik vond {ref.amount} niet terug als regel op de factuur.", "sources": []}
+        shown = mask_identifiers(ref.field, self._names())
+        page = f" (PDF-pagina {ref.page})" if ref.page else ""
+        source = [{"title": self.filename, "detail": f"PDF · pagina {ref.page}", "excerpt": shown, "masked": True}]
+        refs_out = [ref]
+        if not re.search(r"(?i)btw|tva|vat", question):
+            return {"answer": f"{ref.amount} staat op de factuur als „{shown}“{page}.", "sources": source, "refs": refs_out}
+        if re.match(r"(?i)\s*(?:btw|tva|vat)\b", ref.column):
+            return {"answer": f"{ref.amount} is het btw-bedrag zelf: „{shown}“{page}.", "sources": source, "refs": refs_out}
+        # Only the cell's own column or line says incl. or excl.; a neighbouring column never does.
+        state = _VAT_STATE.search(ref.column or ref.field)
+        if state is None:
+            return {"answer": f"Bij {ref.amount} staat niet of het inclusief of exclusief btw is: „{shown}“{page}.", "sources": source, "refs": refs_out}
+        included = state.group(1).lower().startswith(("incl", "tvac", "ttc"))
+        asked_included = not re.search(r"(?i)\bexcl|exclusief|hors|htva", question)
+        verdict = "Ja" if included == asked_included else "Nee"
+        what = "inclusief" if included else "exclusief"
+        return {"answer": f"{verdict}: {ref.amount} staat op de factuur als „{shown}“, dus {what} btw{page}.", "sources": source, "refs": refs_out}
 
     # --- passages ----------------------------------------------------------------------------------
 
@@ -195,13 +229,32 @@ class InvoiceSession:
             if kind in _MUST_HOLD and not has_value(fact_text, kind):
                 return self._format(question, hits) if hits else _missing(kind)
             wanted = content_terms(question)
-            covered = len(wanted & set(terms(fact_text))) / len(wanted) if wanted else 0.0
+            covered = _covered(wanted, fact_text)
             if hits and hits[0].coverage > covered:
                 return self._format(question, hits)
+            if wanted and covered < _needed(len(wanted)):
+                # The fact reader matched a word ("betaal") but its value is about something else: "hoeveel
+                # btw betaal ik op gas" is not answered by the amount due. Say so, with what the bill does show.
+                return self._not_on_the_bill(question, kind)
             return None
         if hits:
             return self._format(question, hits)
         return _missing(kind) if kind in _MUST_HOLD else None
+
+    def _not_on_the_bill(self, question: str, kind: str) -> dict[str, Any]:
+        """No line answers the question: say that, and show the closest line of the right kind as what is there."""
+        answer = "Ik vond op deze factuur geen regel die precies dat zegt."
+        wanted = content_terms(question)
+        partial = [hit for hit in self.index.search(question) if has_value(hit.unit.text, kind) and hit.coverage > 0]
+        partial.sort(key=lambda hit: (hit.coverage, hit.exact, hit.dense or 0.0), reverse=True)
+        if not wanted or not partial:
+            return {"answer": answer, "sources": [], "suggestions": FOLLOW_UP_SUGGESTIONS}
+        # The closest lines, each covering part of the question ("gas" in one, "btw" in another): at most two.
+        units = [hit.unit for hit in partial if hit.coverage == partial[0].coverage][:2]
+        shown = [_shown(unit, question, self._names()) for unit in units]
+        there = " en ".join(f"„{text}“ (PDF-pagina {unit.page})" for unit, text in zip(units, shown))
+        answer += f" Wat er wel staat: {there}."
+        return {"answer": answer, "sources": [_source(self.filename, unit, text) for unit, text in zip(units, shown)], "refs": []}
 
     def _format(self, question: str, hits: list[Hit]) -> dict[str, Any]:
         top = hits[0]
@@ -214,6 +267,15 @@ class InvoiceSession:
             caption = top.unit.section.label
             where = f"in de tabel „{caption}“ op PDF-pagina {page}" if caption else f"in de tabel op PDF-pagina {page}"
             answer = f"Dit staat {where}:\n" + "\n".join(f"- {_focus(line, question)}" for line in shown)
+            refs = [
+                AmountRef(found, f"{_row_label(unit.text)} — {column}: {cell}", column, unit.page)
+                for unit in units for column, cell in _focused_cells(unit.text, question)
+                for found in _EURO.findall(cell)
+            ]
+            if not refs:  # no column asked for: every amount in the rows shown, so "dit bedrag" asks which
+                refs = [AmountRef(found, f"{_row_label(unit.text)} — {column}: {cell}" if column else cell, column, unit.page)
+                        for unit in units for column, cell in _cells(unit.text) for found in _EURO.findall(cell)]
+            return {"answer": answer, "sources": [_source(self.filename, unit, text) for unit, text in zip(units, shown)], "refs": refs}
         elif top.unit.kind in ("fields", "address"):
             quoted = "; ".join(f"„{line.rstrip('.')}“" for line in shown)
             answer = f"Op de factuur staat {quoted} (PDF-pagina {page})."
@@ -336,6 +398,7 @@ _OTHER_COMPANIES = frozenset("luminus engie fluvius eneco totalenergies mega bol
 _KIND_NAMES = {"billing": "facturatieadres", "delivery": "leveringsadres", "unknown": "adres"}
 _MUST_HOLD = ("price_per_kwh", "duration")
 _THIS_AMOUNT = re.compile(r"(?i)\b(?:dit|dat|deze|die|het\s+zelfde|hetzelfde|ce|cet|this|that)\s+(?:bedrag|som|totaal|getal|montant|amount)\b")
+_CALCULATION = re.compile(r"[×x*]\s*€|=\s*\**\s*€")
 _EURO = re.compile(r"€\s?-?\d[\d. ]*,\d{2}|-?\d[\d. ]*,\d{2}\s?€")
 _AMOUNT_IN_TEXT = re.compile(r"\d[\d.  ]*,\d{2}")
 _VAT_STATE = re.compile(r"(?i)\b(incl|excl|inclusief|exclusief|tvac|htva|ttc|hors)\.?\s*(?:btw|tva|vat|taxes)?")
@@ -368,15 +431,61 @@ def _shown(unit: Any, question: str, names: tuple[str, ...]) -> str:
     return mask_identifiers(unit.text, names)
 
 
+def _qualifiers(text: str) -> set[str]:
+    folded = _fold(text)
+    return {word for word, pattern in (("incl", r"\b(?:incl|inclusief|tvac|ttc)\b"), ("excl", r"\b(?:excl|exclusief|htva|hors)\b"))
+            if re.search(pattern, folded)}
+
+
+def _row_label(row: str) -> str:
+    return row.split(" — ", 1)[0] if " — " in row else ""
+
+
+def _cells(text: str) -> list[tuple[str, str]]:
+    """(column, cell) pairs: a table row's cells with their column, a field with its label, or ("", line)."""
+    if " — " in text:
+        return [(part.split(":", 1)[0].strip(), part.strip()) if ":" in part else ("", part.strip()) for part in text.split(" — ", 1)[1].split(" · ")]
+    if ":" in text:
+        return [(text.split(":", 1)[0].strip(), text.strip())]
+    return [("", text.strip())]
+
+
+def _focused_cells(row: str, question: str) -> list[tuple[str, str]]:
+    """The cells whose column the question asks for: shared subject words, and incl./excl. only when asked."""
+    if " — " not in row:
+        return []
+    wanted = content_terms(question)
+    asked = _qualifiers(question)
+    scored = []
+    for column, cell in _cells(row):
+        if not column:
+            continue
+        # An asked qualifier ("inclusief btw") outweighs a shared word: it names the column.
+        shared = len(wanted & set(terms(_VAT_STATE.sub(" ", column)))) + 2 * len(asked & _qualifiers(column))
+        scored.append((shared - len(_qualifiers(column) - asked), column, cell))
+    best = max((score for score, _, _ in scored), default=0)
+    return [(column, cell) for score, column, cell in scored if best > 0 and score == best]
+
+
 def _focus(row: str, question: str) -> str:
     """'Gas — Bedrag excl. btw: € 700,00 · Btw 6%: € 42,00 · …' with the asked column in bold."""
-    if " — " not in row:
+    focused = {cell for _, cell in _focused_cells(row, question)}
+    if not focused:
         return row
     label, cells = row.split(" — ", 1)
-    wanted = content_terms(question)
-    parts = cells.split(" · ")
-    marked = [f"**{part}**" if wanted & set(terms(part.split(":", 1)[0])) and not re.match(r"(?i)bedrag (?:in|ex)cl", part) else part for part in parts]
-    return f"{label} — " + " · ".join(marked)
+    return f"{label} — " + " · ".join(f"**{part}**" if part.strip() in focused else part for part in cells.split(" · "))
+
+
+def _covered(wanted: set[str], text: str) -> float:
+    """Share of the question's subject terms found in a text, also inside compounds ("verbruik" in "stroomverbruik")."""
+    if not wanted:
+        return 0.0
+    folded = _fold(text)
+    return len({term for term in wanted if term in folded or term in set(terms(text))}) / len(wanted)
+
+
+def _needed(count: int) -> float:
+    return math.ceil(count * 2 / 3) / count
 
 
 def _source(filename: str, unit: Any, shown: str) -> dict[str, Any]:

@@ -50,9 +50,12 @@ daarvan bewezen is.
   wedervraag op ("Ik zie Kim niet op deze factuur … Bedoel je Joy Doe?").
 - **"ze", "hij", "die"** wijzen alleen naar de klant als een van de laatste twee antwoorden de klant noemde.
   Anders vraagt Karen over wie het gaat.
-- **"dit bedrag"** is het eerste eurobedrag uit een van de laatste twee antwoorden. Is er geen, dan vraagt
-  Karen "Over welk bedrag gaat het?". De btw-status komt uit de regel waar dat bedrag staat; het model rekent
-  nooit.
+- **"dit bedrag"** is de waarde waar een van de laatste twee antwoorden over ging, met het veld waaruit ze komt:
+  de gevraagde tabelcel (bij "hoeveel btw betaal ik op gas" de btw-cel, niet de eerste cel van de rij) of het
+  hoofdbedrag van een feitenantwoord. Noemde dat antwoord meer bedragen, of geen, dan vraagt Karen welk bedrag.
+  Of het incl. of excl. btw is, komt alleen uit de eigen kolom of regel van dat bedrag; het model rekent nooit.
+- **Feitenantwoorden** worden alleen gegeven als ze het onderwerp van de vraag dekken. Anders zegt Karen dat
+  geen regel precies dat zegt, en toont ze hoogstens twee regels die er deels over gaan.
 - **Bewoning.** Een leverings- of facturatieadres bewijst niet waar iemand woont. Elk antwoord op "waar woont
   X" zegt dat er letterlijk bij. Het bestaande principe uit PR #84 blijft: een domiciliëringsdatum bewijst
   geen betaling.

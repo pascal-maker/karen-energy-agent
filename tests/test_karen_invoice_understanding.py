@@ -205,3 +205,53 @@ def test_the_address_of_another_company_is_not_an_address_on_the_bill():
     reply = _session(DELIVERY_ONLY).ask("wat is het adres van Fluvius?")
     assert reply["found"] is False and "Zonnestraat" not in reply["answer"]
     assert all("masked" not in source for source in _session(DELIVERY_ONLY).ask("waar woont Joy?")["sources"])
+
+
+# --- Review of f8f7a04 ------------------------------------------------------------------------------
+
+def test_a_table_with_a_very_long_header_is_split_without_hanging():
+    import signal
+
+    header = [f"Kopregel {index} van een lange tabeltitel zonder einde" for index in range(30)]
+    page = "\n".join([*header, "Bedrag", "Gas", "€ 10,00", "Elektriciteit", "€ 20,00"])
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("build_sections hangs")))
+    signal.alarm(5)
+    try:
+        sections = build_sections([(1, page)], "kop.pdf")
+    finally:
+        signal.alarm(0)
+    assert all(len(section.text) <= invoice_retrieval.MAX_SECTION_CHARS for section in sections)
+    assert "€ 10,00" in "\n".join(section.text for section in sections)
+
+
+def test_a_delivery_address_after_the_supplier_field_is_the_customers():
+    from luminus_harness.invoice_sections import addresses_from
+
+    page = "Leverancier: Kanaal Energie\nLeveringsadres: Kerkstraat 1, 0000 Teststad\nKlant: Joy Doe"
+    assert [(a.kind, a.party) for a in addresses_from([(1, page)], "x.pdf")] == [("delivery", "customer")]
+    # "Leveradres" (without -ings-) with the street and postcode on the next lines, as some suppliers print it.
+    short = "Leverancier: Kanaal Energie\nLeveradres:\nKerkstraat 1\n0000 Teststad"
+    assert [(a.kind, a.party, a.value) for a in addresses_from([(1, short)], "x.pdf")] == [("delivery", "customer", "Kerkstraat 1, 0000 Teststad")]
+
+
+def test_a_fact_answer_that_does_not_answer_the_question_is_not_given():
+    for name, wrong in ((UNCLEAR_LABEL, "234,56"), (ADVANCE, "179,00")):
+        answer = _session(name).ask("hoeveel btw betaal ik op gas?")["answer"]
+        assert wrong not in answer, (name, answer)
+        assert "geen regel" in answer
+    # The advance bill shows the total btw: named as what is there, not as the answer.
+    assert "10,13" in _session(ADVANCE).ask("hoeveel btw betaal ik op gas?")["answer"]
+
+
+def test_this_amount_is_the_value_asked_for_not_the_first_amount_in_the_answer():
+    session = _session(DELIVERY_ONLY)
+    session.ask("hoeveel btw betaal ik op gas?")
+    answer = session.ask("is dit bedrag inclusief btw?")["answer"]
+    assert "€ 42,00" in answer and "€ 700,00" not in answer and "btw-bedrag zelf" in answer
+    both = _session(DELIVERY_ONLY)
+    both.ask("hoeveel is de btw?")
+    unclear = both.ask("is dit bedrag inclusief btw?")["answer"]
+    assert "welk bedrag" in unclear.lower() and "€ 30,00" in unclear and "€ 42,00" in unclear
+    total = _session(DELIVERY_ONLY)
+    total.ask("wat kost gas inclusief btw?")
+    assert "Ja" in total.ask("is dit bedrag inclusief btw?")["answer"]

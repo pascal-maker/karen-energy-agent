@@ -14,6 +14,7 @@ from io import BytesIO
 from typing import Literal
 
 MAX_SECTION_CHARS = 800
+MAX_CAPTION_CHARS = 200  # every part of a table repeats its caption, so the rows always keep 600 characters
 
 SectionKind = Literal["fields", "address", "table", "text"]
 AddressKind = Literal["billing", "delivery", "unknown"]
@@ -62,7 +63,7 @@ _VALUE_CELL = re.compile(
     re.IGNORECASE,
 )
 _DELIVERY = re.compile(
-    r"(?i)\b(?:leverings?adres|afname\w*adres|adres van (?:levering|afname)|verbruiksadres|plaats van levering|"
+    r"(?i)\b(?:lever(?:ings?)?adres|afname\w*adres|adres van (?:levering|afname)|verbruiksadres|plaats van levering|"
     r"adresse de (?:fourniture|consommation|livraison)|point de fourniture|lieu de fourniture|delivery address|supply address)\b"
 )
 _BILLING = re.compile(
@@ -105,6 +106,8 @@ def _is_sentence(line: str) -> bool:
 
 def _bounded(lines: list[str], limit: int) -> list[list[str]]:
     """Consecutive lines packed up to `limit` characters, a too long line cut at word boundaries; no overlap."""
+    if limit < 1:
+        raise ValueError(f"section limit must be positive, got {limit}")
     pieces: list[str] = []
     for line in lines:
         while len(line) > limit:
@@ -168,6 +171,10 @@ def _run_sections(run: list[str], page: int, source: str) -> list[Section]:
         return _text_sections(run, page, source)
     caption, rows, rest = table
     sections: list[Section] = []
+    if len(caption) > MAX_CAPTION_CHARS:
+        # A header this long is text, not a caption: kept once as its own sections, the rows go without it.
+        sections.extend(_text_sections(caption.split(" · "), page, source))
+        caption = ""
     # A long table is split by rows; every part keeps the caption, no row is repeated.
     for group in _bounded(rows, MAX_SECTION_CHARS - len(caption) - 1):
         sections.append(Section(source, page, "table", caption, tuple(group)))
@@ -224,8 +231,8 @@ def build_sections(pages: list[tuple[int, str]], source: str) -> list[Section]:
 
 
 def addresses_from(pages: list[tuple[int, str]], source: str) -> list[AddressBlock]:
-    """Typed addresses with the party they belong to. A typed label without a party is the customer's
-    (delivery and billing addresses on an energy bill are the customer's); a bare "Adres:" is the customer's
+    """Typed addresses with the party they belong to. A delivery or billing address is always the customer's
+    (on an energy bill they say where the customer's energy goes or bill is sent); a bare "Adres:" is the customer's
     when the last party field before it names the customer, else its party is unknown."""
     found: list[AddressBlock] = []
     for page, page_text in pages:
@@ -255,7 +262,9 @@ def addresses_from(pages: list[tuple[int, str]], source: str) -> list[AddressBlo
                 step += 1
             if not parts or not _POSTCODE.search(parts[-1]):
                 continue  # no recognisable address after the label: unknown stays null
-            owner: Party = party if kind == "unknown" else (party if party != "unknown" else "customer")
+            # A delivery or billing address on an energy bill is the customer's, whatever field came before it
+            # ("Leverancier: …" then "Leveringsadres: …"); only a bare "Adres" takes the last party named.
+            owner: Party = party if kind == "unknown" else "customer"
             block = AddressBlock(kind, owner, label, ", ".join(parts), page, source, f"{label}: {', '.join(parts)}")
             if all((other.kind, other.value) != (block.kind, block.value) for other in found):
                 found.append(block)
