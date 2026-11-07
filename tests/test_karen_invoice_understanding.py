@@ -72,7 +72,7 @@ def test_billing_and_delivery_addresses_are_kept_apart():
 def test_an_address_with_an_unclear_label_is_named_as_such():
     answer = _session(UNCLEAR_LABEL).ask("waar woont John?")["answer"]
     assert "Teststraat 0, 0000 Teststad" in answer
-    assert "niet als leverings- of facturatieadres" in answer and "niet bevestigen dat John daar woont" in answer
+    assert "zonder leverings- of facturatielabel" in answer and "niet bevestigen dat John daar woont" in answer
 
 
 def test_an_address_question_without_an_address_on_the_bill():

@@ -148,12 +148,14 @@ def test_the_upload_summary_of_an_advance_bill_lists_what_it_has_not_settlement_
     chunks = load_pdf_chunks_from_bytes((FIXTURES / "11-nl-voorschot-domiciliering.pdf").read_bytes(), source="11.pdf")
     summary = analyze_invoice_chunks(chunks)["answer"]
     assert summary.splitlines() == [
+        "**€ 179,00 per maand aan voorschotten.** Bij hetzelfde voorschot is dat € 2.148,00 per jaar. "
+        "Of dat voldoende is, kan ik pas beoordelen met je jaarafrekening.",
         "Dit is je maandelijkse voorschotfactuur voor oktober 2026 van Kanaal Energie.",
         "- **Elektriciteit:** € 63,21 excl. btw",
         "- **Gas:** € 105,66 excl. btw",
         "- **Samen:** € 168,87 + € 10,13 btw = € 179,00",
-        "- **Betaling:** volgens de factuur betaalt je bank dit automatisch op 31 oktober 2026.",
-        "Je werkelijke verbruik en de verrekening van eerdere voorschotten staan op je jaarafrekening.",
+        "- **Betaling:** De factuur kondigt een domiciliëring aan op 31 oktober 2026. Die datum is voorbij, maar of de "
+        "afhouding gelukt is, kan ik niet zien: kijk het na in je bankapp.",
     ]
     assert "niet betrouwbaar gevonden" not in summary
 
@@ -161,7 +163,8 @@ def test_the_upload_summary_of_an_advance_bill_lists_what_it_has_not_settlement_
 def test_an_advance_bill_without_a_vat_label_adds_up_only_when_the_numbers_do():
     chunks = load_pdf_chunks_from_bytes((FIXTURES / "12-nl-tweemaandelijks-voorschot.pdf").read_bytes(), source="12.pdf")
     summary = analyze_invoice_chunks(chunks)["answer"]
-    assert summary.splitlines()[0] == "Dit is je tweemaandelijkse voorschotfactuur voor november 2026 van Kanaal Energie."
+    assert summary.splitlines()[0].startswith("**€ 96,00 per twee maanden aan voorschotten.** Bij hetzelfde voorschot is dat € 576,00 per jaar.")
+    assert summary.splitlines()[1] == "Dit is je tweemaandelijkse voorschotfactuur voor november 2026 van Kanaal Energie."
     assert "- **Samen:** € 90,57 + € 5,43 btw = € 96,00" in summary
     assert "- **Betalen vóór:** 20 november 2026" in summary
     odd_chunks, _ = _facts_from_text("Uw maandelijks voorschot Elektriciteit okt 2026 70,00 € BTW 4,20 € Te betalen bedrag: € 80,00")
@@ -172,7 +175,7 @@ def test_an_advance_bill_without_a_vat_label_adds_up_only_when_the_numbers_do():
 def test_the_period_of_an_advance_bill_comes_from_its_lines_in_the_upload_answer_and_the_follow_up():
     chunks, facts = _read("11-nl-voorschot-domiciliering.pdf")
     assert facts["billing_period"] is None
-    assert analyze_invoice_chunks(chunks)["answer"].startswith(
+    assert analyze_invoice_chunks(chunks)["answer"].splitlines()[1] == (
         "Dit is je maandelijkse voorschotfactuur voor oktober 2026 van Kanaal Energie."
     )
     assert answer_uploaded_pdf_question("Over welke periode gaat dit?", chunks, facts)["answer"] == (

@@ -64,7 +64,8 @@ def test_what_the_bill_lets_karen_conclude(question):
     assert "elektriciteit 37%, gas 63%" in answer
     assert "€ 168,87 + 6% btw (€ 10,13) = € 179,00" in answer
     assert "je echte verbruik en of je voorschot genoeg is" in answer
-    assert "aandachtspunten vond ik niet" in answer
+    assert "Nagekeken: de optelling (€ 168,87 + 6% btw = € 179,00)" in answer, "Says what was checked, not 'nothing else found'"
+    assert "aandachtspunten vond ik niet" not in answer
 
 
 def test_passages_never_show_account_meter_or_customer_details():

@@ -644,10 +644,20 @@ def _advance_bill_summary(facts: dict[str, Any], text: str) -> str:
     date = facts.get("due_date")
     if date:
         if date.get("direct_debit"):
-            lines.append(f"- **Betaling:** volgens de factuur betaalt je bank dit automatisch op {_long_date(date['value'])}.")
+            # The same status every later answer gives: a debit announced on the bill, never a payment confirmed.
+            from .invoice_schema import _iso_date, debit_sentence
+
+            lines.append(f"- **Betaling:** {debit_sentence(_long_date(date['value']), _iso_date(date['value']))[1]}")
         else:
             lines.append(f"- **Betalen vóór:** {_long_date(date['value'])}")
-    lines.append("Je werkelijke verbruik en de verrekening van eerdere voorschotten staan op je jaarafrekening.")
+    per_year = {"maandelijks": 12, "tweemaandelijks": 6, "driemaandelijks": 4}.get(frequency.group(1).lower() if frequency else "")
+    if per_year and due and due["value"] > 0:
+        # The figure the visitor came for first: the advance, a year of it, and what only the settlement tells.
+        how_often = {12: "per maand", 6: "per twee maanden", 4: "per kwartaal"}[per_year]
+        lines.insert(0, f"**{_format_decimal(due['value'])} {how_often} aan voorschotten.** Bij hetzelfde voorschot is dat "
+                        f"{_format_decimal(due['value'] * per_year)} per jaar. Of dat voldoende is, kan ik pas beoordelen met je jaarafrekening.")
+    else:
+        lines.append("Je werkelijke verbruik en de verrekening van eerdere voorschotten staan op je jaarafrekening.")
     return "\n".join(lines)
 
 

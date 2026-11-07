@@ -22,10 +22,14 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from .invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
-from .invoice_model import _WORDS, mask_identifiers
 from .invoice_retrieval import Hit, InvoiceIndex, content_terms, embed, expected_value, has_value, terms
-from .invoice_schema import FOLLOW_UP_SUGGESTIONS, Invoice, build_invoice
-from .invoice_sections import Section, addresses_from, build_sections, page_texts_from_pdf
+from .invoice_intent import Plan, Task, parse_locally
+from .invoice_model import _WORDS, mask_identifiers, mask_invoice_text
+from .invoice_schema import (
+    FOLLOW_UP_SUGGESTIONS, Invoice, advice_answer, build_invoice, explain_invoice, insights_answer, payer_answer,
+    summarize_invoice, yearly_answer,
+)
+from .invoice_sections import _POSTCODE, Section, addresses_from, build_sections, page_texts_from_pdf
 from .knowledge import KnowledgeChunk, load_pdf_chunks_from_bytes
 from .photo_invoice import chunks_from_text
 
@@ -49,6 +53,7 @@ class Turn:
     answer: str
     amounts: tuple[AmountRef, ...]  # the values the answer was about; "dit bedrag" means one of these
     named_customer: bool  # the answer named the bill's customer
+    tasks: tuple[str, ...] = ()  # the task types the question was understood as
 
 
 @dataclass
@@ -72,25 +77,82 @@ class InvoiceSession:
 
     # --- answering ---------------------------------------------------------------------------------
 
-    def ask(self, question: str) -> dict[str, Any]:
+    def ask(self, question: str, plan: Plan | None = None) -> dict[str, Any]:
+        """Answer one visitor message. `plan` is what the question asks, as typed tasks (invoice_intent): from the
+        intent model when the app has it on, else the local parser. Each task is carried out here, in code."""
         question = " ".join(question.split())
-        result = self._answer(question)
+        plan = plan or parse_locally(question, self._customer_parts())
+        result = self._carry_out(question, plan)
         refs = result.pop("refs", None)
         result.pop("fact_keys", None)
         for source in result.get("sources", []):
             source.pop("masked", None)
-        self._remember(question, result, refs)
+        self._remember(question, result, refs, tuple(task.type for task in plan.tasks))
         return result
 
-    def _answer(self, question: str) -> dict[str, Any]:
-        intent = address_intent(question, self._customer_parts())
-        if intent is not None:
-            return self._address_answer(question, intent)
-        if _THIS_AMOUNT.search(question):
-            return self._this_amount_answer(question)
+    def intent_context(self) -> dict[str, Any]:
+        """The minimal context the intent model gets besides the masked question: never the bill or its text."""
+        recent = self.turns[-2:]
+        return {
+            "vorige_taak": recent[-1].tasks[-1] if recent and recent[-1].tasks else None,
+            "klant_genoemd": any(turn.named_customer for turn in recent),
+            "bedrag_genoemd": any(turn.amounts for turn in recent),
+        }
+
+    def _carry_out(self, question: str, plan: Plan) -> dict[str, Any]:
+        """Every task's answer, in the order asked; a part Karen could not place gets a question about that part."""
+        done = [(task, self._task_answer(task)) for task in plan.tasks]
+        unclear = []
+        for text in plan.unclear:
+            general = self._general(text)
+            if general.get("found", True) is not False and general.get("sources") and not _is_clarify(general):
+                done.append((Task("question", text), general))  # the part turned out to be a question the bill answers
+            else:
+                unclear.append(text)
+        if len(done) == 1 and not unclear:
+            return done[0][1]
+        answered = [(task, result) for task, result in done if result.get("found", True) is not False and not _is_clarify(result)]
+        if not answered and not unclear:
+            return done[0][1]
+        lines = [result["answer"] for _, result in answered]
+        lines += [f"Over „{task.text}“ vond ik niets op deze factuur." for task, result in done if (task, result) not in answered]
+        lines += [f"Wat wil je weten over „{text}“? Ik kan bijvoorbeeld een bedrag, datum of regel op deze factuur opzoeken." for text in unclear]
+        sources: list[dict[str, Any]] = []
+        for _, result in answered:
+            sources.extend(source for source in result.get("sources", []) if source not in sources)
+        combined: dict[str, Any] = {"answer": "\n\n".join(lines), "sources": sources}
+        refs = [ref for _, result in answered for ref in result.get("refs") or []]
+        if any("refs" in result for _, result in answered):
+            combined["refs"] = refs
+        return combined
+
+    def _task_answer(self, task: Task) -> dict[str, Any]:
+        invoice = self.invoice
+        if task.type == "address":
+            return self._address_answer(task.text, task.address_kind or "address")
+        if task.type == "this_amount":
+            return self._this_amount_answer(task.text)
+        made = {
+            "advice": lambda: advice_answer(invoice),
+            "payer": lambda: payer_answer(invoice),
+            "yearly": lambda: yearly_answer(invoice, task.text),
+            "summary": lambda: summarize_invoice(invoice),
+            "explain": lambda: explain_invoice(invoice, task.text),
+            "insights": lambda: insights_answer(invoice),
+        }.get(task.type)
+        if made is None:
+            return self._general(task.text)
+        result = made()
+        # Answers built from the invoice object quote its evidence passages; masked as answer_uploaded_pdf_question does.
+        for source in result.get("sources", []):
+            if source.get("excerpt"):
+                source["excerpt"] = mask_invoice_text(source["excerpt"], self._names())
+        return result
+
+    def _general(self, question: str) -> dict[str, Any]:
         return answer_uploaded_pdf_question(question, self.chunks, self.facts, self.invoice, passages=self._passages)
 
-    def _remember(self, question: str, result: dict[str, Any], refs: list[AmountRef] | None) -> None:
+    def _remember(self, question: str, result: dict[str, Any], refs: list[AmountRef] | None, tasks: tuple[str, ...] = ()) -> None:
         answer = str(result.get("answer", ""))
         if refs is None:
             # A fact answer names its value first ("Volgens deze factuur moet je nog € 172,00 betalen"); the
@@ -104,7 +166,7 @@ class InvoiceSession:
             refs = [ref for amount in amounts for ref in self._refs_for(amount, excerpts)]
         customer = self.invoice.customer.value if self.invoice.customer else ""
         named = bool(customer) and customer.lower() in answer.lower()
-        self.turns.append(Turn(question, answer, tuple(refs), named))
+        self.turns.append(Turn(question, answer, tuple(refs), named, tasks))
         del self.turns[:-MAX_TURNS]
 
     def _refs_for(self, amount: str, excerpts: list[str]) -> list[AmountRef]:
@@ -212,7 +274,15 @@ class InvoiceSession:
         person = name or customer or ("de leverancier" if party == "supplier" else "de klant")
         if not addresses:
             whose = "de leverancier" if party == "supplier" else person
-            return {"answer": f"Op deze factuur staat geen adres van {whose}.", "sources": []}
+            unlabelled = self._unlabelled_address() if party == "customer" else None
+            if unlabelled is not None:
+                # Something that looks like an address, without a label saying whose or what kind: unknown, not absent.
+                section, text = unlabelled
+                shown = mask_identifiers(text, ())
+                return {"answer": (f"Ik kon het adres niet betrouwbaar lezen: er staat geen label als leverings- of "
+                                   f"facturatieadres bij. Op PDF-pagina {section.page} staat wel „{shown}“."),
+                        "sources": [{"title": self.filename, "detail": f"PDF · pagina {section.page}", "excerpt": shown, "masked": True}]}
+            return {"answer": f"Op deze factuur vond ik geen adres van {whose}.", "sources": []}
         wanted = {"delivery": "delivery", "billing": "billing"}.get(intent)
         if wanted:
             chosen = [address for address in addresses if address.kind == wanted]
@@ -224,12 +294,20 @@ class InvoiceSession:
             return {"answer": answer, "sources": _address_sources(chosen)}
         answer = "; ".join(_address_phrase(address) for address in addresses)
         answer = f"Op de factuur staat {answer}."
-        if any(address.kind == "unknown" for address in addresses):
-            answer += " De factuur noemt dat adres niet als leverings- of facturatieadres."
         if party == "customer" and intent == "residence":
             answer += (f" Ik kan hieruit niet bevestigen dat {person} daar woont: een adres op een energiefactuur zegt "
                        "waar de energie geleverd of de factuur gestuurd wordt, niet waar iemand woont.")
         return {"answer": answer, "sources": _address_sources(addresses)}
+
+    def _unlabelled_address(self) -> tuple[Section, str] | None:
+        """A street line followed by a postcode and place that no address label introduced (a window address)."""
+        for section in self.sections:
+            lines = [line for text in section.lines for line in text.split("\n")]
+            for index, line in enumerate(lines[1:], start=1):
+                street = lines[index - 1]
+                if _POSTCODE.search(line.strip()) and re.search(r"[^\W\d_]{3,}\s+\d+\w?\b", street) and ":" not in street + line:
+                    return section, f"{street.strip()}, {line.strip()}"
+        return None
 
     # --- "dit bedrag" ------------------------------------------------------------------------------
 
@@ -585,6 +663,10 @@ def _needed(count: int) -> float:
 
 def _source(filename: str, unit: Any, shown: str) -> dict[str, Any]:
     return {"title": filename, "detail": f"PDF · pagina {unit.page}", "excerpt": shown, "masked": True}
+
+
+def _is_clarify(result: dict[str, Any]) -> bool:
+    return str(result.get("answer", "")).startswith("Ik weet niet zeker wat je")
 
 
 def _missing(kind: str) -> dict[str, Any]:

@@ -1,38 +1,586 @@
 {
   "about": "Questions about uploaded invoices, with the expected answer and the passage that supports it. Synthetic invoices only (tests/fixtures/invoices). behavior: answer (from the bill), missing (says what is not on the bill), ask_back (asks which person or amount), leave (a general question, answered without the bill), no_bill_answer (leave or ask, but no amount from the bill).",
   "items": [
-    {"id": "addr-delivery-only", "category": "address", "fixture": "23-nl-leveringsadres.pdf", "question": "waar woont Joy?", "behavior": "answer", "supporting": "Zonnestraat 12, 0000 Teststad", "contains": ["leveringsadres", "Zonnestraat 12", "niet bevestigen"], "excludes": ["Verhuist", "[X] [X]"]},
-    {"id": "addr-both-residence", "category": "address", "fixture": "24-nl-facturatie-en-leveringsadres.pdf", "question": "Waar woont Sam?", "behavior": "answer", "supporting": "Molenlaan 7, 0001 Proefdorp", "contains": ["facturatieadres", "Kerkweg 1", "leveringsadres", "Molenlaan 7", "niet bevestigen"], "excludes": []},
-    {"id": "addr-delivery-asked", "category": "address", "fixture": "24-nl-facturatie-en-leveringsadres.pdf", "question": "wat is mijn leveringsadres?", "behavior": "answer", "supporting": "Molenlaan 7, 0001 Proefdorp", "contains": ["Molenlaan 7"], "excludes": ["Kerkweg"]},
-    {"id": "addr-billing-paraphrase", "category": "address", "fixture": "24-nl-facturatie-en-leveringsadres.pdf", "question": "naar welk adres wordt de factuur gestuurd?", "behavior": "answer", "supporting": "Kerkweg 1, 0000 Teststad", "contains": ["Kerkweg 1"], "excludes": ["Molenlaan"]},
-    {"id": "addr-delivery-paraphrase", "category": "address", "fixture": "24-nl-facturatie-en-leveringsadres.pdf", "question": "op welk adres krijg ik mijn stroom geleverd?", "behavior": "answer", "supporting": "Molenlaan 7, 0001 Proefdorp", "contains": ["Molenlaan 7"], "excludes": ["Kerkweg"]},
-    {"id": "addr-billing-missing", "category": "address", "fixture": "23-nl-leveringsadres.pdf", "question": "wat is mijn facturatieadres?", "behavior": "missing", "supporting": "Zonnestraat 12, 0000 Teststad", "contains": ["geen facturatieadres", "Zonnestraat 12"], "excludes": []},
-    {"id": "addr-unclear-label", "category": "address", "fixture": "01-nl-afrekening-gegroepeerd.pdf", "question": "waar woont John?", "behavior": "answer", "supporting": "Teststraat 0, 0000 Teststad", "contains": ["Teststraat 0", "niet als leverings- of facturatieadres", "niet bevestigen"], "excludes": []},
-    {"id": "addr-none", "category": "address", "fixture": "25-nl-geen-adres.pdf", "question": "wat is het adres van Lee?", "behavior": "missing", "contains": ["geen adres"], "excludes": ["[X]"]},
-    {"id": "addr-unknown-name", "category": "address", "fixture": "23-nl-leveringsadres.pdf", "question": "waar woont Kim?", "behavior": "ask_back", "contains": ["Kim", "Joy Doe"], "excludes": ["Zonnestraat"]},
-    {"id": "addr-pronoun-after-payer", "category": "address", "fixture": "23-nl-leveringsadres.pdf", "turns": ["wie is dit verschuldigd?"], "question": "en waar woont ze?", "behavior": "answer", "supporting": "Zonnestraat 12, 0000 Teststad", "contains": ["Zonnestraat 12", "niet bevestigen"], "excludes": []},
-    {"id": "addr-pronoun-unclear", "category": "address", "fixture": "23-nl-leveringsadres.pdf", "question": "waar woont ze?", "behavior": "ask_back", "contains": ["Joy Doe"], "excludes": ["Zonnestraat"]},
-    {"id": "table-gas-vat", "category": "table", "fixture": "23-nl-leveringsadres.pdf", "question": "hoeveel btw betaal ik op gas?", "behavior": "answer", "supporting": "Btw 6%: € 42,00", "contains": ["€ 42,00", "Btw 6%"], "excludes": ["[X] [X]"]},
-    {"id": "table-power-incl", "category": "table", "fixture": "23-nl-leveringsadres.pdf", "question": "wat kost elektriciteit inclusief btw?", "behavior": "answer", "supporting": "Bedrag incl. btw: € 530,00", "contains": ["€ 530,00"], "excludes": []},
-    {"id": "table-all-vat", "category": "table", "fixture": "24-nl-facturatie-en-leveringsadres.pdf", "question": "hoeveel is de btw?", "behavior": "answer", "supporting": "Btw 6%: € 42,00", "contains": ["€ 30,00", "€ 42,00"], "excludes": []},
-    {"id": "this-amount-vat", "category": "context", "fixture": "11-nl-voorschot-domiciliering.pdf", "turns": ["hoeveel moet ik betalen?"], "question": "is dit bedrag inclusief btw?", "behavior": "answer", "supporting": "Totaal factuurbedrag (incl. BTW)", "contains": ["€ 179,00", "incl"], "excludes": []},
-    {"id": "this-amount-unclear", "category": "context", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "is dit bedrag inclusief btw?", "behavior": "ask_back", "contains": ["welk bedrag"], "excludes": []},
-    {"id": "vat-total", "category": "table", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "hoeveel btw staat er op de factuur?", "behavior": "answer", "supporting": "BTW: 10,13 €", "contains": ["10,13"], "excludes": []},
-    {"id": "para-notice", "category": "paraphrase", "fixture": "23-nl-leveringsadres.pdf", "question": "hoe lang op voorhand moet ik laten weten dat ik stop?", "behavior": "answer", "supporting": "Opzegtermijn: 3 weken", "contains": ["3 weken"], "excludes": []},
-    {"id": "para-cancel", "category": "paraphrase", "fixture": "23-nl-leveringsadres.pdf", "question": "kan ik mijn contract opzeggen?", "behavior": "answer", "supporting": "Opzegtermijn: 3 weken", "contains": ["3 weken"], "excludes": []},
-    {"id": "para-move", "category": "paraphrase", "fixture": "23-nl-leveringsadres.pdf", "question": "wat moet ik doen als ik verhuis?", "behavior": "answer", "supporting": "meterstanden van uw oude woning", "contains": ["meterstanden"], "excludes": ["[X] [X]"]},
-    {"id": "para-notice-advance", "category": "paraphrase", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "hoe lang op voorhand moet ik opzeggen?", "behavior": "answer", "supporting": "opzegtermijn 3 weken", "contains": ["3 weken"], "excludes": []},
-    {"id": "para-due", "category": "paraphrase", "fixture": "23-nl-leveringsadres.pdf", "question": "tegen wanneer moet het geld op hun rekening staan?", "behavior": "answer", "supporting": "10/03/2026", "contains": ["10/03/2026"], "excludes": []},
-    {"id": "overlap-kwh-price", "category": "overlap", "fixture": "01-nl-afrekening-gegroepeerd.pdf", "question": "hoeveel kost een kWh elektriciteit?", "behavior": "missing", "contains": ["geen prijs per kWh"], "excludes": ["42.400", "2708", "2.708"]},
-    {"id": "own-ean", "category": "identifier", "fixture": "23-nl-leveringsadres.pdf", "question": "wat is mijn EAN?", "behavior": "answer", "supporting": "000000000000000231", "contains": ["000000000000000231"], "excludes": ["[X] [X]"]},
-    {"id": "leave-netkosten", "category": "general", "fixture": "23-nl-leveringsadres.pdf", "question": "Wat zijn netkosten?", "behavior": "leave", "contains": [], "excludes": []},
-    {"id": "leave-gasmeter", "category": "general", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "Wat kost het afsluiten van een gasmeter?", "behavior": "leave", "contains": [], "excludes": []},
-    {"id": "leave-who-pays-grid", "category": "general", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "Wie betaalt mijn netkosten?", "behavior": "leave", "contains": [], "excludes": []},
-    {"id": "leave-football", "category": "general", "fixture": "23-nl-leveringsadres.pdf", "question": "wie wint Real of Barcelona?", "behavior": "leave", "contains": [], "excludes": []},
-    {"id": "my-gasmeter", "category": "general", "fixture": "23-nl-leveringsadres.pdf", "question": "Hoeveel kost het afsluiten van mijn gasmeter?", "behavior": "no_bill_answer", "contains": [], "excludes": ["€ 742,00", "€ 700,00", "€ 172,00"]},
-    {"id": "reg-summary-typo", "category": "regression", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "wat is de smaenvatting hiervn", "behavior": "answer", "supporting": "179,00", "contains": ["179,00"], "excludes": []},
-    {"id": "reg-gas-year", "category": "regression", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "Wat kost gas per jaar?", "behavior": "answer", "supporting": "105,66", "contains": ["1.267,92"], "excludes": []},
-    {"id": "reg-payer", "category": "regression", "fixture": "11-nl-voorschot-domiciliering.pdf", "question": "wie is dit verschuldigd", "behavior": "answer", "supporting": "179,00", "contains": ["John Doe", "Kanaal Energie"], "excludes": []},
-    {"id": "reg-amount-due", "category": "regression", "fixture": "23-nl-leveringsadres.pdf", "question": "hoeveel moet ik betalen?", "behavior": "answer", "supporting": "Totaal te betalen: € 172,00", "contains": ["172,00"], "excludes": []}
+    {
+      "id": "addr-delivery-only",
+      "category": "address",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "waar woont Joy?",
+      "behavior": "answer",
+      "supporting": "Zonnestraat 12, 0000 Teststad",
+      "contains": [
+        "leveringsadres",
+        "Zonnestraat 12",
+        "niet bevestigen"
+      ],
+      "excludes": [
+        "Verhuist",
+        "[X] [X]"
+      ]
+    },
+    {
+      "id": "addr-both-residence",
+      "category": "address",
+      "fixture": "24-nl-facturatie-en-leveringsadres.pdf",
+      "question": "Waar woont Sam?",
+      "behavior": "answer",
+      "supporting": "Molenlaan 7, 0001 Proefdorp",
+      "contains": [
+        "facturatieadres",
+        "Kerkweg 1",
+        "leveringsadres",
+        "Molenlaan 7",
+        "niet bevestigen"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "addr-delivery-asked",
+      "category": "address",
+      "fixture": "24-nl-facturatie-en-leveringsadres.pdf",
+      "question": "wat is mijn leveringsadres?",
+      "behavior": "answer",
+      "supporting": "Molenlaan 7, 0001 Proefdorp",
+      "contains": [
+        "Molenlaan 7"
+      ],
+      "excludes": [
+        "Kerkweg"
+      ]
+    },
+    {
+      "id": "addr-billing-paraphrase",
+      "category": "address",
+      "fixture": "24-nl-facturatie-en-leveringsadres.pdf",
+      "question": "naar welk adres wordt de factuur gestuurd?",
+      "behavior": "answer",
+      "supporting": "Kerkweg 1, 0000 Teststad",
+      "contains": [
+        "Kerkweg 1"
+      ],
+      "excludes": [
+        "Molenlaan"
+      ]
+    },
+    {
+      "id": "addr-delivery-paraphrase",
+      "category": "address",
+      "fixture": "24-nl-facturatie-en-leveringsadres.pdf",
+      "question": "op welk adres krijg ik mijn stroom geleverd?",
+      "behavior": "answer",
+      "supporting": "Molenlaan 7, 0001 Proefdorp",
+      "contains": [
+        "Molenlaan 7"
+      ],
+      "excludes": [
+        "Kerkweg"
+      ]
+    },
+    {
+      "id": "addr-billing-missing",
+      "category": "address",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "wat is mijn facturatieadres?",
+      "behavior": "missing",
+      "supporting": "Zonnestraat 12, 0000 Teststad",
+      "contains": [
+        "geen facturatieadres",
+        "Zonnestraat 12"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "addr-unclear-label",
+      "category": "address",
+      "fixture": "01-nl-afrekening-gegroepeerd.pdf",
+      "question": "waar woont John?",
+      "behavior": "answer",
+      "supporting": "Teststraat 0, 0000 Teststad",
+      "contains": [
+        "Teststraat 0",
+        "zonder leverings- of facturatielabel",
+        "niet bevestigen"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "addr-none",
+      "category": "address",
+      "fixture": "25-nl-geen-adres.pdf",
+      "question": "wat is het adres van Lee?",
+      "behavior": "missing",
+      "contains": [
+        "geen adres"
+      ],
+      "excludes": [
+        "[X]"
+      ]
+    },
+    {
+      "id": "addr-unknown-name",
+      "category": "address",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "waar woont Kim?",
+      "behavior": "ask_back",
+      "contains": [
+        "Kim",
+        "Joy Doe"
+      ],
+      "excludes": [
+        "Zonnestraat"
+      ]
+    },
+    {
+      "id": "addr-pronoun-after-payer",
+      "category": "address",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "turns": [
+        "wie is dit verschuldigd?"
+      ],
+      "question": "en waar woont ze?",
+      "behavior": "answer",
+      "supporting": "Zonnestraat 12, 0000 Teststad",
+      "contains": [
+        "Zonnestraat 12",
+        "niet bevestigen"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "addr-pronoun-unclear",
+      "category": "address",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "waar woont ze?",
+      "behavior": "ask_back",
+      "contains": [
+        "Joy Doe"
+      ],
+      "excludes": [
+        "Zonnestraat"
+      ]
+    },
+    {
+      "id": "table-gas-vat",
+      "category": "table",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "hoeveel btw betaal ik op gas?",
+      "behavior": "answer",
+      "supporting": "Btw 6%: € 42,00",
+      "contains": [
+        "€ 42,00",
+        "Btw 6%"
+      ],
+      "excludes": [
+        "[X] [X]"
+      ]
+    },
+    {
+      "id": "table-power-incl",
+      "category": "table",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "wat kost elektriciteit inclusief btw?",
+      "behavior": "answer",
+      "supporting": "Bedrag incl. btw: € 530,00",
+      "contains": [
+        "€ 530,00"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "table-all-vat",
+      "category": "table",
+      "fixture": "24-nl-facturatie-en-leveringsadres.pdf",
+      "question": "hoeveel is de btw?",
+      "behavior": "answer",
+      "supporting": "Btw 6%: € 42,00",
+      "contains": [
+        "€ 30,00",
+        "€ 42,00"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "this-amount-vat",
+      "category": "context",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "turns": [
+        "hoeveel moet ik betalen?"
+      ],
+      "question": "is dit bedrag inclusief btw?",
+      "behavior": "answer",
+      "supporting": "Totaal factuurbedrag (incl. BTW)",
+      "contains": [
+        "€ 179,00",
+        "incl"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "this-amount-unclear",
+      "category": "context",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "is dit bedrag inclusief btw?",
+      "behavior": "ask_back",
+      "contains": [
+        "welk bedrag"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "vat-total",
+      "category": "table",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "hoeveel btw staat er op de factuur?",
+      "behavior": "answer",
+      "supporting": "BTW: 10,13 €",
+      "contains": [
+        "10,13"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "para-notice",
+      "category": "paraphrase",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "hoe lang op voorhand moet ik laten weten dat ik stop?",
+      "behavior": "answer",
+      "supporting": "Opzegtermijn: 3 weken",
+      "contains": [
+        "3 weken"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "para-cancel",
+      "category": "paraphrase",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "kan ik mijn contract opzeggen?",
+      "behavior": "answer",
+      "supporting": "Opzegtermijn: 3 weken",
+      "contains": [
+        "3 weken"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "para-move",
+      "category": "paraphrase",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "wat moet ik doen als ik verhuis?",
+      "behavior": "answer",
+      "supporting": "meterstanden van uw oude woning",
+      "contains": [
+        "meterstanden"
+      ],
+      "excludes": [
+        "[X] [X]"
+      ]
+    },
+    {
+      "id": "para-notice-advance",
+      "category": "paraphrase",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "hoe lang op voorhand moet ik opzeggen?",
+      "behavior": "answer",
+      "supporting": "opzegtermijn 3 weken",
+      "contains": [
+        "3 weken"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "para-due",
+      "category": "paraphrase",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "tegen wanneer moet het geld op hun rekening staan?",
+      "behavior": "answer",
+      "supporting": "10/03/2026",
+      "contains": [
+        "10/03/2026"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "overlap-kwh-price",
+      "category": "overlap",
+      "fixture": "01-nl-afrekening-gegroepeerd.pdf",
+      "question": "hoeveel kost een kWh elektriciteit?",
+      "behavior": "missing",
+      "contains": [
+        "geen prijs per kWh"
+      ],
+      "excludes": [
+        "42.400",
+        "2708",
+        "2.708"
+      ]
+    },
+    {
+      "id": "own-ean",
+      "category": "identifier",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "wat is mijn EAN?",
+      "behavior": "answer",
+      "supporting": "000000000000000231",
+      "contains": [
+        "000000000000000231"
+      ],
+      "excludes": [
+        "[X] [X]"
+      ]
+    },
+    {
+      "id": "leave-netkosten",
+      "category": "general",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "Wat zijn netkosten?",
+      "behavior": "leave",
+      "contains": [],
+      "excludes": []
+    },
+    {
+      "id": "leave-gasmeter",
+      "category": "general",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "Wat kost het afsluiten van een gasmeter?",
+      "behavior": "leave",
+      "contains": [],
+      "excludes": []
+    },
+    {
+      "id": "leave-who-pays-grid",
+      "category": "general",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "Wie betaalt mijn netkosten?",
+      "behavior": "leave",
+      "contains": [],
+      "excludes": []
+    },
+    {
+      "id": "leave-football",
+      "category": "general",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "wie wint Real of Barcelona?",
+      "behavior": "leave",
+      "contains": [],
+      "excludes": []
+    },
+    {
+      "id": "my-gasmeter",
+      "category": "general",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "Hoeveel kost het afsluiten van mijn gasmeter?",
+      "behavior": "no_bill_answer",
+      "contains": [],
+      "excludes": [
+        "€ 742,00",
+        "€ 700,00",
+        "€ 172,00"
+      ]
+    },
+    {
+      "id": "reg-summary-typo",
+      "category": "regression",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "wat is de smaenvatting hiervn",
+      "behavior": "answer",
+      "supporting": "179,00",
+      "contains": [
+        "179,00"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "reg-gas-year",
+      "category": "regression",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "Wat kost gas per jaar?",
+      "behavior": "answer",
+      "supporting": "105,66",
+      "contains": [
+        "1.267,92"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "reg-payer",
+      "category": "regression",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "wie is dit verschuldigd",
+      "behavior": "answer",
+      "supporting": "179,00",
+      "contains": [
+        "John Doe",
+        "Kanaal Energie"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "reg-amount-due",
+      "category": "regression",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "hoeveel moet ik betalen?",
+      "behavior": "answer",
+      "supporting": "Totaal te betalen: € 172,00",
+      "contains": [
+        "172,00"
+      ],
+      "excludes": []
+    },
+    {
+      "id": "tasks-advice-and-address",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "heb je advies over deze factuur zoek het adres op in deze factuur",
+      "behavior": "answer",
+      "supporting": "Teststraat 0, 0000 Teststad",
+      "contains": [
+        "Mijn advies",
+        "bankapp",
+        "Teststraat 0, 0000 Teststad",
+        "jaarafrekening"
+      ],
+      "excludes": [
+        "Ik weet niet zeker"
+      ]
+    },
+    {
+      "id": "tasks-summary-and-address",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "vat samen en zoek het adres",
+      "behavior": "answer",
+      "supporting": "Teststraat 0, 0000 Teststad",
+      "contains": [
+        "Samenvatting",
+        "Teststraat 0, 0000 Teststad"
+      ],
+      "excludes": [
+        "Ik weet niet zeker"
+      ]
+    },
+    {
+      "id": "tasks-address-typo",
+      "category": "tasks",
+      "fixture": "23-nl-leveringsadres.pdf",
+      "question": "zoek het adress op",
+      "behavior": "answer",
+      "supporting": "Zonnestraat 12",
+      "contains": [
+        "Zonnestraat 12"
+      ],
+      "excludes": [
+        "Ik weet niet zeker"
+      ]
+    },
+    {
+      "id": "tasks-advice-alone",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "heb je advies?",
+      "behavior": "answer",
+      "contains": [
+        "bankapp",
+        "Pas je voorschot niet aan",
+        "jaarafrekening",
+        "Nagekeken"
+      ],
+      "excludes": [
+        "Voorschot elektriciteit okt 2026",
+        "aandachtspunten vond ik niet"
+      ]
+    },
+    {
+      "id": "tasks-advice-slang",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "wat moet ik hiermee doen",
+      "behavior": "answer",
+      "contains": [
+        "bankapp",
+        "jaarafrekening"
+      ],
+      "excludes": [
+        "Ik weet niet zeker"
+      ]
+    },
+    {
+      "id": "tasks-clear-and-unclear",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "heb je iets voor me over deze factuur, zoek het adres op",
+      "behavior": "ask_back",
+      "supporting": "Teststraat 0, 0000 Teststad",
+      "contains": [
+        "Teststraat 0, 0000 Teststad",
+        "Wat wil je weten over"
+      ],
+      "excludes": [
+        "concreter"
+      ]
+    },
+    {
+      "id": "tasks-interrupted",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "turns": [
+        "hoeveel btw betaal ik op gas"
+      ],
+      "question": "wacht, eerst: heb je tips?",
+      "behavior": "answer",
+      "contains": [
+        "Mijn advies"
+      ],
+      "excludes": [
+        "Ik weet niet zeker"
+      ]
+    },
+    {
+      "id": "tasks-and-the-address",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "turns": [
+        "wie moet betalen?"
+      ],
+      "question": "en het adres?",
+      "behavior": "answer",
+      "supporting": "Teststraat 0, 0000 Teststad",
+      "contains": [
+        "Teststraat 0, 0000 Teststad"
+      ],
+      "excludes": [
+        "Ik weet niet zeker"
+      ]
+    },
+    {
+      "id": "tasks-payment-consistent",
+      "category": "tasks",
+      "fixture": "11-nl-voorschot-domiciliering.pdf",
+      "question": "wie moet betalen?",
+      "behavior": "answer",
+      "contains": [
+        "domiciliëring aan op 31 oktober 2026",
+        "kan ik niet zien"
+      ],
+      "excludes": [
+        "betaalt je bank",
+        "automatisch"
+      ]
+    },
+    {
+      "id": "tasks-two-addresses",
+      "category": "tasks",
+      "fixture": "24-nl-facturatie-en-leveringsadres.pdf",
+      "question": "geef het leveringsadres en het facturatieadres",
+      "behavior": "answer",
+      "supporting": "Molenlaan 7, 0001 Proefdorp",
+      "contains": [
+        "leveringsadres",
+        "Molenlaan 7",
+        "facturatieadres",
+        "Kerkweg 1"
+      ],
+      "excludes": []
+    }
   ]
 }
