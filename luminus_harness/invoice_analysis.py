@@ -138,13 +138,17 @@ def _decimal_value(raw: str) -> Decimal | None:
         return None
 
 
-def _fact(value: Any, chunk: KnowledgeChunk, excerpt: str) -> dict[str, Any]:
-    return {
+def _fact(value: Any, chunk: KnowledgeChunk, excerpt: str, field: str = "") -> dict[str, Any]:
+    """`field` is the exact text the value was read from ("Totaal te betalen: €700,00"); `excerpt` adds context."""
+    fact = {
         "value": value,
         "page": chunk.page,
         "source": chunk.source,
         "excerpt": excerpt.strip()[:360],
     }
+    if field:
+        fact["field"] = " ".join(field.split())[:200]
+    return fact
 
 
 def _find_pattern(chunks: list[KnowledgeChunk], pattern: re.Pattern[str], *, group: int = 1) -> dict[str, Any] | None:
@@ -154,7 +158,7 @@ def _find_pattern(chunks: list[KnowledgeChunk], pattern: re.Pattern[str], *, gro
             value = match.group(group)
             start = max(0, match.start() - 65)
             end = min(len(chunk.text), match.end() + 65)
-            return _fact(value, chunk, chunk.text[start:end])
+            return _fact(value, chunk, chunk.text[start:end], match.group(0))
     return None
 
 
@@ -176,7 +180,7 @@ def _find_period(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
                 value += f" tot {match.group(2)}"
             start = max(0, match.start() - 65)
             end = min(len(chunk.text), match.end() + 65)
-            return _fact(value, chunk, chunk.text[start:end])
+            return _fact(value, chunk, chunk.text[start:end], match.group(0))
     return None
 
 
@@ -205,7 +209,7 @@ def _find_labeled_amount(chunks: list[KnowledgeChunk], labels: tuple[str, ...]) 
                 amount = -amount
             start = max(0, match.start() - 45)
             end = min(len(chunk.text), match.end() + 45)
-            return _fact(amount, chunk, chunk.text[start:end])
+            return _fact(amount, chunk, chunk.text[start:end], match.group(0))
     return None
 
 
@@ -836,7 +840,8 @@ def _fact_answer(question: str, facts: dict[str, Any]) -> dict[str, Any] | None:
         sources = [_fact_source(item) for item in (invoice_type, due, lines) if item]
         return {"answer": " ".join(parts), "sources": sources}
     if fact is not None:
-        answer = {"answer": _fact_sentence(key, fact), "sources": [_fact_source(fact)]}
+        # fact_keys: which facts the answer states, so a session can refer back to their own fields.
+        answer = {"answer": _fact_sentence(key, fact), "sources": [_fact_source(fact)], "fact_keys": [key]}
         due = facts.get("due_date")
         if key == "amount_due" and fact["value"] > 0 and due:
             if due.get("direct_debit"):
@@ -886,6 +891,8 @@ def answer_uploaded_pdf_question(
     from .invoice_model import mask_invoice_text
 
     names = tuple(name for name in (_customer_name(facts, invoice),) if name)
+    if passages is None:
+        result.pop("fact_keys", None)  # only a session's hook reads them
     for source in result.get("sources", []):
         if source.pop("masked", False):
             continue

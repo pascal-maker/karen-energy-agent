@@ -76,6 +76,7 @@ class InvoiceSession:
         question = " ".join(question.split())
         result = self._answer(question)
         refs = result.pop("refs", None)
+        result.pop("fact_keys", None)
         for source in result.get("sources", []):
             source.pop("masked", None)
         self._remember(question, result, refs)
@@ -129,16 +130,37 @@ class InvoiceSession:
         return found
 
     def _fact_fields(self, fact_answer: dict[str, Any]) -> list[tuple[Any, str, str]]:
-        """The fields the fact answer was read from: its facts' values, found where their evidence puts them."""
+        """The fields the fact answer was read from. The fact reader names its facts (`fact_keys`) and each fact
+        keeps the exact text its value was read from (`field`); that text decides, never an equal amount nearby.
+        Facts without that text (rows summed from a table) fall back to their value and evidence passage."""
         fields = []
+        keyed = [self.facts.get(key) for key in fact_answer.get("fact_keys", [])]
+        for fact in keyed:
+            if isinstance(fact, dict) and fact.get("field"):
+                fields.append(self._field_from_text(fact["field"], fact["page"]))
+        if fields:
+            return fields
         for source in fact_answer.get("sources", []):
             fact = next((fact for fact in self.facts.values() if isinstance(fact, dict) and fact.get("excerpt") == source.get("excerpt")), None)
             if fact is None or isinstance(fact.get("value"), (list, dict)):
+                continue
+            if fact.get("field"):
+                fields.append(self._field_from_text(fact["field"], fact["page"]))
                 continue
             holding = self._fields_holding(fact["value"])
             evidenced = [field for field in holding if _label_before_value(field[1], field[2], fact["excerpt"])]
             fields.extend(evidenced[:1] or holding[:1])
         return fields
+
+    def _field_from_text(self, text: str, page: int) -> tuple[Any, str, str]:
+        """(unit, label, cell) for a field read as `text`: the section line that holds that very text (which may
+        go on: "… €700,00 incl. btw"), else the text itself on its page."""
+        folded = _fold(text)
+        for unit in self.index.units:
+            if unit.page == page and folded in _fold(unit.text):
+                label = unit.text.split(":", 1)[0].strip() if ":" in unit.text else _label_of(text)
+                return unit, label, unit.text
+        return _Loose(page), _label_of(text), text
 
     # --- people and addresses ----------------------------------------------------------------------
 
@@ -231,7 +253,7 @@ class InvoiceSession:
         if re.match(r"(?i)\s*(?:btw|tva|vat)\b", ref.column):
             return {"answer": f"{ref.amount} is het btw-bedrag zelf: „{shown}“{page}.", "sources": source, "refs": refs_out}
         # Only the cell's own column or line says incl. or excl.; a neighbouring column never does.
-        state = _VAT_STATE.search(ref.column or ref.field)
+        state = _VAT_STATE.search(ref.column) or _VAT_STATE.search(ref.field)
         if state is None:
             return {"answer": f"Bij {ref.amount} staat niet of het inclusief of exclusief btw is: „{shown}“{page}.", "sources": source, "refs": refs_out}
         included = state.group(1).lower().startswith(("incl", "tvac", "ttc"))
@@ -512,6 +534,18 @@ def _focus(row: str, question: str) -> str:
         return row
     label, cells = row.split(" — ", 1)
     return f"{label} — " + " · ".join(f"**{part}**" if part.strip() in focused else part for part in cells.split(" · "))
+
+
+@dataclass(frozen=True)
+class _Loose:
+    """A field found only in the fact reader's text, not in a section line."""
+
+    page: int
+    text: str = ""
+
+
+def _label_of(text: str) -> str:
+    return re.split(r"\s*[:€\d−-]", text, maxsplit=1)[0].strip()
 
 
 def _field_text(unit: Any, cell: str) -> str:

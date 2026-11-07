@@ -277,3 +277,14 @@ def test_an_amount_that_also_stands_in_another_field_keeps_the_field_it_came_fro
     assert "€ 700,00" in session.ask("hoeveel moet ik betalen?")["answer"]
     answer = session.ask("is dit bedrag inclusief btw?")["answer"]
     assert "Totaal te betalen" in answer and "Gas" not in answer, answer
+
+
+# --- Review of c164350 ------------------------------------------------------------------------------
+
+def test_this_amount_keeps_the_fact_field_even_when_another_field_in_the_same_passage_has_that_amount():
+    text = "Gas excl. btw: €700,00\nTotaal te betalen: €700,00 incl. btw\nTotale energiekosten: €742,00\nVoorschotten betaald: €42,00"
+    session = _text_session(text)
+    assert "700,00" in session.ask("hoeveel moet ik betalen?")["answer"]
+    answer = session.ask("is dit bedrag inclusief btw?")["answer"]
+    assert answer.startswith("Ja") and "Totaal te betalen" in answer and "Gas" not in answer, answer
+    assert all("fact_keys" not in reply for reply in (session.ask("hoeveel moet ik betalen?"),))
