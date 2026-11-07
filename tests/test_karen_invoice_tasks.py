@@ -360,3 +360,103 @@ def test_review_street_names_never_reach_the_intent_model(question):
     for word in ("Tests", "Testville", "Louise", "Wavre", "Ixelles", "Flagey", "Markt", "Antwerpen", "Baan", "54", "100", "12"):
         assert word not in masked
     assert "[adres]" in masked
+
+
+# --- review round 3: a pick that does not fit asks again; task parameters; masking or no model call ----
+
+def _asked_which(session):
+    session.ask("hoeveel is de btw?")
+    assert session.ask("is dit bedrag inclusief btw?")["answer"].startswith("Welk bedrag bedoel je?")
+
+
+@pytest.mark.parametrize("pick", ["de 99 euro", "die van water"])
+def test_round3_a_pick_that_matches_no_choice_asks_again(pick):
+    session = _session(SETTLEMENT)
+    _asked_which(session)
+    reply = session.ask(pick)
+    assert reply.get("found", True), "Stays on the bill"
+    assert reply["answer"].startswith("Dat bedrag stond niet bij mijn keuzes.") and "€ 30,00" in reply["answer"] and "€ 42,00" in reply["answer"]
+    assert session.ask("de 42 euro")["answer"].startswith("€ 42,00 is het btw-bedrag zelf"), "The question stays open"
+
+
+def test_round3_number_and_row_together_pick_and_equal_amounts_ask_which_field():
+    from luminus_harness.invoice_session import AmountRef, _choose
+
+    gas = AmountRef("€ 700,00", "Gas — Bedrag excl. btw: € 700,00", "Bedrag excl. btw", 1)
+    due = AmountRef("€ 700,00", "Totaal te betalen: € 700,00", "Totaal te betalen", 1)
+    vat = AmountRef("€ 42,00", "Gas — Btw 6%: € 42,00", "Btw 6%", 1)
+    assert _choose("700", (gas, due, vat)) == [gas, due], "Equal amounts: both fields, so Karen asks which"
+    assert _choose("de 700 van gas", (gas, due, vat)) == [gas], "The row narrows the number"
+    assert _choose("de 42", (gas, due, vat)) == [vat]
+    assert _choose("de 5 euro", (gas, due, vat)) == []
+
+
+def test_round3_equal_amounts_in_a_pick_ask_which_field():
+    from luminus_harness.invoice_session import AmountRef
+
+    session = _session(SETTLEMENT)
+    session.pending = Task("this_amount", "is dit bedrag inclusief btw?")
+    session.choices = (
+        AmountRef("€ 700,00", "Gas — Bedrag excl. btw: € 700,00", "Bedrag excl. btw", 1),
+        AmountRef("€ 700,00", "Totaal te betalen: € 700,00", "Totaal te betalen", 1),
+    )
+    answer = session.ask("700")["answer"]
+    assert answer.startswith("Dat bedrag staat in meer dan één veld. Welk bedrag bedoel je:")
+    assert "Gas — Bedrag excl. btw" in answer and "Totaal te betalen" in answer
+    assert session.ask("die van gas")["answer"].startswith("Nee: € 700,00")
+
+
+def test_round3_yes_no_for_an_address_still_works_next_to_amount_picks():
+    session = _session(SETTLEMENT)
+    session.ask("waar woont ze?")
+    assert "Zonnestraat 12" in session.ask("ja")["answer"]
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("Wat betaal ik per jaar aan gas en wat betaal ik per jaar aan stroom?", ["€ 1.267,92", "€ 758,52"]),
+    ("Wat betaal ik per jaar aan stroom en wat betaal ik per jaar aan gas?", ["€ 758,52", "€ 1.267,92"]),
+])
+def test_round3_yearly_per_energy_in_the_order_asked(question, expected):
+    answer = _session(ADVANCE).ask(question)["answer"]
+    assert all(amount in answer for amount in expected) and "2.148" not in answer
+    assert answer.index(expected[0]) < answer.index(expected[1])
+
+
+def test_round3_task_parameters_keep_tasks_apart():
+    from luminus_harness.invoice_intent import task_parameters
+
+    assert task_parameters(Task("question", "wat kost gas zonder btw")) != task_parameters(Task("question", "wat kost gas met btw"))
+    assert task_parameters(Task("address", "het adres van de leverancier", "address")) != task_parameters(Task("address", "mijn adres", "address"))
+    plan = parse_locally("wat kost gas zonder btw en wat kost gas met btw")
+    assert len(plan.tasks) + len(plan.unclear) == 2
+    assert len(parse_locally("vat samen, vat samen").tasks) == 1, "Identical tasks still merge"
+
+
+@pytest.mark.parametrize("question, private", [
+    ("zoek het adres Kerkstraat 12 bus 3, 9000 Gent en Rue des Tests 12 bte 4, 1000 Testville", ("Kerkstraat", "Gent", "Tests", "Testville", "12", "9000")),
+    ("woon ik op nr 12 in de Dorpsstraat?", ("Dorpsstraat", "12")),
+    ("is het 1000 Brussel, Rue Haute 5?", ("Brussel", "Haute", "1000")),
+    ("Molenlaan 7A, 0001 Proefdorp", ("Molenlaan", "Proefdorp", "7A")),
+    ("2000 Antwerpen", ("Antwerpen", "2000")),
+])
+def test_round3_addresses_are_masked_in_every_order(question, private):
+    masked = masked_question(question, ())
+    assert not any(word in masked for word in private), masked
+
+
+def test_round3_when_masking_is_unsure_the_model_is_not_called(intent_model):
+    from luminus_harness.invoice_intent import masking_is_safe
+
+    assert masking_is_safe(masked_question("heb je advies?", ())) is True
+    assert masking_is_safe("zoek het adres Testhoek 4") is False, "A name with a house number left over: unsure"
+    seen = intent_model(json.dumps({"tasks": [{"type": "address", "text": "zoek het adres", "address_kind": "address"}], "unclear": []}))
+    plan = _plan_for("zoek het adres Testhoek 4", _session(ADVANCE))
+    assert plan.parsed_by == "rules" and "masked" not in seen, "Unsure masking: the local parser decides, nothing is sent"
+
+
+def test_round3_consumption_never_answers_with_an_ean_or_a_cost():
+    for fixture in (SETTLEMENT, ADVANCE):
+        for question in ("Wat is mijn elektriciteitsverbruik?", "wat is mijn verbruik?", "hoeveel kWh heb ik verbruikt?"):
+            answer = _session(fixture).ask(question)["answer"]
+            assert "EAN" not in answer and "[X]" not in answer, (fixture, question, answer)
+            assert not any(cost in answer for cost in ("€ 530,00", "€ 500,00", "€ 742,00", "€ 63,21 excl", "Bedrag excl")), (fixture, question, answer)

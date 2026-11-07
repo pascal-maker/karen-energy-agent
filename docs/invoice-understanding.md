@@ -79,6 +79,16 @@ gewoon beantwoordt.
   bedrag genoemd). Nooit de PDF, de tekst of de adressen van de factuur. Het antwoord moet het strikte
   JSON-schema volgen en elke taak moet letterlijk in de vraag staan; anders, of bij een time-out of fout,
   beslist de lokale parser. `store=False`. Het model zoekt niets op en rekent niets uit.
+- **Grenzen van de maskering.** Adressen worden herkend met patronen voor gangbare Belgische, Nederlandse en
+  Franse schrijfwijzen (straatnaam met of zonder type, huisnummer, bus, postcode met plaats). Dat is geen
+  volledige anonimisering. Blijft er na het maskeren iets over dat op een adres lijkt (een postcode, of een woord
+  met een los huisnummer), dan gaat er niets weg en beslist de lokale parser. Dat is bewust voorzichtig: ook "in
+  2027" valt daaronder.
+- **Openstaande wedervragen.** "Bedoel je …?" (adres) en "Welk bedrag bedoel je?" (met de aangeboden velden,
+  elk met veldtekst en pagina) blijven open. Een keuze wordt herkend op bedrag, rij of kolom, of positie; past
+  ze bij geen veld of bij meer dan één veld, dan vraagt Karen opnieuw. Een nieuwe vraag sluit de wedervraag.
+- **Taakparameters.** Twee delen zijn één taak alleen als type, adressoort, energie, partij, btw-basis en (bij
+  een open vraag) het onderwerp gelijk zijn.
 
 ### Eén betalingsstatus, advies als acties
 

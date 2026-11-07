@@ -116,12 +116,17 @@ def classify(text: str, customer_parts: set[str] = frozenset()) -> Task | None:
     return None
 
 
-def _task_key(task: Task) -> tuple[str, str | None, str | None]:
-    """Two parts are the same task only with the same type and subject: "per jaar aan gas" and "per jaar aan
-    stroom" are two yearly tasks; "vat samen, vat samen" is one."""
+def task_parameters(task: Task) -> tuple[Any, ...]:
+    """What a task is about besides its type: address kind, energy, party and btw basis, plus, for an open
+    question, its own subject words. Two parts are one task only when all of these are equal: "per jaar aan gas"
+    and "per jaar aan stroom" are two; "vat samen, vat samen" is one."""
     from .invoice_schema import _asked_energy
+    from .invoice_session import _qualifiers
 
-    return task.type, task.address_kind, _asked_energy(task.text)
+    plain = _plain(task.text)
+    party = "supplier" if re.search(r"\b(?:leverancier|fournisseur|supplier)\b", plain) else "customer"
+    subject = tuple(sorted(set(_content_words(task.text)))) if task.type == "question" else ()
+    return task.type, task.address_kind, _asked_energy(task.text), party, tuple(sorted(_qualifiers(task.text))), subject
 
 
 def _only_asks_for_advice(plain: str, match: re.Match[str], customer_parts: set[str]) -> bool:
@@ -138,6 +143,7 @@ def _content_words(text: str) -> list[str]:
     return [word for word in re.findall(r"[a-z]{3,}", _plain(text)) if word not in _FILLER]
 
 
+_QUESTION_START = re.compile(r"(?i)\s*(?:wat|wie|waar|wanneer|hoeveel|hoe|welke?|waarom|is|zijn|kan|kun|klopt|moet|combien|quel|quand|what|how|when)\b")
 _FILLER = frozenset(
     "deze dit dat die het een van over voor met mijn mij jij jou hier daar ook nog even graag aub alsjeblieft please "
     "factuur rekening document pdf bijlage dank bedankt merci thanks wel alvast super top oke okay".split()
@@ -152,12 +158,21 @@ def parse_locally(question: str, customer_parts: set[str] = frozenset()) -> Plan
         unclear: list[str] = []
         for part in parts:
             task = classify(part, customer_parts)
-            if task is not None and all(_task_key(task) != _task_key(other) for other in tasks):
+            if task is not None and all(task_parameters(task) != task_parameters(other) for other in tasks):
                 tasks.append(task)
             elif task is None and _content_words(part):
                 unclear.append(part)
         if len(tasks) >= 2:
             return Plan(tasks[:MAX_TASKS], unclear[:2])
+        questions = [Task("question", part) for part in unclear if _QUESTION_START.match(part)]
+        if not tasks and len(questions) >= 2 and len(questions) == len(unclear):
+            # "wat kost gas zonder btw en wat kost gas met btw": two full questions, each asked of the bill.
+            distinct: list[Task] = []
+            for task in questions:
+                if all(task_parameters(task) != task_parameters(other) for other in distinct):
+                    distinct.append(task)
+            if len(distinct) >= 2:
+                return Plan(distinct[:MAX_TASKS])
         if len(tasks) == 1 and (whole is None or unclear):
             # "heb je iets voor me over deze factuur, zoek het adres op": do the part that is clear, ask about the rest.
             return Plan(tasks, unclear[:2])
@@ -225,8 +240,22 @@ def masked_question(question: str, names: tuple[str, ...]) -> str:
     masked = _POSTCODE_PLACE.sub("[adres]", masked)
     # Whatever stands before a house number and a postcode is the street, in any language: "Grote Markt 1, [adres]".
     masked = _BEFORE_POSTCODE.sub("[adres]", masked)
+    masked = _STREET_WORD.sub("[adres]", masked)  # a street named without its number: "in de Dorpsstraat"
     masked = re.sub(r"\[adres\](?:[\s,]+\[adres\])+", "[adres]", masked)
     return mask_identifiers(masked, ())
+
+
+def masking_is_safe(masked: str) -> bool:
+    """False when the masked question still looks like it holds an address: a postcode, or a word followed by a
+    house number. The patterns cover common Belgian, Dutch and French ways of writing an address, not every one,
+    so in doubt nothing is sent and the local parser decides."""
+    rest = masked.replace("[adres]", " ").replace("[klant]", " ").replace("[X]", " ")
+    if re.search(r"\b\d{4}\s?(?:[A-Z]{2}\b)?", rest):
+        return False
+    # A word, then a house number that is no amount, quantity or period: "Testhoek 4", "nr 12 bus 3". Years and
+    # amounts written with a unit pass; a bare number after a word does not, which is cautious on purpose.
+    house_number = r"[^\W\d_]{3,}\.?\s+(?:nr\.?\s*)?\d{1,4}\s*[a-zA-Z]?\b(?!\s*(?:€|euro|eur|kwh|mwh|m3|m³|%|maand|jaar|dag|week|keer|x\b))"
+    return not re.search(house_number, rest, re.IGNORECASE)
 
 
 # French and other street names that start with their kind: "Rue des Tests 12", "Chaussée de Wavre 100 bte 3".
@@ -235,6 +264,10 @@ _STREET_FIRST = re.compile(
     r"|passage|rond-point|sentier|street|road|lane)\b(?:\s+[^\W\d_][\w'’-]*){0,5}\s+\d+\s*\w?\b(?:\s*(?:bus|bte|boîte|b)\.?\s*\w+)?"
 )
 _BEFORE_POSTCODE = re.compile(r"(?:\b[^\W\d_][\w'’-]*\s+){1,5}\d+\s*\w?\b(?:\s*(?:bus|bte|boîte)\.?\s*\w+)?,?\s*(?=\[adres\])")
+_STREET_WORD = re.compile(
+    r"(?i)\b[^\W\d_]{2,}(?:straat|laan|steenweg|dreef|plein|kaai|singel|dijk|lei|baan|weg)\b"
+    r"|\b(?:rue|avenue|boulevard|chauss[ée]e|place|square|all[ée]e|chemin|quai|impasse)\s+(?:de\s+la\s+|du\s+|des\s+|de\s+|d['’])?[A-Z][\w'’-]*"
+)
 _STREET = re.compile(
     r"(?i)(?:(?-i:\b[A-Z][^\W\d_]*)\s+){0,3}\b[^\W\d_]*(?:straat|laan|weg|plein|lei|dreef|baan|steenweg|kaai|markt|singel|dijk|pad|hof|rue|avenue|chauss[ée]e|boulevard|place)"
     r"\s*\d+\s*\w?\b(?:\s*(?:bus|bte|boîte)\s*\w+)?"
@@ -293,6 +326,8 @@ async def parse(question: str, names: tuple[str, ...], customer_parts: set[str],
     """The model's plan when enabled and valid, else the local parser's."""
     if intent_model_enabled() and 2 <= len(question) <= 500:
         masked = masked_question(question, names)
+        if not masking_is_safe(masked):
+            return parse_locally(question, customer_parts)  # unsure the question is free of an address: nothing is sent
         try:
             raw = await asyncio.wait_for(_ask_intent_model(masked, context), INTENT_DEADLINE_SECONDS + 1)
         except Exception:

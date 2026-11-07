@@ -88,10 +88,18 @@ class InvoiceSession:
         question = " ".join(question.split())
         pending, self.pending = self.pending, None
         choices, self.choices = self.choices, ()
-        chosen = _choose(question, choices) if pending is not None and choices and _is_a_pick(question) else None
-        if chosen is not None:
-            # "de 42 euro", "die van gas", "de tweede": the amount chosen, for the question that was pending.
-            plan, self._chosen = Plan([pending]), chosen
+        picked = _choose(question, choices) if pending is not None and choices and _is_a_pick(question) else None
+        if picked is not None and len(picked) != 1:
+            # No choice fits ("de 99 euro"), or one amount stands in more fields: ask again, the question stays open.
+            self.pending, self.choices = pending, tuple(picked or choices)
+            lead = "Dat bedrag stond niet bij mijn keuzes." if not picked else "Dat bedrag staat in meer dan één veld."
+            options = "; ".join(_option(ref) for ref in self.choices)
+            result = {"answer": f"{lead} Welk bedrag bedoel je: {options}?", "sources": []}
+            self._remember(question, result, [], ("this_amount",))
+            return result
+        if picked:
+            # "de 42 euro", "die van gas", "de tweede": the field chosen, for the question that was pending.
+            plan, self._chosen = Plan([pending]), picked[0]
         elif pending is not None and not choices and _YES.fullmatch(question):
             plan, self._confirmed = Plan([pending]), True
         elif pending is not None and _NO.fullmatch(question):
@@ -351,8 +359,8 @@ class InvoiceSession:
         if not distinct:
             return {"answer": "Over welk bedrag gaat het? Noem het bedrag of de regel op de factuur, dan zoek ik het op.", "sources": []}
         if len(distinct) > 1:
-            options = "; ".join(f"{ref.amount} ({ref.field or ref.column})" if (ref.field or ref.column) else ref.amount for ref in distinct[:4])
-            # The question stays open with its choices: "de 42 euro" afterwards answers it.
+            options = "; ".join(_option(ref) for ref in distinct[:4])
+            # The question stays open with its choices (each its field and page): "de 42 euro" afterwards answers it.
             self.pending, self.choices = Task("this_amount", question), tuple(distinct[:4])
             return {"answer": f"Welk bedrag bedoel je? Mijn vorige antwoord noemde er meer: {options}.", "sources": []}
         ref = distinct[0]
@@ -745,21 +753,37 @@ def _is_a_pick(answer: str) -> bool:
     return 0 < len(words) <= 5 and not asks
 
 
-def _choose(answer: str, choices: tuple[AmountRef, ...]) -> AmountRef | None:
-    """The amount a reply to "Welk bedrag bedoel je?" picks: by its number ("de 42 euro", "€ 42,00"), by its row
-    or column ("die van gas", "de btw van elektriciteit"), or by position ("de tweede", "de laatste"). One only."""
+def _option(ref: AmountRef) -> str:
+    where = ref.field or ref.column
+    page = f", PDF-pagina {ref.page}" if ref.page else ""
+    return f"{ref.amount} ({where}{page})" if where else ref.amount
+
+
+_PICK_FILLER = frozenset("die dat van het bedrag euro eur bedoel ik graag de een deze".split())
+
+
+def _choose(answer: str, choices: tuple[AmountRef, ...]) -> list[AmountRef]:
+    """The fields a reply to "Welk bedrag bedoel je?" points at, by meaning, not only by number: its number
+    ("de 42 euro"), its row or column ("die van gas"), both ("de 700 van gas"), or its position ("de tweede").
+    One field resumes the question; none or several make Karen ask again."""
     folded = _fold(answer)
-    numbers = {Decimal(raw.replace(".", "").replace(",", ".")) if "," in raw else Decimal(raw) for raw in re.findall(r"\d+(?:[.,]\d{1,2})?", folded)}
-    picked = [ref for ref in choices if _decimal(ref.amount) in numbers] if numbers else []
-    if not picked:
-        words = set(re.findall(r"[a-z]{3,}", folded)) - {"die", "van", "het", "bedrag", "euro", "bedoel", "ik"}
-        picked = [ref for ref in choices if words & set(re.findall(r"[a-z]{3,}", _fold(_row_label(ref.field) + " " + ref.column)))]
-    if not picked:
-        position = next((index for word, index in _ORDINALS.items() if re.search(rf"\b{word}\b", folded)), None)
-        if re.search(r"\blaatste\b|\bdernier", folded):
-            position = len(choices) - 1
-        picked = [choices[position]] if position is not None and position < len(choices) else []
-    return picked[0] if len(picked) == 1 else None
+    numbers = {Decimal(raw.replace(".", "").replace(",", ".")) if "," in raw else Decimal(raw)
+               for raw in re.findall(r"\d+(?:[.,]\d{1,2})?", folded)}
+    words = set(re.findall(r"[a-z]{3,}", folded)) - _PICK_FILLER
+
+    def named(ref: AmountRef) -> bool:
+        return bool(words & set(re.findall(r"[a-z]{3,}", _fold(_row_label(ref.field) + " " + ref.column + " " + ref.field.split(":")[0]))))
+
+    if numbers:
+        picked = [ref for ref in choices if _decimal(ref.amount) in numbers]
+        narrowed = [ref for ref in picked if named(ref)]
+        return narrowed if words and narrowed else picked
+    position = next((index for word, index in _ORDINALS.items() if re.search(rf"\b{word}\b", folded)), None)
+    if re.search(r"\blaatste\b|\bdernier", folded):
+        position = len(choices) - 1
+    if position is not None:
+        return [choices[position]] if position < len(choices) else []
+    return [ref for ref in choices if named(ref)] if words else []
 
 
 _YES = re.compile(r"(?i)\s*(?:ja|jawel|jep|yes|oui|klopt|inderdaad|correct|zeker|ja\s+(?:die|dat|klopt|graag|die\s+persoon))\s*[.!]*\s*")
