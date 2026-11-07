@@ -65,8 +65,8 @@ def content_terms(text: str) -> set[str]:
 
 _PER_KWH_Q = re.compile(r"(?i)(?:per|/|een|1)\s*kwh|kwh[- ]?prijs|prijs per|eenheidsprijs|tarief per|kost(?:t|en)? (?:een|1) kwh|prix (?:du|par) kwh")
 _DURATION_Q = re.compile(r"(?i)\bhoe\s+lang\b|\btermijn|\bop\s+voorhand\b|\bvooraf\b|\bhoeveel\s+(?:dagen|weken|maanden|jaar)\b|\bcombien de (?:jours|semaines|mois)\b|\bdélai\b")
-_DATE_Q = re.compile(r"(?i)\bwanneer\b|\bdatum\b|\btegen\s+wanneer\b|\bvervaldag|\bquand\b|\bdate\b")
-_QUANTITY_Q = re.compile(r"(?i)\bverbruik|\bkwh\b|\bm³|\bm3\b|\bconsommation\b")
+_DATE_Q = re.compile(r"(?i)\bwanneer\b|datum\b|\btegen\s+wanneer\b|\bvervaldag|\bquand\b|\bdate\b")
+_QUANTITY_Q = re.compile(r"(?i)verbruik|\bkwh\b|\bm³|\bm3\b|\bconsommation\b")
 _AMOUNT_Q = re.compile(r"(?i)\bhoeveel\b|\bbedrag|\bkost|\bbtw\b|\bbetaal|\bbetalen|\bprijs|\bvoorschot|\bcombien\b|\bmontant|\btva\b|€")
 
 _PER_KWH = re.compile(r"(?i)(?:€|c€|eur|euro|cent|ct)\s*/\s*kwh|(?:euro|eur|cent)\s+per\s+kwh|/kwh")
@@ -91,6 +91,55 @@ def expected_value(question: str) -> ValueKind:
     if _AMOUNT_Q.search(question):
         return "amount"
     return "any"
+
+
+# What a date or duration is the date or duration OF. A notice period is no contract term, a billing period no
+# due date: a question naming one relation is never answered by a field naming another (audit 2026-11-07).
+_RELATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("notice", re.compile(r"(?i)opzeg|pr[ée]avis|r[ée]sili")),
+    ("contract_term", re.compile(
+        r"(?i)looptijd|contractduur|duur\s+van\s+(?:het|je|uw|mijn)\s+contract|einde?\s+(?:van\s+)?(?:het\s+|je\s+|uw\s+|mijn\s+)?contract"
+        r"|contract\w*\s+(?:loopt|eindigt|afloopt|geldig)|(?:hoe\s+lang|tot\s+wanneer)\b.*\bcontract|contract\b.*\b(?:hoe\s+lang|tot\s+wanneer)"
+        r"|(?:on)?bepaalde\s+duur|dur[ée]e\s+(?:du\s+contrat|ind[ée]termin[ée]e|d[ée]termin[ée]e)")),
+    ("due_date", re.compile(
+        r"(?i)vervaldat|vervaldag|uiterlijk\s+(?:te\s+)?betal|te\s+betalen\s+v[oó][oó]r|tegen\s+wanneer|wanneer\b.*\b(?:moet|moeten)\b.*\bbetal"
+        r"|op\s+(?:hun|de|jullie|uw|hun)\s+rekening|[ée]ch[ée]ance")),
+    ("invoice_date", re.compile(
+        r"(?i)factuurdatum|datum\s+van\s+(?:de|deze)\s+factuur|date\s+de\s+(?:la\s+)?facture"
+        r"|wanneer\b.*\bfactuur\b.*\b(?:opgemaakt|gemaakt|verstuurd|uitgereikt|gedateerd)")),
+    ("supply_start", re.compile(
+        r"(?i)(?:start|begin)\w*\s+(?:van\s+de\s+)?levering|leveringsdatum|levering\w*\s+(?:start|begint|gestart)|sinds\s+wanneer\b.*\bgeleverd"
+        r"|d[ée]but\s+de\s+(?:la\s+)?fourniture")),
+    ("billing_period", re.compile(r"(?i)factuurperiode|\bperiode|p[ée]riode")),
+)
+
+
+def relation(text: str) -> str | None:
+    """The one relation a question or a field names (notice, contract_term, due_date, …), or None."""
+    return next((name for name, pattern in _RELATIONS if pattern.search(text)), None)
+
+
+def _relations(text: str) -> set[str]:
+    return {name for name, pattern in _RELATIONS if pattern.search(text)}
+
+
+def field_relations(text: str) -> set[str]:
+    """What a field is about: its label ("Opzegtermijn: 3 weken"), or, under a label that names none
+    ("Contract: … onbepaalde duur, opzegtermijn 3 weken"), the relations its value names."""
+    head = text.split("\n", 1)[0]
+    label, _, value = head.partition(":") if ":" in head[:80] else (head, "", "")
+    return _relations(label) or _relations(value)
+
+
+def _field_relation(text: str) -> str | None:
+    return next(iter(sorted(field_relations(text))), None)
+
+
+def same_relation(question: str, text: str) -> bool:
+    """A question that names a relation ("hoe lang loopt mijn contract") is answered only by a field that names the
+    same one: a sentence that merely holds a duration ("een maand vooraf") is no contract term either."""
+    asked = relation(question)
+    return asked is None or asked in field_relations(text)
 
 
 def has_value(text: str, kind: ValueKind) -> bool:
@@ -319,10 +368,13 @@ class InvoiceIndex:
         if kind not in ("any", "amount"):
             needed = min(needed, 0.5)  # the kind of value asked for is evidence too: half the subject suffices
         supported = []
+        asked = relation(question)
         for hit in self.search(question):
-            if not has_value(hit.unit.text, kind):
+            if not has_value(hit.unit.text, kind) or not same_relation(question, hit.unit.text):
                 continue
-            by_words = wanted > 0 and hit.coverage >= needed - 1e-9
+            # A field labelled with the relation asked ("Factuurdatum:" for "wat is de factuurdatum") is on topic.
+            by_relation = asked is not None and kind not in ("any", "amount")
+            by_words = by_relation or (wanted > 0 and hit.coverage >= needed - 1e-9)
             by_meaning = kind not in ("any", "amount") and hit.dense is not None and hit.dense >= SEMANTIC_MATCH
             if by_words or by_meaning:
                 supported.append(hit)

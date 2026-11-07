@@ -56,7 +56,8 @@ def test_an_advance_bill_says_what_it_is_instead_of_not_found():
     paid = answer_uploaded_pdf_question("Hoeveel moet ik betalen?", chunks, facts)["answer"]
     assert paid == (
         "Deze factuur bedraagt € 179,00 (PDF-pagina 1). "
-        "Je hoeft niets te doen: je bank betaalt dit bedrag op 31.10.2026 via domiciliëring (PDF-pagina 1)."
+        "De factuur kondigt een domiciliëring aan op 31 oktober 2026 (PDF-pagina 1). Die datum is voorbij, maar of de "
+        "afhouding gelukt is, kan ik niet zien: kijk het na in je bankapp."
     )
 
 
@@ -125,7 +126,7 @@ def test_direct_debit_wins_over_a_printed_due_date():
         "Vervaldatum: 31/10/2026 Uw bank zal op 31.10.2026 het bedrag van € 67,00 overschrijven."
     )
     assert facts["due_date"]["direct_debit"]
-    assert "je bank betaalt" in answer_uploaded_pdf_question("Hoeveel moet ik betalen?", chunks, facts)["answer"]
+    assert "domiciliëring aan op 31 oktober 2026" in answer_uploaded_pdf_question("Hoeveel moet ik betalen?", chunks, facts)["answer"]
 
 
 @pytest.mark.parametrize("text, vat", [

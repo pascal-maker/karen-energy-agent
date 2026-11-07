@@ -146,7 +146,7 @@ def parse_locally(question: str, customer_parts: set[str] = frozenset()) -> Plan
             task = classify(part, customer_parts)
             if task is not None and all((task.type, task.address_kind) != (other.type, other.address_kind) for other in tasks):
                 tasks.append(task)
-            elif task is None and len(_content_words(part)) >= 2:
+            elif task is None and _content_words(part):
                 unclear.append(part)
         if len(tasks) >= 2:
             return Plan(tasks[:MAX_TASKS], unclear[:2])

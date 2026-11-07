@@ -242,3 +242,73 @@ def test_the_app_asks_the_intent_model_only_with_the_masked_question(intent_mode
     reply = client.post("/api/answer", json={"question": "wat raad je John Doe aan", "session_id": upload["session_id"]}).json()
     assert seen["masked"] == "wat raad je [klant] aan"
     assert reply["answer"].startswith("**Mijn advies:**") and reply["processing"] == "local-only"
+
+
+# --- the audit of main 70e2ce1 (2026-11-07): each conversation as found, on synthetic invoices --------
+
+SETTLEMENT = "23-nl-leveringsadres.pdf"  # € 172,00 to pay before 10/03/2026, Opzegtermijn: 3 weken, gas row € 700,00 excl. btw
+WITH_USE = "01-nl-afrekening-gegroepeerd.pdf"
+
+
+def test_audit_1_the_vat_question_gets_the_vat_amount_not_the_total():
+    answer = _session(ADVANCE).ask("hoeveel btw betaal ik?")["answer"]
+    assert "10,13" in answer and "179,00" not in answer
+
+
+def test_audit_2_a_gas_question_in_kwh_stays_about_gas():
+    for question in ("Wat betaal ik per jaar aan gas (kWh)?", "Wat betaal ik per jaar aan gas?"):
+        answer = _session(ADVANCE).ask(question)["answer"]
+        assert "€ 1.267,92 excl. btw per jaar" in answer and "2.148" not in answer
+
+
+def test_audit_3_must_i_still_pay_gives_the_one_payment_status():
+    answer = _session(ADVANCE).ask("moet ik nog betalen?")["answer"]
+    assert "Je hoeft niets te doen" not in answer and "je bank betaalt" not in answer
+    assert "domiciliëring aan op 31 oktober 2026" in answer
+
+
+def test_audit_4_a_notice_period_is_no_contract_term():
+    session = _session(SETTLEMENT)
+    contract = session.ask("Hoe lang loopt mijn contract?")["answer"]
+    assert contract.startswith("Op deze factuur vond ik geen contractduur.")
+    assert "Dat is niet hetzelfde." in contract, "The notice period is shown as what it is"
+    assert "3 weken" in session.ask("wat is mijn opzegtermijn?")["answer"]
+    assert "10/02/2026" in session.ask("wanneer is de factuur opgemaakt?")["answer"], "Invoice date, not the billing period"
+    assert "10/02/2026" in session.ask("wat is de factuurdatum")["answer"]
+    due = session.ask("tegen wanneer moet het geld op hun rekening staan?")["answer"]
+    assert "10 maart 2026" in due and "01/01/2025" not in due
+
+
+def test_audit_5_electricity_use_is_a_quantity():
+    answer = _session(WITH_USE).ask("Wat is mijn elektriciteitsverbruik?")["answer"]
+    assert "kWh" in answer and "EAN" not in answer and "€" not in answer
+
+
+def test_audit_6_without_vat_means_excluding_vat_also_for_this_amount():
+    session = _session(SETTLEMENT)
+    assert "**Bedrag excl. btw: € 700,00**" in session.ask("Wat kost gas zonder btw?")["answer"]
+    follow_up = session.ask("Is dit bedrag inclusief btw?")["answer"]
+    assert follow_up.startswith("Nee: € 700,00") and "42,00" not in follow_up
+
+
+def test_audit_7_yes_to_a_question_back_resumes_the_task():
+    session = _session(SETTLEMENT)
+    assert "Bedoel je die persoon?" in session.ask("waar woont ze?")["answer"]
+    reply = session.ask("ja")
+    assert reply.get("found", True) and "Zonnestraat 12" in reply["answer"]
+    other = _session(SETTLEMENT)
+    other.ask("waar woont ze?")
+    assert other.ask("nee")["answer"].startswith("Over wie gaat het dan?")
+    assert _session(SETTLEMENT).ask("ja").get("found", True) is False, "A bare 'ja' with nothing asked is not about the bill"
+
+
+def test_audit_8_due_date_and_payer_are_both_answered_once():
+    reply = _session(SETTLEMENT).ask("wat is de vervaldatum en wie moet betalen?")
+    answer = reply["answer"]
+    assert reply.get("found", True) and "Joy Doe" in answer
+    assert answer.count("10 maart 2026") == 1, "The due date once, not repeated by both tasks"
+
+
+def test_audit_9_an_address_typo_stays_on_the_bill():
+    reply = _session(ADVANCE).ask("wat is het ares")
+    assert reply.get("found", True) and ADDRESS in reply["answer"]

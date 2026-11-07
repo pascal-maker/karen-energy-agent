@@ -22,7 +22,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from .invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
-from .invoice_retrieval import Hit, InvoiceIndex, content_terms, embed, expected_value, has_value, terms
+from .invoice_retrieval import Hit, InvoiceIndex, _field_relation, content_terms, embed, expected_value, has_value, relation, terms
 from .invoice_intent import Plan, Task, parse_locally
 from .invoice_model import _WORDS, mask_identifiers, mask_invoice_text
 from .invoice_schema import (
@@ -63,6 +63,9 @@ class InvoiceSession:
     sections: list[Section]
     filename: str
     turns: list[Turn] = field(default_factory=list)
+    # A question Karen asked back ("Bedoel je Joy Doe?") with the task to resume on "ja" (audit 2026-11-07).
+    pending: Task | None = None
+    _confirmed: bool = False
 
     def __post_init__(self) -> None:
         self.index = InvoiceIndex.build(self.sections)
@@ -81,8 +84,20 @@ class InvoiceSession:
         """Answer one visitor message. `plan` is what the question asks, as typed tasks (invoice_intent): from the
         intent model when the app has it on, else the local parser. Each task is carried out here, in code."""
         question = " ".join(question.split())
+        pending, self.pending = self.pending, None
+        if pending is not None and _YES.fullmatch(question):
+            plan, self._confirmed = Plan([pending]), True
+        elif pending is not None and _NO.fullmatch(question):
+            customer = self.invoice.customer.value if self.invoice.customer else ""
+            only = f" Op deze factuur staat alleen {customer} als klant." if customer else ""
+            result = {"answer": f"Over wie gaat het dan?{only}", "sources": []}
+            self._remember(question, result, [], ())
+            return result
         plan = plan or parse_locally(question, self._customer_parts())
-        result = self._carry_out(question, plan)
+        try:
+            result = self._carry_out(question, plan)
+        finally:
+            self._confirmed = False
         refs = result.pop("refs", None)
         result.pop("fact_keys", None)
         for source in result.get("sources", []):
@@ -114,7 +129,11 @@ class InvoiceSession:
         answered = [(task, result) for task, result in done if result.get("found", True) is not False and not _is_clarify(result)]
         if not answered and not unclear:
             return done[0][1]
-        lines = [result["answer"] for _, result in answered]
+        lines: list[str] = []
+        for _, result in answered:
+            # "wat is de vervaldatum en wie moet betalen": the payer answer already gives the debit date.
+            if not any(result["answer"].strip() in line for line in lines):
+                lines.append(result["answer"])
         lines += [f"Over „{task.text}“ vond ik niets op deze factuur." for task, result in done if (task, result) not in answered]
         lines += [f"Wat wil je weten over „{text}“? Ik kan bijvoorbeeld een bedrag, datum of regel op deze factuur opzoeken." for text in unclear]
         sources: list[dict[str, Any]] = []
@@ -233,6 +252,8 @@ class InvoiceSession:
     def _who(self, question: str) -> tuple[str, str | None]:
         """Whom an address question is about: ("customer", name as asked), ("unknown", name) for a name not on the
         bill, ("supplier", None), ("unclear", None) for a pronoun nothing earlier explains."""
+        if self._confirmed:
+            return "customer", None  # the visitor said "ja" to "Bedoel je …?"
         folded = _fold(question)
         words = re.findall(r"[^\W\d_]+", question)
         parts = self._customer_parts()
@@ -260,6 +281,8 @@ class InvoiceSession:
         who, name = self._who(question)
         if who == "other":
             return {"answer": "Deze vraag gaat niet over een adres op je factuur.", "sources": [], "found": False}
+        if who in ("unknown", "unclear") and customer:
+            self.pending = Task("address", question, intent)
         if who == "unknown":
             if customer:
                 return {"answer": f"Ik zie {name} niet op deze factuur; ze staat op naam van {customer}. Bedoel je {customer}?", "sources": []}
@@ -355,11 +378,15 @@ class InvoiceSession:
             fact_text = fact_answer["answer"] + " " + " ".join(source.get("excerpt", "") for source in fact_answer.get("sources", []))
             if kind in _MUST_HOLD and not has_value(fact_text, kind):
                 return self._format(question, hits) if hits else _missing(kind)
-            wanted = content_terms(question)
+            wanted = content_terms(_without_vat_basis(question))
             # Only the fields the facts were read from count, with Karen's own sentence; the evidence passage
-            # around them ("Gas: … Btw 6%: … Totaal te betalen: €106") would make any fact look relevant.
+            # around them ("Gas: … Btw 6%: … Totaal te betalen: €106") would make any fact look relevant. A label's
+            # "(incl. BTW)" is the basis of its amount: it does not answer "hoeveel btw betaal ik?".
+            if relation(question) is not None and relation(question) in {_FACT_RELATIONS.get(key) for key in fact_answer.get("fact_keys", [])}:
+                return None  # the fact read for exactly this relation ("vervaldatum": the due date, also a debit date)
             fields = self._fact_fields(fact_answer)
-            covered = _covered(wanted, fact_answer["answer"] + " " + " ".join(_field_label(column, cell) for _, column, cell in fields))
+            labels = " ".join(_field_label(column, cell) for _, column, cell in fields)
+            covered = _covered(wanted, _without_vat_basis(fact_answer["answer"] + " " + labels))
             if hits and hits[0].coverage > covered:
                 return self._format(question, hits)
             if wanted and covered < _needed(len(wanted)):
@@ -377,7 +404,22 @@ class InvoiceSession:
             return None
         if hits:
             return self._format(question, hits)
+        asked = relation(question)
+        if asked in _RELATION_NAMES and kind in ("duration", "date"):
+            return self._other_relation(question, asked, kind)
         return _missing(kind) if kind in _MUST_HOLD else None
+
+    def _other_relation(self, question: str, asked: str, kind: str) -> dict[str, Any]:
+        """No field names what was asked: say so, and show a field of the same kind that names something else
+        ("Opzegtermijn: 3 weken") as what it is, never as the answer."""
+        answer = f"Op deze factuur vond ik geen {_RELATION_NAMES[asked]}."
+        other = next((unit for unit in self.index.units if has_value(unit.text, kind) and _field_relation(unit.text) not in (None, asked)), None)
+        if other is None:
+            return {"answer": answer, "sources": [], "refs": []}
+        shown = _shown(other, question, self._names())
+        what = _RELATION_NAMES.get(_field_relation(other.text) or "", "iets anders")
+        answer += f" Wel deze {what}: „{shown}“ (PDF-pagina {other.page}). Dat is niet hetzelfde."
+        return {"answer": answer, "sources": [_source(self.filename, other, shown)], "refs": []}
 
     def _not_on_the_bill(self, question: str, kind: str) -> dict[str, Any]:
         """No line answers the question: say that, and show the closest line of the right kind as what is there."""
@@ -535,6 +577,11 @@ _OTHER_COMPANIES = frozenset("luminus engie fluvius eneco totalenergies mega bol
 
 _KIND_NAMES = {"billing": "facturatieadres", "delivery": "leveringsadres", "unknown": "adres"}
 _MUST_HOLD = ("price_per_kwh", "duration")
+_FACT_RELATIONS = {"due_date": "due_date", "billing_period": "billing_period"}
+_RELATION_NAMES = {
+    "notice": "opzegtermijn", "contract_term": "contractduur", "due_date": "vervaldatum", "invoice_date": "factuurdatum",
+    "supply_start": "startdatum van de levering", "billing_period": "factuurperiode",
+}
 _THIS_AMOUNT = re.compile(r"(?i)\b(?:dit|dat|deze|die|het\s+zelfde|hetzelfde|ce|cet|this|that)\s+(?:bedrag|som|totaal|getal|montant|amount)\b")
 _CALCULATION = re.compile(r"[×x*]\s*€|=\s*\**\s*€")
 _EURO = re.compile(r"€\s?-?\d[\d. ]*,\d{2}|-?\d[\d. ]*,\d{2}\s?€")
@@ -571,8 +618,18 @@ def _shown(unit: Any, question: str, names: tuple[str, ...]) -> str:
 
 def _qualifiers(text: str) -> set[str]:
     folded = _fold(text)
-    return {word for word, pattern in (("incl", r"\b(?:incl|inclusief|tvac|ttc)\b"), ("excl", r"\b(?:excl|exclusief|htva|hors)\b"))
-            if re.search(pattern, folded)}
+    return {word for word, pattern in (
+        ("incl", r"\b(?:incl|inclusief|tvac|ttc)\b|\bmet\s+(?:de\s+)?(?:btw|tva)\b"),
+        ("excl", r"\b(?:excl|exclusief|htva|hors)\b|\b(?:zonder|sans)\s+(?:de\s+)?(?:btw|tva)\b"),
+    ) if re.search(pattern, folded)}
+
+
+# "incl. btw", "zonder btw": the basis of an amount, never its subject. "hoeveel btw" asks the btw amount itself.
+_VAT_BASIS = re.compile(r"(?i)\(?\b(?:incl|excl|inclusief|exclusief|tvac|htva|ttc|hors|zonder|met|sans)\.?\s*(?:de\s+)?(?:btw|tva|vat|taxes)\b\)?")
+
+
+def _without_vat_basis(text: str) -> str:
+    return _VAT_BASIS.sub(" ", text)
 
 
 def _row_label(row: str) -> str:
@@ -592,7 +649,7 @@ def _focused_cells(row: str, question: str) -> list[tuple[str, str]]:
     """The cells whose column the question asks for: shared subject words, and incl./excl. only when asked."""
     if " — " not in row:
         return []
-    wanted = content_terms(question)
+    wanted = content_terms(_without_vat_basis(question))
     asked = _qualifiers(question)
     scored = []
     for column, cell in _cells(row):
@@ -663,6 +720,10 @@ def _needed(count: int) -> float:
 
 def _source(filename: str, unit: Any, shown: str) -> dict[str, Any]:
     return {"title": filename, "detail": f"PDF · pagina {unit.page}", "excerpt": shown, "masked": True}
+
+
+_YES = re.compile(r"(?i)\s*(?:ja|jawel|jep|yes|oui|klopt|inderdaad|correct|zeker|ja\s+(?:die|dat|klopt|graag|die\s+persoon))\s*[.!]*\s*")
+_NO = re.compile(r"(?i)\s*(?:nee|neen|nope|no|non|niet\s+die)\s*[.!]*\s*")
 
 
 def _is_clarify(result: dict[str, Any]) -> bool:

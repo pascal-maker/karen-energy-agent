@@ -252,7 +252,7 @@ def test_luminus_layout_reads_balance_totals_and_consumption_not_meter_readings(
 
     ask = lambda question: answer_uploaded_pdf_question(question, chunks, facts)["answer"]
     assert ask("Wat is het totaal dat ik nog moet betalen?") == (
-        "Volgens deze factuur moet je nog € 9,65 betalen (PDF-pagina 1). Volgens deze factuur betaal je vóór 15.04.2021 (PDF-pagina 1)."
+        "Volgens deze factuur moet je nog € 9,65 betalen (PDF-pagina 1). Volgens de factuur betaal je vóór 15 april 2021 (PDF-pagina 1)."
     )
     assert ask("Wat wordt mijn nieuwe voorschot?") == (
         "Je nieuwe voorschot volgens deze factuur: elektriciteit € 108,00 tweemaandelijks (was € 100,00); "
@@ -263,7 +263,7 @@ def test_luminus_layout_reads_balance_totals_and_consumption_not_meter_readings(
     assert ask("Wat is mijn verbruik?") == (
         "Je stroomverbruik op deze factuur is 2208 kWh (PDF-pagina 1). Je gasverbruik op deze factuur is 559 kWh (PDF-pagina 1)."
     )
-    assert ask("Wanneer moet ik betalen?") == "Volgens deze factuur betaal je vóór 15.04.2021 (PDF-pagina 1)."
+    assert ask("Wanneer moet ik betalen?") == "Volgens de factuur betaal je vóór 15 april 2021 (PDF-pagina 1)."
 
 
 def test_amounts_without_thousands_separator_are_read_whole() -> None:

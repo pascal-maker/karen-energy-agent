@@ -666,11 +666,11 @@ def _advance_bill_summary(facts: dict[str, Any], text: str) -> str:
 FACT_QUESTIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("new_advance", re.compile(r"(?i)\b(?:nieuwe?|volgende|toekomstige?)\s+voorschot|voorschot\w*\s+(?:wordt|worden|zal|gaat)|voorschot\w*\s+(?:nu|straks|vanaf)")),
     ("advances_paid", re.compile(r"(?i)\bvoorschot")),
-    ("due_date", re.compile(r"(?i)\b(?:wanneer|tegen\s+wanneer|vervaldatum|vervaldag|uiterlijk|tot\s+welke\s+datum)\b.*\bbetal|\bvervaldatum|\bvervaldag")),
+    ("due_date", re.compile(r"(?i)\b(?:wanneer|tegen\s+wanneer|vervaldatum|vervaldag|uiterlijk|tot\s+welke\s+datum)\b.*\bbetal|\bvervaldatum|\bvervaldag|\btegen\s+wanneer\b.*\brekening")),
     ("amount_due", re.compile(r"(?i)\b(?:betalen|betaal\b|factuurbedrag|saldo|openstaand|tegoed|terug\s*(?:krijg|betaal)|krijg\s+ik\s+(?:\w+\s+)?(?:geld\s+)?terug)")),
     ("total_energy_cost", re.compile(r"(?i)\b(?:totale?\s+(?:energie)?kost|totaal)")),
     ("gas_kwh", re.compile(r"(?i)\bgas\w*\b.*\b(?:verbruik|kwh|m3|m³)|\bgasverbruik|\b(?:verbruik|kwh)\w*\b.*\bgas")),
-    ("electricity_kwh", re.compile(r"(?i)\b(?:verbruik|kwh|hoeveel\s+stroom)")),
+    ("electricity_kwh", re.compile(r"(?i)\b(?:verbruik|kwh|hoeveel\s+stroom)|(?:elektriciteits|stroom)verbruik")),
     ("billing_period", re.compile(r"(?i)\b(?:periode|welke\s+maanden|van\s+wanneer|tot\s+wanneer)")),
     ("supplier", re.compile(r"(?i)\b(?:leverancier|welk\s+bedrijf|van\s+wie\s+is)")),
     ("customer", re.compile(r"(?i)\b(?:welke\s+persoon|wie\s+(?:is|staat)\s+(?:de\s+)?(?:klant|op)|op\s+(?:wiens|welke)\s+naam|klantnaam|naam\s+van\s+de\s+klant|voor\s+wie)")),
@@ -735,8 +735,11 @@ def _fact_sentence(key: str, fact: dict[str, Any]) -> str:
         return f"Je stroomverbruik op deze factuur is {value} {unit} (PDF-pagina {page})."
     if key == "due_date":
         if fact.get("direct_debit"):
-            return f"Je hoeft niets te doen: je bank betaalt dit bedrag op {value} via domiciliëring (PDF-pagina {page})."
-        return f"Volgens deze factuur betaal je vóór {_long_date(value) if not re.match(r'\d{1,2}[./-]', value) else value} (PDF-pagina {page})."
+            # The status every answer gives (invoice_schema.payment_status): announced, never confirmed.
+            from .invoice_schema import _iso_date, debit_sentence
+
+            return debit_sentence(_long_date(value), _iso_date(value), f" (PDF-pagina {page})")[1]
+        return f"Volgens de factuur betaal je vóór {_long_date(value)} (PDF-pagina {page})."
     if key == "billing_period":
         return f"Deze factuur gaat over de periode {value} (PDF-pagina {page})."
     if key == "customer":

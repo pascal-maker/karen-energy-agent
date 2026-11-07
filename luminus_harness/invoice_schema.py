@@ -701,13 +701,16 @@ def payer_answer(invoice: Invoice, today: Any = None) -> dict[str, Any]:
 
 
 _GAS_WORD = re.compile(r"\b(?:aard)?gas\w*")
-_ELECTRICITY_WORD = re.compile(r"\b(?:elektric\w*|electric\w*|stroom\w*|kwh)")
+_ELECTRICITY_WORD = re.compile(r"\b(?:elektric\w*|electric\w*|stroom\w*)")
+_KWH_WORD = re.compile(r"\bkwh\b")
 
 
 def _asked_energy(question: str) -> str | None:
     """The one energy a question names ("wat kost gas per jaar"), or None for both or neither."""
     plain = _plain(question)
-    gas, power = bool(_GAS_WORD.search(plain)), bool(_ELECTRICITY_WORD.search(plain))
+    # "wat betaal ik per jaar aan gas (kWh)": gas is measured in kWh too, so the unit names an energy only alone.
+    gas = bool(_GAS_WORD.search(plain))
+    power = bool(_ELECTRICITY_WORD.search(plain)) or (not gas and bool(_KWH_WORD.search(plain)))
     return "gas" if gas and not power else "electricity" if power and not gas else None
 
 
