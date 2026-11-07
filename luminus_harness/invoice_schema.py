@@ -714,6 +714,10 @@ def _asked_energy(question: str) -> str | None:
     return "gas" if gas and not power else "electricity" if power and not gas else None
 
 
+YEARLY_CAVEAT = ("Dat is een berekening van Karen, geen voorspelling van je echte energiekosten: of je bijbetaalt of geld "
+                 "terugkrijgt, zie je pas op je jaarafrekening. Upload die gerust, dan vergelijk ik ze.")
+
+
 def yearly_answer(invoice: Invoice, question: str = "") -> dict[str, Any]:
     """A year of the same advance, or the yearly total of the new advance, for the energy asked; never a predicted
     settlement, and never a total when the bill shows the advance of only one of the energies it covers."""
@@ -721,8 +725,7 @@ def yearly_answer(invoice: Invoice, question: str = "") -> dict[str, Any]:
     energy = _asked_energy(question)
     name = _DUTCH_ENERGIES[energy] if energy else ""
     per_year = _advance_frequency(invoice)
-    caveat = ("Dat is een berekening van Karen, geen voorspelling van je echte energiekosten: of je bijbetaalt of geld "
-              "terugkrijgt, zie je pas op je jaarafrekening. Upload die gerust, dan vergelijk ik ze.")
+    caveat = YEARLY_CAVEAT
     if per_year and energy:
         line = next((row for row in invoice.advance_lines if row.energy == energy), None)
         if line is None:

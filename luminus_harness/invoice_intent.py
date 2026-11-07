@@ -116,6 +116,14 @@ def classify(text: str, customer_parts: set[str] = frozenset()) -> Task | None:
     return None
 
 
+def _task_key(task: Task) -> tuple[str, str | None, str | None]:
+    """Two parts are the same task only with the same type and subject: "per jaar aan gas" and "per jaar aan
+    stroom" are two yearly tasks; "vat samen, vat samen" is one."""
+    from .invoice_schema import _asked_energy
+
+    return task.type, task.address_kind, _asked_energy(task.text)
+
+
 def _only_asks_for_advice(plain: str, match: re.Match[str], customer_parts: set[str]) -> bool:
     """Advice about this bill, not about a topic: "wat moet ik doen als ik verhuis?" and "tips om te besparen"
     are questions of their own, answered from the bill's passages or without the bill."""
@@ -144,7 +152,7 @@ def parse_locally(question: str, customer_parts: set[str] = frozenset()) -> Plan
         unclear: list[str] = []
         for part in parts:
             task = classify(part, customer_parts)
-            if task is not None and all((task.type, task.address_kind) != (other.type, other.address_kind) for other in tasks):
+            if task is not None and all(_task_key(task) != _task_key(other) for other in tasks):
                 tasks.append(task)
             elif task is None and _content_words(part):
                 unclear.append(part)
@@ -212,13 +220,23 @@ def masked_question(question: str, names: tuple[str, ...]) -> str:
             masked = re.sub(rf"(?i)\b{re.escape(part)}\b", "[klant]", masked)
     masked = re.sub(r"\[klant\](?:\s+\[klant\])+", "[klant]", masked)
     # An address typed in the question ("woont ze in de Kerkstraat 12, 9000 Gent?") is not needed to see the task.
+    masked = _STREET_FIRST.sub("[adres]", masked)
     masked = _STREET.sub("[adres]", masked)
     masked = _POSTCODE_PLACE.sub("[adres]", masked)
+    # Whatever stands before a house number and a postcode is the street, in any language: "Grote Markt 1, [adres]".
+    masked = _BEFORE_POSTCODE.sub("[adres]", masked)
+    masked = re.sub(r"\[adres\](?:[\s,]+\[adres\])+", "[adres]", masked)
     return mask_identifiers(masked, ())
 
 
+# French and other street names that start with their kind: "Rue des Tests 12", "Chaussée de Wavre 100 bte 3".
+_STREET_FIRST = re.compile(
+    r"(?i)\b(?:rue|avenue|av\.|boulevard|bd|chauss[ée]e|place|square|all[ée]e|chemin|quai|impasse|route|dr[èe]ve|clos|cours"
+    r"|passage|rond-point|sentier|street|road|lane)\b(?:\s+[^\W\d_][\w'’-]*){0,5}\s+\d+\s*\w?\b(?:\s*(?:bus|bte|boîte|b)\.?\s*\w+)?"
+)
+_BEFORE_POSTCODE = re.compile(r"(?:\b[^\W\d_][\w'’-]*\s+){1,5}\d+\s*\w?\b(?:\s*(?:bus|bte|boîte)\.?\s*\w+)?,?\s*(?=\[adres\])")
 _STREET = re.compile(
-    r"(?i)\b[^\W\d_]*(?:straat|laan|weg|plein|lei|dreef|baan|steenweg|kaai|markt|singel|dijk|pad|hof|rue|avenue|chauss[ée]e|boulevard|place)"
+    r"(?i)(?:(?-i:\b[A-Z][^\W\d_]*)\s+){0,3}\b[^\W\d_]*(?:straat|laan|weg|plein|lei|dreef|baan|steenweg|kaai|markt|singel|dijk|pad|hof|rue|avenue|chauss[ée]e|boulevard|place)"
     r"\s*\d+\s*\w?\b(?:\s*(?:bus|bte|boîte)\s*\w+)?"
 )
 _POSTCODE_PLACE = re.compile(r"\b\d{4}\s?(?:[A-Z]{2}\s+)?[A-Z][^\W\d_]+(?:[- ][A-Z][^\W\d_]+)*")

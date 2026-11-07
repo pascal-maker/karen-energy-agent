@@ -26,7 +26,7 @@ from .invoice_retrieval import Hit, InvoiceIndex, _field_relation, content_terms
 from .invoice_intent import Plan, Task, parse_locally
 from .invoice_model import _WORDS, mask_identifiers, mask_invoice_text
 from .invoice_schema import (
-    FOLLOW_UP_SUGGESTIONS, Invoice, advice_answer, build_invoice, explain_invoice, insights_answer, payer_answer,
+    FOLLOW_UP_SUGGESTIONS, YEARLY_CAVEAT, Invoice, advice_answer, build_invoice, explain_invoice, insights_answer, payer_answer,
     summarize_invoice, yearly_answer,
 )
 from .invoice_sections import _POSTCODE, Section, addresses_from, build_sections, page_texts_from_pdf
@@ -65,7 +65,9 @@ class InvoiceSession:
     turns: list[Turn] = field(default_factory=list)
     # A question Karen asked back ("Bedoel je Joy Doe?") with the task to resume on "ja" (audit 2026-11-07).
     pending: Task | None = None
+    choices: tuple[AmountRef, ...] = ()  # the amounts a pending "Welk bedrag bedoel je?" offered
     _confirmed: bool = False
+    _chosen: AmountRef | None = None
 
     def __post_init__(self) -> None:
         self.index = InvoiceIndex.build(self.sections)
@@ -85,7 +87,12 @@ class InvoiceSession:
         intent model when the app has it on, else the local parser. Each task is carried out here, in code."""
         question = " ".join(question.split())
         pending, self.pending = self.pending, None
-        if pending is not None and _YES.fullmatch(question):
+        choices, self.choices = self.choices, ()
+        chosen = _choose(question, choices) if pending is not None and choices and _is_a_pick(question) else None
+        if chosen is not None:
+            # "de 42 euro", "die van gas", "de tweede": the amount chosen, for the question that was pending.
+            plan, self._chosen = Plan([pending]), chosen
+        elif pending is not None and not choices and _YES.fullmatch(question):
             plan, self._confirmed = Plan([pending]), True
         elif pending is not None and _NO.fullmatch(question):
             customer = self.invoice.customer.value if self.invoice.customer else ""
@@ -97,7 +104,7 @@ class InvoiceSession:
         try:
             result = self._carry_out(question, plan)
         finally:
-            self._confirmed = False
+            self._confirmed, self._chosen = False, None
         refs = result.pop("refs", None)
         result.pop("fact_keys", None)
         for source in result.get("sources", []):
@@ -132,8 +139,12 @@ class InvoiceSession:
         lines: list[str] = []
         for _, result in answered:
             # "wat is de vervaldatum en wie moet betalen": the payer answer already gives the debit date.
-            if not any(result["answer"].strip() in line for line in lines):
-                lines.append(result["answer"])
+            if any(result["answer"].strip() in line for line in lines):
+                continue
+            answer = result["answer"]
+            if any(YEARLY_CAVEAT in line for line in lines):
+                answer = answer.replace(" " + YEARLY_CAVEAT, "")  # two yearly answers: the caveat once, after the first
+            lines.append(answer)
         lines += [f"Over „{task.text}“ vond ik niets op deze factuur." for task, result in done if (task, result) not in answered]
         lines += [f"Wat wil je weten over „{text}“? Ik kan bijvoorbeeld een bedrag, datum of regel op deze factuur opzoeken." for text in unclear]
         sources: list[dict[str, Any]] = []
@@ -336,11 +347,13 @@ class InvoiceSession:
 
     def _this_amount_answer(self, question: str) -> dict[str, Any]:
         refs = next((turn.amounts for turn in reversed(self.turns[-2:]) if turn.amounts), ())
-        distinct = list({(_decimal(ref.amount), ref.field): ref for ref in refs}.values())
+        distinct = [self._chosen] if self._chosen else list({(_decimal(ref.amount), ref.field): ref for ref in refs}.values())
         if not distinct:
             return {"answer": "Over welk bedrag gaat het? Noem het bedrag of de regel op de factuur, dan zoek ik het op.", "sources": []}
         if len(distinct) > 1:
             options = "; ".join(f"{ref.amount} ({ref.field or ref.column})" if (ref.field or ref.column) else ref.amount for ref in distinct[:4])
+            # The question stays open with its choices: "de 42 euro" afterwards answers it.
+            self.pending, self.choices = Task("this_amount", question), tuple(distinct[:4])
             return {"answer": f"Welk bedrag bedoel je? Mijn vorige antwoord noemde er meer: {options}.", "sources": []}
         ref = distinct[0]
         if not ref.field:
@@ -720,6 +733,33 @@ def _needed(count: int) -> float:
 
 def _source(filename: str, unit: Any, shown: str) -> dict[str, Any]:
     return {"title": filename, "detail": f"PDF · pagina {unit.page}", "excerpt": shown, "masked": True}
+
+
+_ORDINALS = {"eerste": 0, "eerst": 0, "tweede": 1, "derde": 2, "vierde": 3, "premier": 0, "première": 0, "deuxième": 1, "first": 0, "second": 1}
+
+
+def _is_a_pick(answer: str) -> bool:
+    """A short reply that picks ("de 42 euro", "die van gas"), not a new question ("hoeveel kost gas?")."""
+    words = re.findall(r"[^\W_]+", answer)
+    asks = re.match(r"(?i)\s*(?:hoeveel|wat|wie|waar|wanneer|hoe|waarom|welk|kan|kun|is|zijn|heb|moet|combien|quel|quand|how|what)\b", answer)
+    return 0 < len(words) <= 5 and not asks
+
+
+def _choose(answer: str, choices: tuple[AmountRef, ...]) -> AmountRef | None:
+    """The amount a reply to "Welk bedrag bedoel je?" picks: by its number ("de 42 euro", "€ 42,00"), by its row
+    or column ("die van gas", "de btw van elektriciteit"), or by position ("de tweede", "de laatste"). One only."""
+    folded = _fold(answer)
+    numbers = {Decimal(raw.replace(".", "").replace(",", ".")) if "," in raw else Decimal(raw) for raw in re.findall(r"\d+(?:[.,]\d{1,2})?", folded)}
+    picked = [ref for ref in choices if _decimal(ref.amount) in numbers] if numbers else []
+    if not picked:
+        words = set(re.findall(r"[a-z]{3,}", folded)) - {"die", "van", "het", "bedrag", "euro", "bedoel", "ik"}
+        picked = [ref for ref in choices if words & set(re.findall(r"[a-z]{3,}", _fold(_row_label(ref.field) + " " + ref.column)))]
+    if not picked:
+        position = next((index for word, index in _ORDINALS.items() if re.search(rf"\b{word}\b", folded)), None)
+        if re.search(r"\blaatste\b|\bdernier", folded):
+            position = len(choices) - 1
+        picked = [choices[position]] if position is not None and position < len(choices) else []
+    return picked[0] if len(picked) == 1 else None
 
 
 _YES = re.compile(r"(?i)\s*(?:ja|jawel|jep|yes|oui|klopt|inderdaad|correct|zeker|ja\s+(?:die|dat|klopt|graag|die\s+persoon))\s*[.!]*\s*")

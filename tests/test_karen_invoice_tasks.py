@@ -226,7 +226,7 @@ def test_the_intent_model_is_off_unless_switched_on(monkeypatch):
 
 def test_masking_for_the_intent_model():
     masked = masked_question("woont Joy Doe in de Kerkstraat 12 bus 3, 9000 Gent? joy@test.be BE68539007547034", ("Joy Doe",))
-    assert masked == "woont [klant] in de [adres], [adres]? [X] [X]"
+    assert masked == "woont [klant] in de [adres]? [X] [X]"
 
 
 def test_the_app_asks_the_intent_model_only_with_the_masked_question(intent_model, monkeypatch):
@@ -312,3 +312,51 @@ def test_audit_8_due_date_and_payer_are_both_answered_once():
 def test_audit_9_an_address_typo_stays_on_the_bill():
     reply = _session(ADVANCE).ask("wat is het ares")
     assert reply.get("found", True) and ADDRESS in reply["answer"]
+
+
+# --- review of edc048b ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("pick, amount", [
+    ("de 42 euro", "€ 42,00"), ("42", "€ 42,00"), ("€ 30,00", "€ 30,00"), ("die van gas", "€ 42,00"),
+    ("elektriciteit", "€ 30,00"), ("de eerste", "€ 30,00"), ("de laatste", "€ 42,00"),
+])
+def test_review_choosing_an_amount_resumes_the_pending_question(pick, amount):
+    session = _session(SETTLEMENT)
+    session.ask("hoeveel is de btw?")
+    assert session.ask("is dit bedrag inclusief btw?")["answer"].startswith("Welk bedrag bedoel je?")
+    reply = session.ask(pick)
+    assert reply.get("found", True), "A pick stays on the bill"
+    assert reply["answer"].startswith(f"{amount} is het btw-bedrag zelf")
+
+
+def test_review_a_new_question_after_which_amount_is_not_a_pick():
+    session = _session(SETTLEMENT)
+    session.ask("hoeveel is de btw?")
+    session.ask("is dit bedrag inclusief btw?")
+    answer = session.ask("hoeveel kost gas?")["answer"]
+    assert "btw-bedrag zelf" not in answer and "Gas" in answer
+
+
+def test_review_two_tasks_of_one_type_about_two_energies_stay_two():
+    plan = parse_locally("Wat betaal ik per jaar aan gas en wat betaal ik per jaar aan stroom?")
+    assert [task.type for task in plan.tasks] == ["yearly", "yearly"]
+    answer = _session(ADVANCE).ask("Wat betaal ik per jaar aan gas en wat betaal ik per jaar aan stroom?")["answer"]
+    assert "€ 1.267,92 excl. btw per jaar" in answer and "€ 758,52 excl. btw per jaar" in answer
+    assert "2.148" not in answer
+    assert answer.count("geen voorspelling") == 1, "The caveat once"
+    assert len(parse_locally("vat samen, vat samen").tasks) == 1
+
+
+@pytest.mark.parametrize("question", [
+    "zoek het adres Rue des Tests 12, 1000 Testville",
+    "woont ze Avenue Louise 54 bte 3?",
+    "Chaussée de Wavre 100, 1050 Ixelles",
+    "Place Flagey 7",
+    "Grote Markt 1, 2000 Antwerpen",
+    "is het Oude Baan 5?",
+])
+def test_review_street_names_never_reach_the_intent_model(question):
+    masked = masked_question(question, ())
+    for word in ("Tests", "Testville", "Louise", "Wavre", "Ixelles", "Flagey", "Markt", "Antwerpen", "Baan", "54", "100", "12"):
+        assert word not in masked
+    assert "[adres]" in masked
