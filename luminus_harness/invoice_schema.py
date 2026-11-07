@@ -16,7 +16,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-SCHEMA_VERSION = "1.0"
+# 1.1 adds `addresses` (typed: billing, delivery or unknown, with the party they belong to). Additive, but a
+# strict 1.0 reader rejects unknown fields, so it is a new version; every 1.0 field keeps its meaning.
+SCHEMA_VERSION = "1.1"
 
 DocumentType = Literal["annual_settlement", "final_invoice", "advance_invoice", "unknown"]
 Energy = Literal["electricity", "gas"]
@@ -77,6 +79,16 @@ class AdvanceLine(Evidence):
     vat_included: bool | None  # null when the bill does not say whether the lines include btw
 
 
+class Address(Evidence):
+    """An address as labelled on the bill. A delivery or billing address says where energy goes or where the
+    bill is sent, never where someone lives; `unknown` is an address without either label."""
+
+    kind: Literal["billing", "delivery", "unknown"]
+    party: Literal["customer", "supplier", "unknown"]
+    label: str  # as printed: "Leveringsadres", "Adres", "Adresse de facturation"
+    value: str
+
+
 class Consumption(_Strict):
     electricity: Quantity | None = None
     gas: Quantity | None = None
@@ -97,12 +109,13 @@ class Calculated(_Strict):
 
 
 class Invoice(_Strict):
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
     source: str
     document_type: DocumentType
     document_type_evidence: Evidence | None = None
     supplier: TextValue | None = None
     customer: TextValue | None = None
+    addresses: list[Address] = []
     billing_period: Period | None = None
     consumption: Consumption = Consumption()
     amounts: Amounts = Amounts()
@@ -178,9 +191,14 @@ _FREQUENCIES = {
 }
 
 
-def build_invoice(facts: dict[str, Any], source: str) -> Invoice:
-    """The facts read at upload, as one validated object."""
+def build_invoice(facts: dict[str, Any], source: str, addresses: list[Any] | None = None) -> Invoice:
+    """The facts read at upload, as one validated object; `addresses` are invoice_sections.AddressBlock."""
     data: dict[str, Any] = {"source": source, "document_type": _document_type(facts.get("invoice_type"))}
+    data["addresses"] = [
+        {"source": block.source, "page": block.page, "excerpt": block.excerpt, "kind": block.kind, "party": block.party,
+         "label": block.label, "value": block.value}
+        for block in addresses or []
+    ]
     if facts.get("invoice_type"):
         data["document_type_evidence"] = _evidence(facts["invoice_type"])
     for key in ("supplier", "customer"):

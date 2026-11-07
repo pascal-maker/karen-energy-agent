@@ -12,6 +12,7 @@ import json
 import os# used to load the environment variables
 import re# used to recognize electricity price questions
 import secrets
+import threading
 import time
 import uuid
 from collections import OrderedDict, deque
@@ -58,6 +59,9 @@ from luminus_harness.gemma_answer import (
     mentions_energy,
 )
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
+from luminus_harness.invoice_retrieval import warm_up as warm_up_invoice_embeddings
+from luminus_harness.invoice_sections import page_texts_from_pdf
+from luminus_harness.invoice_session import session_from_upload
 from luminus_harness.invoice_model import model_enabled, needs_model, read_invoice_with_model
 from luminus_harness.photo_invoice import PhotoUnavailable, chunks_from_text, is_image_upload, ocr_image
 from luminus_harness.rate_limit import SlidingWindowRateLimiter
@@ -703,6 +707,13 @@ class PetraSpeechRequest(BaseModel):
 
 
 api_app = FastAPI(title="EnergyAgent Karen API", version="0.1.0")
+
+
+@api_app.on_event("startup")
+async def _load_invoice_embeddings() -> None:
+    """Load the local embedding model (about 220 MB, downloaded once) in the background, so the first visitor
+    with an invoice does not wait for it; without it, invoice questions use word matching only."""
+    threading.Thread(target=warm_up_invoice_embeddings, name="invoice-embeddings", daemon=True).start()
 configured_origins = [
     origin.strip() for origin in os.getenv("FRAMER_ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
@@ -787,7 +798,7 @@ def _get_upload_session(session_id: str) -> dict[str, Any] | None:
     return session
 
 
-def _store_upload_session(chunks: list[KnowledgeChunk], analysis: dict[str, Any], filename: str) -> str:
+def _store_upload_session(chunks: list[KnowledgeChunk], analysis: dict[str, Any], filename: str, conversation: Any = None) -> str:
     now = time.monotonic()
     _prune_upload_sessions(now)
     while len(_upload_sessions) >= MAX_UPLOAD_SESSIONS:
@@ -797,6 +808,8 @@ def _store_upload_session(chunks: list[KnowledgeChunk], analysis: dict[str, Any]
         "chunks": chunks,
         "analysis": analysis,
         "filename": filename,
+        # invoice_session.InvoiceSession: sections, index and the last turns, in memory for this session only.
+        "conversation": conversation,
         "expires_at": now + UPLOAD_SESSION_TTL_SECONDS,
     }
     return session_id
@@ -833,9 +846,11 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
         raise HTTPException(status_code=413, detail="Kies een bestand kleiner dan 15 MB.")
     photo = is_image_upload(filename, file.content_type or "", data)
     if photo:
-        chunks = await _photo_chunks(data, filename)
+        chunks, photo_text = await _photo_chunks(data, filename)
+        pages = [(1, photo_text)]
     elif filename.lower().endswith(".pdf"):
         chunks = _pdf_chunks(data, filename)
+        pages = _pdf_pages(data, chunks)
     else:
         raise HTTPException(status_code=415, detail="Upload een PDF of een foto (JPG of PNG) van je factuur.")
     if sum(len(chunk.text) for chunk in chunks) > MAX_PDF_TEXT_CHARS:
@@ -856,7 +871,11 @@ async def api_upload(request: Request, file: UploadFile = File(...)) -> dict[str
     if photo:
         analysis["answer"] = analysis["answer"].replace("uit de PDF", "van de foto").replace(" (PDF-pagina 1)", "")
         analysis["photo"] = True
-    session_id = _store_upload_session(chunks, analysis, filename)
+    # Sections, typed addresses and the retrieval index for follow-up questions; built here, kept in memory.
+    conversation = await asyncio.to_thread(session_from_upload, chunks, analysis, pages, filename)
+    analysis = conversation.analysis
+    session_id = _store_upload_session(chunks, analysis, filename, conversation)
+    threading.Thread(target=conversation.index.prepare, name="invoice-index", daemon=True).start()
     return {
         "session_id": session_id,
         "filename": filename,
@@ -885,7 +904,18 @@ def _pdf_chunks(pdf_data: bytes, filename: str) -> list[KnowledgeChunk]:
     return chunks
 
 
-async def _photo_chunks(image_data: bytes, filename: str) -> list[KnowledgeChunk]:
+def _pdf_pages(pdf_data: bytes, chunks: list[KnowledgeChunk]) -> list[tuple[int, str]]:
+    """Each page's text with its line breaks, for sections; the flattened chunks when pypdf cannot give them."""
+    try:
+        pages = page_texts_from_pdf(pdf_data)
+    except Exception:
+        pages = []
+    if any(text.strip() for _, text in pages):
+        return pages
+    return [(chunk.page, chunk.text) for chunk in chunks]
+
+
+async def _photo_chunks(image_data: bytes, filename: str) -> tuple[list[KnowledgeChunk], str]:
     try:
         text = await asyncio.wait_for(asyncio.to_thread(ocr_image, image_data), timeout=90)
     except PhotoUnavailable as error:
@@ -895,7 +925,7 @@ async def _photo_chunks(image_data: bytes, filename: str) -> list[KnowledgeChunk
     chunks = chunks_from_text(text, source=filename)
     if sum(len(chunk.text) for chunk in chunks) < 40:
         raise HTTPException(status_code=422, detail="Ik kon geen tekst op deze foto lezen. Probeer een scherpe foto, recht van boven, met goed licht.")
-    return chunks
+    return chunks, text
 
 
 @api_app.delete("/api/session/{session_id}")
@@ -1002,9 +1032,14 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         session = _get_upload_session(body.session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Deze PDF-sessie is verlopen. Upload de PDF opnieuw.")
-        result = answer_uploaded_pdf_question(
-            body.question.strip(), session["chunks"], session["analysis"].get("facts"), session["analysis"].get("invoice")
-        )
+        conversation = session.get("conversation")
+        if conversation is not None:
+            # This session's own invoice, sections and turns; the local embedding model runs on this server.
+            result = await asyncio.to_thread(conversation.ask, body.question.strip())
+        else:
+            result = answer_uploaded_pdf_question(
+                body.question.strip(), session["chunks"], session["analysis"].get("facts"), session["analysis"].get("invoice")
+            )
         if result.pop("found", True) is False:
             # Nothing in the PDF fits ("Real of Barcelona?"): a normal question, asked without the PDF
             # and without the earlier turns, which hold what was read from it.
