@@ -64,7 +64,7 @@ def content_terms(text: str) -> set[str]:
 # --- What kind of value would answer the question --------------------------------------------------
 
 _PER_KWH_Q = re.compile(r"(?i)(?:per|/|een|1)\s*kwh|kwh[- ]?prijs|prijs per|eenheidsprijs|tarief per|kost(?:t|en)? (?:een|1) kwh|prix (?:du|par) kwh")
-_DURATION_Q = re.compile(r"(?i)\bhoe\s+lang\b|\btermijn|\bop\s+voorhand\b|\bvooraf\b|\bhoeveel\s+(?:dagen|weken|maanden|jaar)\b|\bcombien de (?:jours|semaines|mois)\b|\bdélai\b")
+_DURATION_Q = re.compile(r"(?i)\bhoe\s+lang\b|contractduur|looptijd|\bduur\s+van\s+(?:het|je|uw|mijn)\s+contract|dur[ée]e\s+du\s+contrat|\btermijn|\bop\s+voorhand\b|\bvooraf\b|\bhoeveel\s+(?:dagen|weken|maanden|jaar)\b|\bcombien de (?:jours|semaines|mois)\b|\bdélai\b")
 _DATE_Q = re.compile(r"(?i)\bwanneer\b|datum\b|\btegen\s+wanneer\b|\bvervaldag|\bquand\b|\bdate\b")
 _QUANTITY_Q = re.compile(r"(?i)verbruik|\bkwh\b|\bm³|\bm3\b|\bconsommation\b")
 _AMOUNT_Q = re.compile(r"(?i)\bhoeveel\b|\bbedrag|\bkost|\bbtw\b|\bbetaal|\bbetalen|\bprijs|\bvoorschot|\bcombien\b|\bmontant|\btva\b|€")
@@ -73,7 +73,9 @@ _PER_KWH = re.compile(r"(?i)(?:€|c€|eur|euro|cent|ct)\s*/\s*kwh|(?:euro|eur|
 _AMOUNT = re.compile(r"€\s*-?\d|\d[\d.\u00a0 ]*,\d{2}\s*(?:€|eur)|(?i:\beur\b)")
 _QUANTITY = re.compile(r"(?i)\d[\d.\u00a0 ]*(?:,\d+)?\s*(?:kwh|mwh|m³|m3)\b")
 _DATE = re.compile(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|(?i:\b\d{1,2}\s+(?:januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)\s+\d{4})")
-_DURATION = re.compile(r"(?i)\b(?:\d+|een|één|twee|drie|vier|zes|twaalf)\s+(?:dag|dagen|week|weken|maand|maanden|jaar|jours?|semaines?|mois)\b")
+_DURATION = re.compile(r"(?i)\b(?:\d+|een|één|twee|drie|vier|zes|twaalf)\s+(?:dag|dagen|week|weken|maand|maanden|jaar|jaren|jours?|semaines?|mois|ans?)\b"
+    # A term without a number is still a term: "onbepaalde duur", "contrat à durée indéterminée".
+    r"|\b(?:on)?(?:bepaalde|beperkte)\s+(?:duur|tijd)\b|\bdur[ée]e\s+(?:du\s+contrat\s*:\s*)?(?:in)?d[ée]termin[ée]e|\b(?:in)?d[ée]termin[ée]e\b")
 _VALUE_SHAPES: dict[str, re.Pattern[str]] = {
     "price_per_kwh": _PER_KWH, "amount": _AMOUNT, "quantity": _QUANTITY, "date": _DATE, "duration": _DURATION,
 }

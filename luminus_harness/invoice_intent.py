@@ -143,16 +143,39 @@ def _content_words(text: str) -> list[str]:
     return [word for word in re.findall(r"[a-z]{3,}", _plain(text)) if word not in _FILLER]
 
 
-_QUESTION_START = re.compile(r"(?i)\s*(?:wat|wie|waar|wanneer|hoeveel|hoe|welke?|waarom|is|zijn|kan|kun|klopt|moet|combien|quel|quand|what|how|when)\b")
+_QUESTION_START = re.compile(r"(?i)\s*(?:wat|wie|waar|(?:tegen\s+|tot\s+)?wanneer|hoeveel|hoe|welke?|waarom|is|zijn|kan|kun|klopt|moet|combien|quel|quand|what|how|when)\b")
 _FILLER = frozenset(
     "deze dit dat die het een van over voor met mijn mij jij jou hier daar ook nog even graag aub alsjeblieft please "
     "factuur rekening document pdf bijlage dank bedankt merci thanks wel alvast super top oke okay".split()
 )
 
 
+_BARE_QUESTION = re.compile(r"(?i)(?:en\s+)?((?:tegen\s+|tot\s+)?(?:wanneer|hoeveel|waar|waarom|hoe))\s*\??")
+_LEADING_QUESTION = re.compile(r"(?i)\s*(?:(?:tegen|tot)\s+)?(?:wat|wie|waar|wanneer|hoeveel|hoe|welke?|waarom)\b\s*")
+
+
+def _borrow_bare_questions(parts: list[str]) -> list[str]:
+    """"hoeveel moet ik betalen en (tegen) wanneer": a bare question word asks the previous question again
+    ("tegen wanneer moet ik betalen"), so it is answered as that question and never alone."""
+    joined: list[str] = []
+    for part in parts:
+        if joined and re.fullmatch(r"(?i)(?:en\s+)?(?:tegen|tot)", joined[-1]):
+            part = f"{joined.pop().split()[-1]} {part}"  # the split before "wanneer" cut "tegen wanneer" in two
+        joined.append(part)
+    out: list[str] = []
+    for part in joined:
+        bare = _BARE_QUESTION.fullmatch(part)
+        if bare and out:
+            rest = _LEADING_QUESTION.sub("", out[-1], count=1).strip()
+            if rest:
+                part = f"{bare.group(1)} {rest}"
+        out.append(part)
+    return out
+
+
 def parse_locally(question: str, customer_parts: set[str] = frozenset()) -> Plan:
     whole = classify(question, customer_parts)
-    parts = [part.strip() for part in _BOUNDARY.split(question) if part and part.strip()]
+    parts = _borrow_bare_questions([part.strip() for part in _BOUNDARY.split(question) if part and part.strip()])
     if len(parts) > 1:
         tasks: list[Task] = []
         unclear: list[str] = []
