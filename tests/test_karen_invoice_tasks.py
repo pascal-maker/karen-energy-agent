@@ -564,3 +564,34 @@ def test_live_bare_when_borrows_the_previous_question():
 
     texts = [task.text for task in parse_locally("hoeveel moet ik betalen en tegen wanneer?").tasks]
     assert texts == ["hoeveel moet ik betalen", "tegen wanneer moet ik betalen"], texts
+
+
+# --- review of ae123ab: a contract term without a number is still a contract term -------------------------
+
+def _text(text: str):
+    from luminus_harness.invoice_session import open_text_session
+
+    return open_text_session(text, "tekst.txt")
+
+
+@pytest.mark.parametrize("line, shown", [
+    ("Contractduur: onbepaalde duur", "onbepaalde duur"),
+    ("Contractduur: bepaalde duur", "bepaalde duur"),
+    ("Looptijd contract: onbepaalde tijd", "onbepaalde tijd"),
+    ("Type contract: contract van onbepaalde duur", "onbepaalde duur"),
+])
+@pytest.mark.parametrize("question", [
+    "wat is mijn contractduur?", "wat is de looptijd van mijn contract?", "hoe lang loopt mijn contract?",
+])
+def test_review_ae123ab_an_unnumbered_contract_term_is_shown(line, shown, question):
+    session = _text(f"Leverancier: Kanaal Energie\n{line}\nTotaal te betalen: € 172,00\nVervaldatum: 10/03/2026")
+    answer = session.ask(question)["answer"]
+    assert shown in answer and "geen contractduur" not in answer, (line, question, answer)
+
+
+def test_review_ae123ab_french_unnumbered_term_is_a_duration():
+    from luminus_harness.invoice_retrieval import has_value
+
+    assert has_value("Durée du contrat : indéterminée", "duration")
+    assert has_value("Contrat à durée indéterminée", "duration")
+    assert not has_value("Contractduur:", "duration"), "A label without a value is no term"
