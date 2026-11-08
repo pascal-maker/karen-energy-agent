@@ -60,8 +60,51 @@ daarvan bewezen is.
   X" zegt dat er letterlijk bij. Het bestaande principe uit PR #84 blijft: een domiciliëringsdatum bewijst
   geen betaling.
 
-Er is geen taalmodel dat de bedoeling van de vraag bepaalt. Elke beslissing is een regel of een drempel, en
-die staan in de code.
+### Een vraag als taken (7 november 2026)
+
+"heb je advies over deze factuur zoek het adres op in deze factuur" kreeg "Ik weet niet zeker wat je wilt
+weten". Nu wordt elke vraag eerst een `Plan` met getypte taken (`invoice_intent.py`): `address` (met soort),
+`advice`, `payer`, `yearly`, `summary`, `explain`, `insights`, `this_amount` of `question`, plus de delen die
+Karen niet kon plaatsen. `InvoiceSession.ask(question, plan)` voert elke taak in code uit, in de volgorde van
+de vraag. Een onduidelijk deel krijgt een gerichte vraag ("Wat wil je weten over „…“?"), tenzij de factuur het
+gewoon beantwoordt.
+
+- **Lokale parser (standaard).** De vraag wordt gesplitst voor opdrachtwoorden en voegwoorden, en elk deel
+  wordt herkend met de bestaande herkenners. Tikfouten in de paar woorden die een taak kiezen ("adress",
+  "leveringsadrs") worden eerst rechtgezet. Advies over een onderwerp ("wat moet ik doen als ik verhuis?") is
+  een eigen vraag, geen advies over de factuur.
+- **Taalmodel (optioneel).** Alleen met `KAREN_INTENT_MODEL=1` en `OPENAI_API_KEY` (model:
+  `KAREN_INTENT_MODEL_NAME`, standaard `gpt-5-mini`). Het krijgt de vraag met de klantnaam als `[klant]`,
+  adressen als `[adres]` en identificatoren als `[X]`, plus drie velden context (vorige taak, klant genoemd,
+  bedrag genoemd). Nooit de PDF, de tekst of de adressen van de factuur. Het antwoord moet het strikte
+  JSON-schema volgen en elke taak moet letterlijk in de vraag staan; anders, of bij een time-out of fout,
+  beslist de lokale parser. `store=False`. Het model zoekt niets op en rekent niets uit.
+- **Grenzen van de maskering.** Adressen worden herkend met patronen voor gangbare Belgische, Nederlandse en
+  Franse schrijfwijzen (straatnaam met of zonder type, huisnummer, bus, postcode met plaats). Dat is geen
+  volledige anonimisering. Blijft er na het maskeren iets over dat op een adres lijkt (een postcode, of een woord
+  met een los huisnummer), dan gaat er niets weg en beslist de lokale parser. Dat is bewust voorzichtig: ook "in
+  2027" valt daaronder.
+- **Openstaande wedervragen.** "Bedoel je …?" (adres) en "Welk bedrag bedoel je?" (met de aangeboden velden,
+  elk met veldtekst en pagina) blijven open. Een keuze wordt herkend op bedrag, rij of kolom, of positie; past
+  ze bij geen veld of bij meer dan één veld, dan vraagt Karen opnieuw. Een nieuwe vraag sluit de wedervraag.
+- **Taakparameters.** Twee delen zijn één taak alleen als type, adressoort, energie, partij, btw-basis en (bij
+  een open vraag) het onderwerp gelijk zijn.
+
+### Eén betalingsstatus, advies als acties
+
+- `invoice_schema.payment_status` geeft één status per factuur: domiciliëring aangekondigd, datum voorbij maar
+  niet bevestigd, te betalen vóór, terugbetaling, niets te betalen. Het uploadantwoord, "wie moet betalen",
+  de samenvatting en het advies gebruiken dezelfde zin en dezelfde datumnotatie.
+- `advice_answer` geeft acties (kijk in je bankapp, pas je voorschot niet aan op basis van één voorschotfactuur,
+  upload je jaarafrekening, betaal vóór …), dan wat Karen nakeek en wat de factuur niet toont. Het herhaalt de
+  samenvatting niet. "Andere aandachtspunten vond ik niet" is vervangen door wat er nagekeken is.
+- Het uploadantwoord van een voorschotfactuur begint met het bedrag, het jaarbedrag bij hetzelfde voorschot en
+  de beperking ("Of dat voldoende is, kan ik pas beoordelen met je jaarafrekening").
+- **Adres onbekend of afwezig.** Staat er iets dat op een adres lijkt zonder label, dan zegt Karen "Ik kon het
+  adres niet betrouwbaar lezen" en toont ze die regel. Staat er niets, dan "Op deze factuur vond ik geen adres".
+
+Elke uitvoering (velden opzoeken, bedragen, broncontrole) blijft code. Alleen het herkennen van de opdracht kan
+een taalmodel doen, en alleen als dat aanstaat.
 
 ## Afhankelijkheden en kosten
 
@@ -92,14 +135,14 @@ die staan in de code.
   sessie (dezelfde TTL en `DELETE /api/session/{id}`). Het enige dat sessies delen is het model zelf, en dat
   bewaart niets. Daarvoor is een test toegevoegd.
 - **Documenttekst is data.** Een regel als "Negeer alle vorige instructies" wordt geciteerd of genegeerd,
-  nooit uitgevoerd. Er is ook geen taalmodel dat zulke tekst als opdracht zou kunnen lezen.
+  nooit uitgevoerd. Het optionele intentmodel ziet geen documenttekst, alleen de gemaskeerde vraag.
 - **Tests en evaluatie.** Die gebruiken alleen de synthetische facturen in `tests/fixtures/invoices`. Echte
   uploads worden niet gebruikt.
 
 ## Bewijs
 
 Gebruik `python scripts/eval_invoice_understanding.py --baseline <worktree van main>`. De evaluatieset staat
-in `evals/invoice_understanding.json`: 33 vragen op 5 synthetische facturen, telkens met het verwachte
+in `evals/invoice_understanding.json`: 43 vragen op synthetische facturen (10 met samengestelde of rommelige vragen, 7 november), telkens met het verwachte
 antwoord en de ondersteunende passage. Het resultaat staat in de PR-beschrijving, met de exacte commit.
 
 Wat **lokaal bewezen** is:

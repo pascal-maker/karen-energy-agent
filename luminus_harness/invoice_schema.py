@@ -348,8 +348,9 @@ def summarize_invoice(invoice: Invoice) -> dict[str, Any]:
     elif amounts.amount_due:
         add(f"Nog te betalen: {_euro(amounts.amount_due.value_eur)}", amounts.amount_due)
     if invoice.due_date:
-        how = "wordt via domiciliëring afgehouden op" if invoice.due_date.direct_debit else "betalen vóór"
-        add(f"{how[0].upper()}{how[1:]} {invoice.due_date.printed}", invoice.due_date)
+        when = _long_date(invoice.due_date.printed, invoice.due_date.date)
+        # The same status as every other answer: a debit the bill announces, not a payment Karen saw.
+        add(f"Domiciliëring aangekondigd op {when}" if invoice.due_date.direct_debit else f"Betalen vóór {when}", invoice.due_date)
     for advance in invoice.new_advances:
         parts = [part for part in (
             _DUTCH_ENERGIES.get(advance.energy or ""), _euro(advance.amount_eur), _DUTCH_FREQUENCIES.get(advance.frequency or "")
@@ -618,18 +619,61 @@ def _advance_frequency(invoice: Invoice) -> int | None:
     return None
 
 
-def _payment_line(invoice: Invoice, today: Any = None) -> str | None:
-    due = invoice.due_date
-    if due is None:
-        return None
-    if not due.direct_debit:
-        return f"Volgens de factuur betaal je vóór {due.printed}{_page(due)}."
+PaymentState = Literal["debit_announced", "debit_date_passed", "to_pay", "refund", "nothing_due", "unknown"]
+
+
+class PaymentStatus(_Strict):
+    """The one payment status of a bill, as printed and checked: every answer (upload, who pays, advice) uses it."""
+
+    state: PaymentState
+    sentence: str | None  # what the bill says about paying, with what Karen cannot see
+    action: str | None  # what the visitor can do about it, or None when there is nothing to do
+
+
+def _long_date(printed: str, iso: str | None) -> str:
+    if not iso:
+        return printed
+    year, month, day = (int(part) for part in iso.split("-"))
+    return f"{day} {_DUTCH_MONTHS[month - 1]} {year}"
+
+
+def debit_sentence(when: str, iso: str | None, page: str = "", today: Any = None) -> tuple[PaymentState, str, str]:
+    """(state, sentence, action) for a bill paid by direct debit on `when`: announced, never confirmed. A
+    domiciliëring on the bill says the supplier will collect; whether the bank paid, only the bank app shows."""
     from datetime import date
 
-    line = f"De factuur vermeldt een automatische betaling (domiciliëring) op {due.printed}{_page(due)}."
-    if due.date and date.fromisoformat(due.date) < (today or date.today()):
-        return line + " Die datum is voorbij. Of de betaling echt gelukt is, kan ik niet zien: kijk het na in je bankapp."
-    return line + " Of die betaling later echt uitgevoerd wordt, kan ik niet controleren."
+    announced = f"De factuur kondigt een domiciliëring aan op {when}{page}."
+    if iso and date.fromisoformat(iso) < (today or date.today()):
+        return ("debit_date_passed", announced + " Die datum is voorbij, maar of de afhouding gelukt is, kan ik niet zien: kijk het na in je bankapp.",
+                f"Kijk in je bankapp of de afhouding van {when} gelukt is.")
+    return ("debit_announced", announced + " Of de afhouding uitgevoerd wordt, kan ik niet controleren.",
+            f"Zorg dat er op {when} genoeg op je rekening staat, en kijk daarna in je bankapp of de afhouding gelukt is.")
+
+
+def payment_status(invoice: Invoice, today: Any = None) -> PaymentStatus:
+    amounts, due = invoice.amounts, invoice.due_date
+    if amounts.credit:
+        back = _euro(amounts.credit.value_eur)
+        return PaymentStatus(state="refund", sentence=f"Je krijgt {back} terug{_page(amounts.credit)}.",
+                             action=f"Kijk na of de {back} op je rekening komt.")
+    if amounts.amount_due and Decimal(amounts.amount_due.value_eur) == 0:
+        return PaymentStatus(state="nothing_due", sentence=f"Volgens de factuur is er niets meer te betalen{_page(amounts.amount_due)}.", action=None)
+    if due is None:
+        return PaymentStatus(state="unknown", sentence=None, action=None)
+    when = _long_date(due.printed, due.date)
+    if due.direct_debit:
+        state, sentence, action = debit_sentence(when, due.date, _page(due), today)
+        return PaymentStatus(state=state, sentence=sentence, action=action)
+    amount = f"{_euro(amounts.amount_due.value_eur)} " if amounts.amount_due else ""
+    return PaymentStatus(state="to_pay", sentence=f"Volgens de factuur betaal je vóór {when}{_page(due)}.",
+                         action=f"Betaal {amount}vóór {when}.".replace("  ", " "))
+
+
+_PAYING_STATES = ("debit_announced", "debit_date_passed", "to_pay")
+
+
+def _payment_line(invoice: Invoice, today: Any = None) -> str | None:
+    return payment_status(invoice, today).sentence
 
 
 def payer_answer(invoice: Invoice, today: Any = None) -> dict[str, Any]:
@@ -648,22 +692,30 @@ def payer_answer(invoice: Invoice, today: Any = None) -> dict[str, Any]:
         lines.append(f"Volgens de factuur is {_euro(amounts.amount_due.value_eur)} verschuldigd{to}{_page(amounts.amount_due)}.")
     elif supplier:
         lines.append(f"De factuur komt van {supplier.value}{_page(supplier)}, maar ik vond er geen duidelijk bedrag te betalen op.")
-    if not amounts.credit and (payment := _payment_line(invoice, today)):
-        lines.append(payment)
+    status = payment_status(invoice, today)
+    if status.state in _PAYING_STATES:
+        lines.append(status.sentence)
     if not lines:
         lines.append("Ik vond op deze factuur geen naam, leverancier of bedrag te betalen.")
     return {"answer": " ".join(lines), "sources": _sources([invoice.customer, amounts.amount_due or amounts.credit, invoice.due_date, supplier])}
 
 
 _GAS_WORD = re.compile(r"\b(?:aard)?gas\w*")
-_ELECTRICITY_WORD = re.compile(r"\b(?:elektric\w*|electric\w*|stroom\w*|kwh)")
+_ELECTRICITY_WORD = re.compile(r"\b(?:elektric\w*|electric\w*|stroom\w*)")
+_KWH_WORD = re.compile(r"\bkwh\b")
 
 
 def _asked_energy(question: str) -> str | None:
     """The one energy a question names ("wat kost gas per jaar"), or None for both or neither."""
     plain = _plain(question)
-    gas, power = bool(_GAS_WORD.search(plain)), bool(_ELECTRICITY_WORD.search(plain))
+    # "wat betaal ik per jaar aan gas (kWh)": gas is measured in kWh too, so the unit names an energy only alone.
+    gas = bool(_GAS_WORD.search(plain))
+    power = bool(_ELECTRICITY_WORD.search(plain)) or (not gas and bool(_KWH_WORD.search(plain)))
     return "gas" if gas and not power else "electricity" if power and not gas else None
+
+
+YEARLY_CAVEAT = ("Dat is een berekening van Karen, geen voorspelling van je echte energiekosten: of je bijbetaalt of geld "
+                 "terugkrijgt, zie je pas op je jaarafrekening. Upload die gerust, dan vergelijk ik ze.")
 
 
 def yearly_answer(invoice: Invoice, question: str = "") -> dict[str, Any]:
@@ -673,8 +725,7 @@ def yearly_answer(invoice: Invoice, question: str = "") -> dict[str, Any]:
     energy = _asked_energy(question)
     name = _DUTCH_ENERGIES[energy] if energy else ""
     per_year = _advance_frequency(invoice)
-    caveat = ("Dat is een berekening van Karen, geen voorspelling van je echte energiekosten: of je bijbetaalt of geld "
-              "terugkrijgt, zie je pas op je jaarafrekening. Upload die gerust, dan vergelijk ik ze.")
+    caveat = YEARLY_CAVEAT
     if per_year and energy:
         line = next((row for row in invoice.advance_lines if row.energy == energy), None)
         if line is None:
@@ -771,19 +822,93 @@ def insights_answer(invoice: Invoice, today: Any = None) -> dict[str, Any]:
                 lines.append(f"- Let op: {_euro(str(total))} zonder btw en {_euro(due.value_eur)} met btw passen niet bij 6% of 21% btw. "
                              "Kijk na of er nog andere posten op de factuur staan")
         evidence.extend([*rows, due])
-    payment = _payment_line(invoice, today)
-    if payment and not amounts.credit:
-        lines.append(f"- {payment}")
+    status = payment_status(invoice, today)
+    if status.state in _PAYING_STATES:
+        lines.append(f"- {status.sentence}")
         evidence.append(invoice.due_date)
     if invoice.document_type == "advance_invoice":
         lines.append("- Wat deze factuur niet vertelt: je echte verbruik en of je voorschot genoeg is. Daarvoor heb ik je jaarafrekening nodig.")
     elif not invoice.consumption.electricity and not invoice.consumption.gas:
         lines.append("- Je verbruik vond ik niet op deze factuur, dus vergelijken met andere jaren kan ik niet.")
     if not any("Let op" in line for line in lines):
-        lines.append("Andere aandachtspunten vond ik niet in deze controles.")
+        checked, _ = _checks(invoice, status)
+        if checked:
+            lines.append(f"Nagekeken: {_join(checked)}. Daarin vond ik niets dat niet klopt.")
     explained_sources = explain_invoice(invoice)["sources"]
     sources = explained_sources + [source for source in _sources(evidence) if source not in explained_sources]
     return {"answer": "\n".join(lines), "sources": sources}
+
+
+def _vat_check(invoice: Invoice) -> tuple[str, str] | None:
+    """('ok' | 'off', text) for an advance bill whose lines are printed without btw: do lines + btw make the total?"""
+    rows, due = invoice.advance_lines, invoice.amounts.amount_due
+    if len(rows) < 2 or due is None or rows[0].vat_included is not False:
+        return None
+    total = sum(Decimal(row.amount_eur) for row in rows)
+    vat = Decimal(due.value_eur) - total
+    rate = next((r for r in (6, 21) if abs(total * r / 100 - vat) <= Decimal("0.02")), None)
+    if rate:
+        return "ok", f"{_euro(str(total))} + {rate}% btw = {_euro(due.value_eur)}"
+    return "off", f"{_euro(str(total))} zonder btw en {_euro(due.value_eur)} met btw passen niet bij 6% of 21% btw"
+
+
+def _join(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " en " + items[-1]
+
+
+def _checks(invoice: Invoice, status: PaymentStatus) -> tuple[list[str], list[str]]:
+    """What Karen checked on this bill, and what it cannot show: said instead of 'nothing else found'."""
+    checked: list[str] = []
+    unknown: list[str] = []
+    vat = _vat_check(invoice)
+    if vat and vat[0] == "ok":
+        checked.append(f"de optelling ({vat[1]})")
+    if status.state in ("debit_announced", "debit_date_passed"):
+        checked.append("de betaalwijze (domiciliëring)")
+        unknown.append("of de afhouding gelukt is")
+    elif status.state == "to_pay":
+        checked.append("de vervaldatum")
+    if invoice.document_type != "unknown":
+        checked.append(f"het soort factuur ({_DUTCH_TYPES[invoice.document_type]})")
+    if invoice.document_type == "advance_invoice":
+        unknown.append("je echte verbruik")
+        unknown.append("of je voorschot volstaat")
+    elif not invoice.consumption.electricity and not invoice.consumption.gas:
+        unknown.append("je verbruik")
+    return checked, unknown
+
+
+def advice_answer(invoice: Invoice, today: Any = None) -> dict[str, Any]:
+    """What to do with this bill: actions from its payment status, its type and Karen's checks; then what was
+    checked and what the bill cannot show. Never a repeat of the summary, never a verdict on prices."""
+    status = payment_status(invoice, today)
+    actions: list[str] = [status.action] if status.action else []
+    evidence: list[Evidence | None] = [invoice.due_date, invoice.amounts.amount_due or invoice.amounts.credit]
+    vat = _vat_check(invoice)
+    if vat and vat[0] == "off":
+        actions.append(f"Kijk na of er nog andere posten op de factuur staan: {vat[1]}.")
+        evidence.extend(invoice.advance_lines)
+    if invoice.document_type == "advance_invoice":
+        actions.append("Pas je voorschot niet aan op basis van alleen deze voorschotfactuur.")
+        due = invoice.amounts.amount_due
+        per_year = _advance_frequency(invoice)
+        how_often = {12: " per maand", 6: " per twee maanden", 4: " per kwartaal"}.get(per_year or 0, "")
+        amount = f"{_euro(due.value_eur)}{how_often}" if due and Decimal(due.value_eur) > 0 else "je voorschot"
+        actions.append(f"Upload je jaarafrekening: pas dan kan ik beoordelen of {amount} voldoende is.")
+        evidence.append(invoice.document_type_evidence)
+    elif invoice.consumption.electricity or invoice.consumption.gas:
+        actions.append("Vergelijk het verbruik op de factuur met je meterstanden, zodat je niet betaalt voor een verkeerde meting.")
+        evidence.extend([invoice.consumption.electricity, invoice.consumption.gas])
+    checked, unknown = _checks(invoice, status)
+    if actions:
+        lines = [f"**Mijn advies:** {actions[0][0].lower()}{actions[0][1:]}", *(f"- {action}" for action in actions[1:])]
+    else:
+        lines = ["Ik zie op deze factuur niets dat je nu moet doen."]
+    if checked:
+        lines.append(f"Nagekeken: {_join(checked)}.")
+    if unknown:
+        lines.append(f"Niet te zien op deze factuur: {_join(unknown)}.")
+    return {"answer": "\n".join(lines), "sources": _sources(evidence)}
 
 
 def clarify_answer() -> dict[str, Any]:

@@ -61,6 +61,7 @@ from luminus_harness.gemma_answer import (
 from luminus_harness.invoice_analysis import analyze_invoice_chunks, answer_uploaded_pdf_question
 from luminus_harness.invoice_retrieval import warm_up as warm_up_invoice_embeddings
 from luminus_harness.invoice_sections import page_texts_from_pdf
+from luminus_harness.invoice_intent import intent_model_enabled, parse as parse_intent
 from luminus_harness.invoice_session import session_from_upload
 from luminus_harness.invoice_model import model_enabled, needs_model, read_invoice_with_model
 from luminus_harness.photo_invoice import PhotoUnavailable, chunks_from_text, is_image_upload, ocr_image
@@ -1035,7 +1036,11 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
         conversation = session.get("conversation")
         if conversation is not None:
             # This session's own invoice, sections and turns; the local embedding model runs on this server.
-            result = await asyncio.to_thread(conversation.ask, body.question.strip())
+            # What the question asks, as tasks: the intent model sees only the masked question and minimal context.
+            plan = None
+            if intent_model_enabled():
+                plan = await parse_intent(body.question.strip(), conversation._names(), conversation._customer_parts(), conversation.intent_context())
+            result = await asyncio.to_thread(conversation.ask, body.question.strip(), plan)
         else:
             result = answer_uploaded_pdf_question(
                 body.question.strip(), session["chunks"], session["analysis"].get("facts"), session["analysis"].get("invoice")
