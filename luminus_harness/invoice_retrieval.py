@@ -64,7 +64,7 @@ def content_terms(text: str) -> set[str]:
 # --- What kind of value would answer the question --------------------------------------------------
 
 _PER_KWH_Q = re.compile(r"(?i)(?:per|/|een|1)\s*kwh|kwh[- ]?prijs|prijs per|eenheidsprijs|tarief per|kost(?:t|en)? (?:een|1) kwh|prix (?:du|par) kwh")
-_DURATION_Q = re.compile(r"(?i)\bhoe\s+lang\b|\btermijn|\bop\s+voorhand\b|\bvooraf\b|\bhoeveel\s+(?:dagen|weken|maanden|jaar)\b|\bcombien de (?:jours|semaines|mois)\b|\bdélai\b")
+_DURATION_Q = re.compile(r"(?i)\bhoe\s+lang\b|contractduur|looptijd|\bduur\s+van\s+(?:het|je|uw|mijn)\s+contract|dur[ée]e\s+du\s+contrat|\btermijn|\bop\s+voorhand\b|\bvooraf\b|\bhoeveel\s+(?:dagen|weken|maanden|jaar)\b|\bcombien de (?:jours|semaines|mois)\b|\bdélai\b")
 _DATE_Q = re.compile(r"(?i)\bwanneer\b|datum\b|\btegen\s+wanneer\b|\bvervaldag|\bquand\b|\bdate\b")
 _QUANTITY_Q = re.compile(r"(?i)verbruik|\bkwh\b|\bm³|\bm3\b|\bconsommation\b")
 _AMOUNT_Q = re.compile(r"(?i)\bhoeveel\b|\bbedrag|\bkost|\bbtw\b|\bbetaal|\bbetalen|\bprijs|\bvoorschot|\bcombien\b|\bmontant|\btva\b|€")

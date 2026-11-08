@@ -529,3 +529,38 @@ def test_round5_choose_checks_each_condition():
     assert _choose("de 42 btw van gas", (power, gas)) == [gas]
     assert _choose("die excl btw van gas", (gas, gas_excl)) == [gas_excl]
     assert _choose("de btw van gas", (gas, gas_excl)) == [gas], "'btw' alone names the btw column, not 'excl. btw'"
+
+
+# --- live retest of main f80b96e: a contract term named in one word, a due date asked as a bare "wanneer" -----
+
+@pytest.mark.parametrize("question", [
+    "wat is mijn contractduur?", "wat is de looptijd van mijn contract?", "hoe lang loopt mijn contract?",
+    "wat is de duur van mijn contract?",
+])
+def test_live_contract_term_in_any_wording_names_what_is_there(question):
+    answer = _session(SETTLEMENT).ask(question)["answer"]
+    assert answer.startswith("Op deze factuur vond ik geen contractduur."), (question, answer)
+    assert "Opzegtermijn: 3 weken" in answer and "Dat is niet hetzelfde." in answer
+
+
+def test_live_expensive_contract_is_no_contract_term():
+    from luminus_harness.invoice_retrieval import expected_value
+
+    assert expected_value("is mijn contract duur?") != "duration", "'duur' alone is 'expensive', not a term"
+
+
+@pytest.mark.parametrize("question", [
+    "hoeveel moet ik betalen en wanneer?", "hoeveel moet ik betalen en tegen wanneer?", "hoeveel moet ik betalen, en wanneer?",
+])
+def test_live_amount_and_bare_when_give_the_due_date_once(question):
+    reply = _session(SETTLEMENT).ask(question)
+    answer = reply["answer"]
+    assert reply.get("found", True) and "€ 172,00" in answer, (question, answer)
+    assert answer.count("10 maart 2026") + answer.count("10/03/2026") == 1, (question, answer)
+
+
+def test_live_bare_when_borrows_the_previous_question():
+    from luminus_harness.invoice_intent import parse_locally
+
+    texts = [task.text for task in parse_locally("hoeveel moet ik betalen en tegen wanneer?").tasks]
+    assert texts == ["hoeveel moet ik betalen", "tegen wanneer moet ik betalen"], texts

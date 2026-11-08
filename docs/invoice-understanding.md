@@ -72,7 +72,9 @@ gewoon beantwoordt.
 - **Lokale parser (standaard).** De vraag wordt gesplitst voor opdrachtwoorden en voegwoorden, en elk deel
   wordt herkend met de bestaande herkenners. Tikfouten in de paar woorden die een taak kiezen ("adress",
   "leveringsadrs") worden eerst rechtgezet. Advies over een onderwerp ("wat moet ik doen als ik verhuis?") is
-  een eigen vraag, geen advies over de factuur.
+  een eigen vraag, geen advies over de factuur. Een los vraagwoord na "en" ("hoeveel moet ik betalen en (tegen)
+  wanneer") herhaalt de vorige vraag ("tegen wanneer moet ik betalen"); een zin die al in het antwoord staat,
+  komt er niet nog eens bij.
 - **Taalmodel (optioneel).** Alleen met `KAREN_INTENT_MODEL=1` en `OPENAI_API_KEY` (model:
   `KAREN_INTENT_MODEL_NAME`, standaard `gpt-5-mini`). Het krijgt de vraag met de klantnaam als `[klant]`,
   adressen als `[adres]` en identificatoren als `[X]`, plus drie velden context (vorige taak, klant genoemd,
