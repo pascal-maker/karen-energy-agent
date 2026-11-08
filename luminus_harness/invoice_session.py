@@ -775,28 +775,55 @@ def _numbers_in(text: str) -> set[Decimal]:
             for raw in re.findall(r"\d+(?:[.,]\d{1,2})?", _fold(text))}
 
 
+_GAS_PICK = re.compile(r"\b(?:aard)?gas\w*")
+_POWER_PICK = re.compile(r"\b(?:elektric\w*|electric\w*|stroom\w*)")
+_VAT_PICK = re.compile(r"\b(?:btw|tva|vat)\b")
+_QUALIFIER_PICK = re.compile(r"\b(?:incl|inclusief|excl|exclusief|zonder|met|tvac|htva|ttc|hors|sans)\b")
+_POSITION_PICK = frozenset(("eerste", "eerst", "tweede", "derde", "vierde", "laatste", "premier", "premiere", "deuxieme", "dernier", "first", "second"))
+
+
+def _energy(text: str) -> str | None:
+    folded = _fold(text)
+    gas, power = bool(_GAS_PICK.search(folded)), bool(_POWER_PICK.search(folded))
+    return "gas" if gas and not power else "electricity" if power and not gas else "both" if gas else None
+
+
 def _choose(answer: str, choices: tuple[AmountRef, ...]) -> list[AmountRef]:
-    """The fields a reply to "Welk bedrag bedoel je?" points at, by meaning, not only by number: its number
-    ("de 42 euro"), its row or column ("die van gas"), both ("de 700 van gas"), or its position ("de tweede").
-    One field resumes the question; none or several make Karen ask again."""
+    """The fields a reply to "Welk bedrag bedoel je?" points at. Each thing the reply names is its own condition,
+    and a field is chosen only when every one fits: the amount ("42"), the energy ("van gas"), the column ("btw",
+    "excl. btw") and any other word ("van water" fits nothing). "de 42 btw van elektriciteit", when € 42 is gas,
+    chooses no field. A position ("de tweede") counts only when nothing else is named. One field resumes the
+    question; none or several make Karen ask again."""
     folded = _fold(answer)
     numbers = _numbers_in(answer)
-    words = set(re.findall(r"[a-z]{3,}", folded)) - _PICK_FILLER
+    energy = _energy(folded)
+    qualifiers = _qualifiers(answer)
+    vat = bool(_VAT_PICK.search(folded))
+    words = set(re.findall(r"[a-z]{3,}", folded)) - _PICK_FILLER - _POSITION_PICK
+    rest = {word for word in words if not (_GAS_PICK.fullmatch(word) or _POWER_PICK.fullmatch(word)
+                                           or _VAT_PICK.fullmatch(word) or _QUALIFIER_PICK.fullmatch(word))}
 
-    def named(ref: AmountRef) -> bool:
-        return bool(words & set(re.findall(r"[a-z]{3,}", _fold(_row_label(ref.field) + " " + ref.column + " " + ref.field.split(":")[0]))))
+    def fits(ref: AmountRef) -> bool:
+        column = ref.column or ref.field.split(":", 1)[0]
+        if numbers and _decimal(ref.amount) not in numbers:
+            return False
+        if energy and _energy(_row_label(ref.field) or ref.field.split(":", 1)[0]) != energy:
+            return False
+        if qualifiers and not qualifiers <= _qualifiers(column):
+            return False
+        if vat and not qualifiers and not re.match(r"(?i)\s*(?:btw|tva|vat)\b", column):
+            return False  # "de btw" is the btw amount itself, not a column "Bedrag excl. btw"
+        own = set(re.findall(r"[a-z]{3,}", _fold(ref.field.split(":", 1)[0] + " " + column)))
+        return rest <= own
 
-    if numbers:
-        picked = [ref for ref in choices if _decimal(ref.amount) in numbers]
-        # "de 42 van elektriciteit" when € 42 is gas, "de 42 van water": amount and subject disagree, so no field
-        # is chosen and Karen asks again; a subject only narrows, it never falls back to the number alone.
-        return [ref for ref in picked if named(ref)] if words else picked
+    if numbers or energy or qualifiers or vat or rest:
+        return [ref for ref in choices if fits(ref)]
     position = next((index for word, index in _ORDINALS.items() if re.search(rf"\b{word}\b", folded)), None)
     if re.search(r"\blaatste\b|\bdernier", folded):
         position = len(choices) - 1
     if position is not None:
         return [choices[position]] if position < len(choices) else []
-    return [ref for ref in choices if named(ref)] if words else []
+    return []
 
 
 _YES = re.compile(r"(?i)\s*(?:ja|jawel|jep|yes|oui|klopt|inderdaad|correct|zeker|ja\s+(?:die|dat|klopt|graag|die\s+persoon))\s*[.!]*\s*")

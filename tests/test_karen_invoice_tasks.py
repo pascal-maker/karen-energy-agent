@@ -491,3 +491,41 @@ def test_round4_choose_returns_nothing_when_amount_and_row_disagree():
     assert _choose("de 42 van elektriciteit", (power, gas)) == []
     assert _choose("de 42 van gas", (power, gas)) == [gas]
     assert _choose("de 42 van water", (power, gas)) == []
+
+
+# --- review of 5de97bd: amount, energy and column are separate conditions that must all fit --------------
+
+@pytest.mark.parametrize("pick", [
+    "de 42 btw van elektriciteit", "42 btw van water", "de 30 btw van gas", "42 btw elektriciteit",
+    "de 42 incl. btw", "42 excl btw van gas", "de btw van water",
+])
+def test_round5_every_named_condition_must_fit(pick):
+    session = _session(SETTLEMENT)
+    _asked_which(session)
+    answer = session.ask(pick)["answer"]
+    assert "btw-bedrag zelf" not in answer, (pick, answer)
+    assert answer.startswith(("Dat bedrag en die regel passen niet bij elkaar.", "Dat bedrag stond niet bij mijn keuzes.")), answer
+    assert session.ask("de 42 btw van gas")["answer"].startswith("€ 42,00 is het btw-bedrag zelf"), "The question stays open"
+
+
+@pytest.mark.parametrize("pick, amount", [
+    ("de 42 btw van gas", "€ 42,00"), ("30 btw elektriciteit", "€ 30,00"), ("de btw van gas", "€ 42,00"),
+    ("de btw van stroom", "€ 30,00"), ("42 btw", "€ 42,00"), ("de 42 euro btw graag", "€ 42,00"),
+])
+def test_round5_conditions_that_all_fit_pick(pick, amount):
+    session = _session(SETTLEMENT)
+    _asked_which(session)
+    assert session.ask(pick)["answer"].startswith(f"{amount} is het btw-bedrag zelf")
+
+
+def test_round5_choose_checks_each_condition():
+    from luminus_harness.invoice_session import AmountRef, _choose
+
+    power = AmountRef("€ 30,00", "Elektriciteit — Btw 6%: € 30,00", "Btw 6%", 1)
+    gas = AmountRef("€ 42,00", "Gas — Btw 6%: € 42,00", "Btw 6%", 1)
+    gas_excl = AmountRef("€ 700,00", "Gas — Bedrag excl. btw: € 700,00", "Bedrag excl. btw", 1)
+    assert _choose("de 42 btw van elektriciteit", (power, gas)) == []
+    assert _choose("42 btw van water", (power, gas)) == []
+    assert _choose("de 42 btw van gas", (power, gas)) == [gas]
+    assert _choose("die excl btw van gas", (gas, gas_excl)) == [gas_excl]
+    assert _choose("de btw van gas", (gas, gas_excl)) == [gas], "'btw' alone names the btw column, not 'excl. btw'"
