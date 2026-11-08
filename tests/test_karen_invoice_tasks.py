@@ -460,3 +460,34 @@ def test_round3_consumption_never_answers_with_an_ean_or_a_cost():
             answer = _session(fixture).ask(question)["answer"]
             assert "EAN" not in answer and "[X]" not in answer, (fixture, question, answer)
             assert not any(cost in answer for cost in ("€ 530,00", "€ 500,00", "€ 742,00", "€ 63,21 excl", "Bedrag excl")), (fixture, question, answer)
+
+
+# --- review of 6a0e903: an amount and a row that contradict each other ask again ----------------------
+
+@pytest.mark.parametrize("pick", ["de 42 van elektriciteit", "de 42 van water", "30 van gas"])
+def test_round4_amount_and_row_that_disagree_ask_again(pick):
+    session = _session(SETTLEMENT)
+    _asked_which(session)
+    reply = session.ask(pick)
+    assert reply.get("found", True)
+    assert reply["answer"].startswith("Dat bedrag en die regel passen niet bij elkaar."), reply["answer"]
+    assert "btw-bedrag zelf" not in reply["answer"]
+    assert "€ 30,00" in reply["answer"] and "€ 42,00" in reply["answer"], "Both choices offered again"
+    assert session.ask("de 42 van gas")["answer"].startswith("€ 42,00 is het btw-bedrag zelf"), "The question stays open"
+
+
+@pytest.mark.parametrize("pick, amount", [("42 alsjeblieft", "€ 42,00"), ("de 30 euro graag", "€ 30,00"), ("die van gas aub", "€ 42,00")])
+def test_round4_courtesy_words_are_no_contradiction(pick, amount):
+    session = _session(SETTLEMENT)
+    _asked_which(session)
+    assert session.ask(pick)["answer"].startswith(f"{amount} is het btw-bedrag zelf")
+
+
+def test_round4_choose_returns_nothing_when_amount_and_row_disagree():
+    from luminus_harness.invoice_session import AmountRef, _choose
+
+    power = AmountRef("€ 30,00", "Elektriciteit — Btw 6%: € 30,00", "Btw 6%", 1)
+    gas = AmountRef("€ 42,00", "Gas — Btw 6%: € 42,00", "Btw 6%", 1)
+    assert _choose("de 42 van elektriciteit", (power, gas)) == []
+    assert _choose("de 42 van gas", (power, gas)) == [gas]
+    assert _choose("de 42 van water", (power, gas)) == []

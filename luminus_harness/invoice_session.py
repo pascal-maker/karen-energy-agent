@@ -92,7 +92,12 @@ class InvoiceSession:
         if picked is not None and len(picked) != 1:
             # No choice fits ("de 99 euro"), or one amount stands in more fields: ask again, the question stays open.
             self.pending, self.choices = pending, tuple(picked or choices)
-            lead = "Dat bedrag stond niet bij mijn keuzes." if not picked else "Dat bedrag staat in meer dan één veld."
+            if picked:
+                lead = "Dat bedrag staat in meer dan één veld."
+            elif _numbers_in(question) and re.search(r"[a-z]{3,}", " ".join(set(re.findall(r"[a-z]{3,}", _fold(question))) - _PICK_FILLER)):
+                lead = "Dat bedrag en die regel passen niet bij elkaar."
+            else:
+                lead = "Dat bedrag stond niet bij mijn keuzes."
             options = "; ".join(_option(ref) for ref in self.choices)
             result = {"answer": f"{lead} Welk bedrag bedoel je: {options}?", "sources": []}
             self._remember(question, result, [], ("this_amount",))
@@ -759,7 +764,15 @@ def _option(ref: AmountRef) -> str:
     return f"{ref.amount} ({where}{page})" if where else ref.amount
 
 
-_PICK_FILLER = frozenset("die dat van het bedrag euro eur bedoel ik graag de een deze".split())
+_PICK_FILLER = frozenset(
+    "die dat van het bedrag euro eur bedoel ik graag de een deze alsjeblieft alstublieft aub please svp merci dank bedankt "
+    "oke okay welke nummer cent".split()
+)
+
+
+def _numbers_in(text: str) -> set[Decimal]:
+    return {Decimal(raw.replace(".", "").replace(",", ".")) if "," in raw else Decimal(raw)
+            for raw in re.findall(r"\d+(?:[.,]\d{1,2})?", _fold(text))}
 
 
 def _choose(answer: str, choices: tuple[AmountRef, ...]) -> list[AmountRef]:
@@ -767,8 +780,7 @@ def _choose(answer: str, choices: tuple[AmountRef, ...]) -> list[AmountRef]:
     ("de 42 euro"), its row or column ("die van gas"), both ("de 700 van gas"), or its position ("de tweede").
     One field resumes the question; none or several make Karen ask again."""
     folded = _fold(answer)
-    numbers = {Decimal(raw.replace(".", "").replace(",", ".")) if "," in raw else Decimal(raw)
-               for raw in re.findall(r"\d+(?:[.,]\d{1,2})?", folded)}
+    numbers = _numbers_in(answer)
     words = set(re.findall(r"[a-z]{3,}", folded)) - _PICK_FILLER
 
     def named(ref: AmountRef) -> bool:
@@ -776,8 +788,9 @@ def _choose(answer: str, choices: tuple[AmountRef, ...]) -> list[AmountRef]:
 
     if numbers:
         picked = [ref for ref in choices if _decimal(ref.amount) in numbers]
-        narrowed = [ref for ref in picked if named(ref)]
-        return narrowed if words and narrowed else picked
+        # "de 42 van elektriciteit" when € 42 is gas, "de 42 van water": amount and subject disagree, so no field
+        # is chosen and Karen asks again; a subject only narrows, it never falls back to the number alone.
+        return [ref for ref in picked if named(ref)] if words else picked
     position = next((index for word, index in _ORDINALS.items() if re.search(rf"\b{word}\b", folded)), None)
     if re.search(r"\blaatste\b|\bdernier", folded):
         position = len(choices) - 1
