@@ -91,7 +91,7 @@ Weggehaald, omdat er geen ✅ voor was:
 
 ## Vangnet (na zes Codex-rondes)
 
-Noemt het gesprek meer dan één gewest, dan kiest Karen bij een gaslek of storing **geen** netbeheerder. Ze geeft de veiligheidsstappen, vraagt "Waar is het precies?" en zet per genoemd gewest het nummer op een eigen, gelabelde regel. Voor Wallonië blijft dat voorwaardelijk ("staat er ORES: …"). Er komen geen nieuwe feiten of nummers bij: het zijn dezelfde ✅-nummers uit de tabel hierboven.
+Noemt het gesprek meer dan één gewest, of een plaats die Karen niet kent (dan tellen alle drie de gewesten), dan kiest Karen bij een gaslek of storing **geen** netbeheerder. Ze geeft de veiligheidsstappen, vraagt "Waar is het precies?" en zet per genoemd gewest het nummer op een eigen, gelabelde regel. Voor Wallonië blijft dat voorwaardelijk ("staat er ORES: …"). Er komen geen nieuwe feiten of nummers bij: het zijn dezelfde ✅-nummers uit de tabel hierboven.
 
 ## Nog te bevestigen door de eigenaar of op een officiële pagina, voordat PR 1 gemerged wordt
 

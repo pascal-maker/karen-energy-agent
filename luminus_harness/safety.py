@@ -40,7 +40,7 @@ _BRUSSELS_TOWNS = (
     "sint-lambrechts-woluwe", "woluwe-saint-lambert", "sint-pieters-woluwe", "woluwe-saint-pierre", "laeken",
 )
 _FLEMISH_TOWNS = (
-    "antwerpen", "anvers", "gent", "gand", "brugge", "bruges", "leuven", "louvain", "mechelen", "malines",
+    "antwerpen", "anvers", "antwerp", "gent", "gand", "ghent", "brugge", "bruges", "leuven", "louvain", "mechelen", "malines",
     "aalst", "alost", "hasselt", "kortrijk", "courtrai", "oostende", "ostende", "genk", "sint-niklaas", "roeselare",
     "turnhout", "dendermonde", "beveren", "vilvoorde", "herentals", "lokeren", "ninove",
     "zaventem", "tongeren", "ieper", "waregem", "lommel", "deinze", "eeklo", "oudenaarde",
@@ -64,6 +64,7 @@ _NEGATION = re.compile(r"\b(?:niet|geen|pas|not|plus)\s+(?:in\s+|en\s+|a\s+|à\s
 # else's ("mijn zus woont in", "ma soeur habite à"), read from the words just before the place.
 _SELF_HOME = re.compile(
     r"(?:\bik woon\w*|\bwij wonen|\bwe wonen|\bj.habite|\bnous habitons|\bje vis\b|\bi live|\bwe live|\bmijn adres|\bchez moi|"
+    r"\bin (?:mijn|ons|onze) (?:huis|woning|appartement|flat|studio|kot)\b|\bdans mon (?:appartement|logement)\b|\bin my (?:house|home|flat)\b|"
     r"\b(?:ik ben|we zijn|wij zijn|ik)\s+(?:\w+\s+){0,2}verhuisd\b.{0,25}\bnaar|\b(?:j.ai|nous avons|je suis|nous sommes)\s+demenage\w*.{0,25}\b(?:a|vers)|"
     r"\b(?:i|we) (?:have |just )?moved to)\W+(?:\w+\W+){0,6}$"
 )
@@ -89,6 +90,35 @@ _MOVED = re.compile(
 # The visitor stating their own operator ("chez ORES", "bij RESA", "mon gestionnaire est ORES").
 _STATED_OPERATOR = re.compile(r"(?:chez|bij|klant (?:bij|van)|client\w* (?:de|chez)|gestionnaire (?:est|c.est)|netbeheerder is|est|is)\s+(ores|resa)\b(?!\s*(?:ou|of|or)\b)")
 _DENIED = re.compile(r"\b(?:niet|geen|pas|not|plus|jamais|nooit|never)\b")
+
+
+# Town names that are also words ("luik" = hatch, "geel" = yellow, "boom" = tree): a town only after a
+# preposition of place ("in Luik", "naar Geel", "à Spa").
+_PLACE_ONLY_TOWNS = {
+    "luik": WALLONIA, "namen": WALLONIA, "waver": WALLONIA, "bergen": WALLONIA, "spa": WALLONIA, "ans": WALLONIA,
+    "ath": WALLONIA, "menen": FLANDERS, "tienen": FLANDERS, "geel": FLANDERS, "lier": FLANDERS, "halle": FLANDERS,
+    "mol": FLANDERS, "boom": FLANDERS, "vorst": BRUSSELS, "forest": BRUSSELS, "jette": BRUSSELS, "laken": BRUSSELS,
+}
+_PLACE_PREPOSITION = r"\b(?:in|te|naar|uit|van|a|vers|to|from)\s+"
+_PLACE_ONLY_PATTERNS = [
+    (re.compile(_PLACE_PREPOSITION + r"(" + town + r")(?![\w-])"), region) for town, region in _PLACE_ONLY_TOWNS.items()
+]
+# A capitalised place Karen doesn't know ("ik woon in Geel" is known, "in Kontich" is not): it still
+# counts as a place, of unknown region, so Karen never falls back to another region's number.
+_UNKNOWN_PLACE = re.compile(r"\b(?:in|te|naar|uit|à|vers|to|from)\s+([A-ZÀ-Ý][\w'’-]{2,})")
+_NOT_A_PLACE = {
+    "belgie", "belgique", "belgium", "europa", "europe", "luminus", "engie", "eneco", "totalenergies", "mega",
+    "octa", "bolt", "ecopower", "fluvius", "sibelga", "ores", "resa", "karen", "english", "nederlands", "frans",
+    "francais", "januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september",
+    "oktober", "november", "december", "janvier", "fevrier", "mars", "avril", "juin", "juillet", "aout",
+    "septembre", "octobre", "novembre", "decembre", "brugel", "cwape", "vreg", "creg", "ocmw", "cpas",
+}
+UNKNOWN = "unknown"
+_KNOWN_PLACE_WORDS = {
+    _fold(word) for word in (*_BRUSSELS_TOWNS, *_FLEMISH_TOWNS, *_WALLOON_TOWNS, *_PLACE_ONLY_TOWNS,
+                             "vlaanderen", "flandre", "flanders", "brussel", "bruxelles", "brussels",
+                             "wallonie", "wallonië", "wallonia")
+}
 
 
 def _town_pattern(town: str) -> re.Pattern[str]:
@@ -117,11 +147,19 @@ def _mentions(text: str) -> list[tuple[str, str]]:
     Gent. Mijn zus woont in Brussel" Brussel is the sister's, not a second home.
     """
     folded = _fold(text)
-    matches = sorted(
+    matches = [
         (match.start(), match.end(), region)
         for pattern, region in [*_TOWN_PATTERNS, *((p, r) for r, p in _REGION_PATTERNS)]
         for match in pattern.finditer(folded)
-    )
+    ]
+    matches += [(m.start(1), m.end(1), region) for pattern, region in _PLACE_ONLY_PATTERNS for m in pattern.finditer(folded)]
+    for m in _UNKNOWN_PLACE.finditer(text):
+        word = _fold(m.group(1))
+        if word in _NOT_A_PLACE or word in _KNOWN_PLACE_WORDS or any(word.startswith(k + "-") for k in _KNOWN_PLACE_WORDS):
+            continue
+        start = folded.find(word)
+        matches.append((max(start, 0), max(start, 0) + len(word), UNKNOWN))
+    matches.sort()
     found = []
     previous_end = 0
     for start, end, region in matches:
@@ -150,6 +188,8 @@ def _mentions(text: str) -> list[tuple[str, str]]:
 
 def _one_region(mentions: list[tuple[str, str]]) -> str | None:
     regions = {region for region, _ in mentions}
+    if UNKNOWN in regions:
+        return None  # a place Karen doesn't know: ask, never guess
     return regions.pop() if len(regions) == 1 else None
 
 
@@ -241,7 +281,8 @@ _NOT_OUTAGE = re.compile(
 _GAS_SMELL = (
     r"(?:aard)?gas ?(?:geur|lucht|reuk|lek)|(?:ruik|ruikt|ruiken|rook)\W+(?:\w+\W+){0,3}(?:naar )?(?:aard)?gas\b|"
     r"odeur de gaz|fuite de gaz|sen[st]\W+(?:\w+\W+){0,2}(?:le |du )?gaz\b|(?:gas|gaz) (?:smell|leak)|smell\w*\W+(?:\w+\W+){0,2}(?:natural )?gas\b|"
-    r"(?:komt|ontsnapt|lekt|stroomt)\W+(?:\w+\W+){0,2}gas\b|\bgas\W+(?:\w+\W+){0,2}(?:komt|ontsnapt|lekt)\b|"
+    r"(?:komt|ontsnapt|lekt|stroomt|sist)\W+(?:\w+\W+){0,2}(?:aard)?gas\b|\b(?:aard)?gas\W+(?:\w+\W+){0,2}(?:komt|ontsnapt|lekt|sist)\b|"
+    r"hiss\w*\W+(?:\w+\W+){0,3}gas\b|\bgas\W+(?:\w+\W+){0,2}hiss|gaz qui siffle|sifflement de gaz|"
     r"gaz (?:s.echappe|qui fuit|fuit)|gas (?:is )?(?:escaping|leaking)"
 )
 _STRONG_OUTAGE = re.compile(
@@ -252,9 +293,10 @@ _STRONG_OUTAGE = re.compile(
 )
 # "De hele straat" is only an outage together with "geen stroom", "panne", "zonder stroom"...
 _STREET_OUTAGE = re.compile(
-    r"(?:straat|buurt|wijk|quartier|rue|street|neighbou?rhood)\b.{0,40}(?:geen stroom|zonder stroom|panne|storing|uitval|"
-    r"donker|sans (?:courant|electricite)|coupure|no power|outage|power cut)|"
-    r"(?:geen stroom|zonder stroom|panne|storing|sans courant|no power|outage).{0,40}(?:straat|buurt|wijk|quartier|rue|street)"
+    r"(?:straat|buurt|wijk|buren|buurman|buurvrouw|quartier|rue|voisins?|street|neighbou?r\w*)\b.{0,40}(?:geen (?:stroom|elektriciteit)|"
+    r"zonder (?:stroom|elektriciteit)|panne|storing|uitval|donker|sans (?:courant|electricite)|coupure|no (?:power|electricity)|outage|power cut)|"
+    r"(?:geen (?:stroom|elektriciteit)|zonder (?:stroom|elektriciteit)|panne|storing|sans courant|no power|outage).{0,40}"
+    r"(?:straat|buurt|wijk|buren|quartier|rue|voisins?|street|neighbou?r\w*)"
 )
 _WEAK_OUTAGE = re.compile(r"geen stroom|stroom (?:is )?weg|\bpanne\b|no (?:power|electricity)")
 # Power gone, said in full: always an outage, solar panels or inverter mentioned or not.
@@ -383,9 +425,29 @@ def _gas_steps(lang: str, vous: bool) -> str:
 
 
 def _regions_named(texts: list[str]) -> list[str]:
-    """Every region the visitor's messages name (towns or region words, any person), in a fixed order."""
+    """Every region the visitor's messages name (towns or region words, any person), in a fixed order.
+
+    A place Karen doesn't know counts as all three: she can't rule any region out.
+    """
     named = {region for text in texts for region, _ in _mentions(text)}
+    if UNKNOWN in named:
+        return [FLANDERS, BRUSSELS, WALLONIA]
     return [region for region in (FLANDERS, BRUSSELS, WALLONIA) if region in named]
+
+
+def _emergency_reply(question: str, earlier: list[str], folded: str, money_trouble: bool) -> dict[str, Any]:
+    """Safety net: when the conversation names more than one region, or a place Karen doesn't know, she
+    never picks one operator's number. She gives the safety steps, asks where it is, and lists each
+    region's number labelled, so the visitor picks the place and nobody gets a wrong one."""
+    named = _regions_named([question, *earlier])
+    if len(named) > 1:
+        return _outage_answer_for_each(question, named, money_trouble)
+    scene = _emergency_scene(question)
+    if scene is not None:
+        region, walloon_operator = scene
+    else:
+        region, walloon_operator = visitor_region(question, earlier, emergency=True)
+    return _outage_answer(question, region, walloon_operator, money_trouble)
 
 
 _REGION_NAMES = {
@@ -659,20 +721,33 @@ def _emergency_scene(question: str) -> tuple[str, str | None] | None:
         folded = _fold(sentence)
         if _is_emergency(folded, check_devices=False):
             mentions = _mentions(sentence)
-            there = [m for m in mentions if m[1] == "there"] or [m for m in mentions if m[1] == "neutral"]
+            elsewhere = [m for m in mentions if m[1] == "there"]
+            there = elsewhere or [m for m in mentions if m[1] == "neutral"]
             region = _one_region(there) if there else None
             if region:
-                operator = _operator_in(folded) if region == WALLONIA else None
+                operator = _operator_in(folded, bool(elsewhere)) if region == WALLONIA else None
                 return region, operator
     return None
 
 
-def _operator_in(folded_sentence: str) -> str | None:
-    """ORES or RESA named in one sentence, whoever it belongs to; None if denied, absent or both."""
+_THIRD_PERSON = re.compile(r"\b(?:zij|hij|ze|elle|il|she|he|they)\b|\b(?:mijn|onze|ma|mon|mes|my|our)\s+\w+")
+_FIRST_PERSON = re.compile(r"\b(?:ik|wij|we|je|j|nous|i)\b")
+
+
+def _operator_in(folded_sentence: str, elsewhere: bool) -> str | None:
+    """ORES or RESA named in the emergency sentence for the scene; None if denied, absent or both.
+
+    At someone else's place ("bij mijn zus in Liège, zij is bij RESA") only a statement about them
+    counts; at a plain place only one that isn't about someone else ("mijn zus is bij ORES" is hers).
+    """
     found = set()
     for match in _STATED_OPERATOR.finditer(folded_sentence):
-        if _DENIED.search(folded_sentence[:match.start()][-25:]):
+        clause = re.split(r",|\ben\b|\bet\b|\band\b|\bmaar\b|\bmais\b|\bbut\b", folded_sentence[:match.start()])[-1]
+        if _DENIED.search(clause[-25:]):
             return None
+        about_other = bool(_THIRD_PERSON.search(clause))
+        if about_other != elsewhere and (about_other or _FIRST_PERSON.search(clause)):
+            continue
         found.add(match.group(1).upper())
     return found.pop() if len(found) == 1 else None
 
@@ -725,21 +800,15 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
         for text in recent
     )
     if _self_harm(folded):
-        return _distress_answer(question, region)
+        distress = _distress_answer(question, region)
+        if _is_emergency(folded):
+            # Gas and "wil niet meer leven" in one message: the gas steps first, then the help line.
+            emergency = _emergency_reply(question, earlier, folded, money_trouble=False)
+            return _reply(emergency["answer"] + "\n\n" + distress["answer"], "emergency")
+        return distress
     # A gas smell or an outage comes before everything else, also before fear or debts in the same message.
     if _is_emergency(folded):
-        # Safety net: when the conversation names more than one region, Karen never picks one
-        # operator's number. She gives the safety steps, asks where it is, and lists the right number
-        # for each region named, labelled, so the visitor picks the place and nobody gets a wrong one.
-        named = _regions_named([question, *earlier])
-        if len(named) > 1:
-            return _outage_answer_for_each(question, named, money_trouble)
-        scene = _emergency_scene(question)
-        if scene is not None:
-            region, walloon_operator = scene
-        else:
-            region, walloon_operator = visitor_region(question, earlier, emergency=True)
-        return _outage_answer(question, region, walloon_operator, money_trouble)
+        return _emergency_reply(question, earlier, folded, money_trouble)
     if _CHILDREN.search(folded):
         return _distress_answer(question, region)
     if (_FEAR.search(folded) or _SHAME.search(folded)) and money_trouble:

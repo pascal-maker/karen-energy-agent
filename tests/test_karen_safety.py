@@ -226,7 +226,8 @@ def test_codex_second_review_a_move_to_an_unknown_town_drops_the_old_region():
     # D: after "verhuisd naar Geel" the Brussels number is wrong; Karen asks for the region instead.
     history = [{"question": "Ik woon in Brussel."}, {"question": "Ik woon daar niet meer, ik ben verhuisd naar Geel."}]
     answer = answer_safety_question("Ik ruik gas, welk nummer?", history)["answer"]
-    assert "0800 19 400" not in answer and "Vlaanderen, Brussel of Wallonië" in answer
+    # Two regions named: the safety net, never Sibelga as "je netbeheerder".
+    assert "Waar is het precies?" in answer and "je netbeheerder:" not in answer
 
 
 def test_codex_second_review_own_home_in_liege_is_not_the_sisters_namur():
@@ -442,6 +443,35 @@ def test_the_net_also_covers_history_and_wallonia_stays_conditional():
 def test_one_region_still_gets_its_number_directly():
     answer = answer_safety_question("Ik ruik gas.", [{"question": "Ik woon in Gent."}])["answer"]
     assert "Bel Fluvius, je netbeheerder: gasgeur 0800 65 065." in answer and "Waar is het precies?" not in answer
+
+
+# --- Codex review of 8ca4e33 (1–5) ---------------------------------------------------------------
+
+def test_codex_seventh_review_unknown_or_word_like_towns_never_fall_back_to_another_region():
+    for question, history in [("Ik ruik gas in Luik. Ik woon in Antwerpen.", []),
+                              ("Ik ruik gas, wie bel ik?", ["Ik woon in Brussel.", "Ik woon nu in Geel."]),
+                              ("Ik ruik gas in Kontich.", [])]:
+        answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
+        assert "Waar is het precies?" in answer and "je netbeheerder:" not in answer
+
+
+def test_codex_seventh_review_the_sisters_ores_is_not_the_visitors_resa():
+    answer = answer_safety_question("Ik woon in Liège bij RESA. Mijn zus is bij ORES en ik ruik gas in mijn woning in Liège.")["answer"]
+    assert "RESA" in answer and "Bel ORES" not in answer and "0800 87 087" not in answer
+
+
+@pytest.mark.parametrize("question, number", [
+    ("Er ontsnapt aardgas uit mijn leiding in Gent.", FLU_GAS),
+    ("I hear gas hissing from the pipe in Brussels.", SIB_GAS),
+    ("Ik heb thuis in Gent geen elektriciteit meer, mijn meter is verzegeld maar ook de buren zitten zonder elektriciteit.", FLU_POWER),
+])
+def test_codex_seventh_review_reported_emergencies(question, number):
+    assert number in answer_safety_question(question)["answer"]
+
+
+def test_codex_seventh_review_gas_and_self_harm_get_both():
+    answer = answer_safety_question("Ik ruik sterk gas in Gent en wil niet meer leven.")["answer"]
+    assert answer.startswith("Ruik je gas?") and FLU_GAS in answer and "1813" in answer
 
 
 # --- region detection --------------------------------------------------------------------------------
