@@ -366,6 +366,43 @@ def test_battery_ordinary_questions_stay_with_the_other_routes(question):
     assert answer_safety_question(question) is None
 
 
+# --- Codex review of 82ec05a (A–C) and its P2 notes ---------------------------------------------
+
+@pytest.mark.parametrize("question, history, must, must_not", [
+    # A: a place in the gas sentence wins, also with "in mijn huis"
+    ("Ik ruik gas in mijn huis in Brussel. Ik woon normaal in Gent.", [], SIB_GAS, FLU_GAS),
+    # B: the operator named for the scene, never the visitor's own from another sentence
+    ("Ik woon in Namur bij ORES. Ik ruik gas bij mijn zus in Liège, zij is bij RESA.", [], "RESA", "Bel ORES"),
+    # C: from history an emergency only takes a stated home, not where someone works or owns a house
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Gent.", "Ik werk in Brussel."], FLU_GAS, SIB_GAS),
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Gent.", "Mijn zus heeft een huis in Brussel."], FLU_GAS, SIB_GAS),
+    # P2 notes: a named street outage beats a sealed meter; "ça sent fortement le gaz"; "no mains electricity"
+    ("Mijn meter is verzegeld, maar de hele straat in Gent heeft nu een stroompanne.", [], FLU_POWER, "xx"),
+    ("J'habite à Bruxelles et ça sent fortement le gaz chez moi.", [], SIB_GAS, "xx"),
+    ("We have no mains electricity in Brussels.", [], SIB_POWER, "xx"),
+    # a home with street and number before the town
+    ("Ik woon op de Kiezelstraat 999, 3500 Hasselt. Ik ruik gas.", [], FLU_GAS, "xx"),
+])
+def test_codex_sixth_review_scene_and_home(question, history, must, must_not):
+    answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
+    assert must in answer and must_not not in answer
+
+
+@pytest.mark.parametrize("history, must, must_not", [
+    (["Ik verhuis volgende maand van Gent naar Brussel."], FLU_GAS, SIB_GAS),   # still in Gent today
+    (["Ik ben verhuisd van Brussel naar Gent."], FLU_GAS, SIB_GAS),             # already in Gent
+])
+def test_a_move_from_one_place_to_another_in_an_emergency(history, must, must_not):
+    answer = answer_safety_question("Ik ruik gas", [{"question": q} for q in history])["answer"]
+    assert must in answer and must_not not in answer
+
+
+def test_an_emergency_without_any_stated_home_asks_for_the_region():
+    # Only "ik werk in Brussel" in history: not a home, so Karen asks rather than give Sibelga.
+    answer = answer_safety_question("Ik ruik gas, wie bel ik?", [{"question": "Ik werk in Brussel."}])["answer"]
+    assert "Vlaanderen, Brussel of Wallonië" in answer and SIB_GAS not in answer
+
+
 # --- region detection --------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("question, region, operator", [

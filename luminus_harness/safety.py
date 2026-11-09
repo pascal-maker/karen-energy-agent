@@ -65,7 +65,7 @@ _NEGATION = re.compile(r"\b(?:niet|geen|pas|not|plus)\s+(?:in\s+|en\s+|a\s+|à\s
 _SELF_HOME = re.compile(
     r"(?:\bik woon\w*|\bwij wonen|\bwe wonen|\bj.habite|\bnous habitons|\bje vis\b|\bi live|\bwe live|\bmijn adres|\bchez moi|"
     r"\b(?:ik ben|we zijn|wij zijn|ik)\s+(?:\w+\s+){0,2}verhuisd\b.{0,25}\bnaar|\b(?:j.ai|nous avons|je suis|nous sommes)\s+demenage\w*.{0,25}\b(?:a|vers)|"
-    r"\b(?:i|we) (?:have |just )?moved to)\W+(?:\w+\W+){0,3}$"
+    r"\b(?:i|we) (?:have |just )?moved to)\W+(?:\w+\W+){0,6}$"
 )
 # A move still to come ("ik verhuis volgende week naar Brussel"): the destination, not yet the home.
 _MOVING_TO = re.compile(
@@ -80,8 +80,6 @@ _OTHER_HOME = re.compile(
 )
 # Where something happens, at someone else's: "bij mijn zus in Brussel", "chez ma soeur à Namur".
 _OTHER_PLACE = re.compile(r"\b(?:bij|chez|at)\s+(?:mijn|onze|ma|mon|mes|my|our)\s+\w+\W+(?:\w+\W+){0,3}$")
-# "Ik ruik gas thuis", "chez moi", "at home": the emergency is at the visitor's own home.
-_AT_HOME = re.compile(r"\bthuis\b|\bbij (?:mij|ons)\b|in (?:mijn|ons) (?:huis|woning|appartement|keuken)|chez (?:moi|nous)|\bat home\b|in my (?:house|home|flat)")
 _SOMEONE_ELSE = re.compile(r"\b(?:mijn|onze|ma|mon|mes|my|our)\s+(?!adres|factuur|facture|huis|maison|meter|compteur|contract|contrat)\w+")
 # "Ik ben verhuisd", "ik woon daar niet meer": an earlier place no longer counts.
 _MOVED = re.compile(
@@ -105,19 +103,49 @@ _TOWN_PATTERNS = (
 _REGION_PATTERNS = [(region, re.compile(r"(?<!\w)(?:" + _fold(words) + r")(?!\w)")) for region, words in _REGION_WORDS]
 
 
+_TO_WORD = re.compile(r"\W*(?:naar|vers|a|to)\W*")
+_FROM_TO_PAST = re.compile(r"\b(?:ik ben|we zijn|wij zijn)\s+(?:\w+\s+){0,2}verhuisd van\b|\b(?:j.ai|nous avons) demenage de\b|\b(?:i|we) moved from\b")
+_FROM_TO_FUTURE = re.compile(r"\b(?:ik verhuis|we verhuizen|wij verhuizen|ik ga verhuizen)(?:\s+\w+){0,3}\s+van\b|\b(?:je demenage|nous demenageons)\s+de\b|\b(?:i.?m|we.?re) moving from\b")
+
+
 def _mentions(text: str) -> list[tuple[str, str]]:
-    """(region, whose: 'self', 'other' or 'neutral') for every place named in one message, skipping 'niet in Wallonië'."""
+    """(region, whose) for every place named in one message, skipping 'niet in Wallonië'.
+
+    whose is 'self' (the visitor's home), 'moving' (a move still to come), 'other' (someone else's
+    home), 'there' (where something happens at someone else's) or 'neutral'. A marker such as
+    "ik woon" only belongs to the first place after it, within the same sentence: in "ik woon in
+    Gent. Mijn zus woont in Brussel" Brussel is the sister's, not a second home.
+    """
     folded = _fold(text)
+    matches = sorted(
+        (match.start(), match.end(), region)
+        for pattern, region in [*_TOWN_PATTERNS, *((p, r) for r, p in _REGION_PATTERNS)]
+        for match in pattern.finditer(folded)
+    )
     found = []
-    for pattern, region in [*_TOWN_PATTERNS, *((p, r) for r, p in _REGION_PATTERNS)]:
-        for match in pattern.finditer(folded):
-            before = folded[max(0, match.start() - 45):match.start()]
-            if _NEGATION.search(before[-12:]):
-                continue
-            whose = ("self" if _SELF_HOME.search(before) else "moving" if _MOVING_TO.search(before)
-                     else "other" if _OTHER_HOME.search(before) else "there" if _OTHER_PLACE.search(before) else "neutral")
-            found.append((match.start(), region, whose))
-    return [(region, whose) for _, region, whose in sorted(found)]
+    previous_end = 0
+    for start, end, region in matches:
+        if start < previous_end:
+            continue  # "brussel" inside "brusselse", or a region word inside a town name
+        sentence_start = max(folded.rfind(mark, 0, start) for mark in ".!?;\n") + 1
+        before = folded[max(previous_end, sentence_start, start - 60):start]
+        previous_end = end
+        if _NEGATION.search(before[-12:]):
+            continue
+        whose = ("self" if _SELF_HOME.search(before) else "moving" if _MOVING_TO.search(before)
+                 else "other" if _OTHER_HOME.search(before) else "there" if _OTHER_PLACE.search(before) else "neutral")
+        # "Ik verhuis (volgende maand) van Gent naar Brussel": Gent is still today's home.
+        if whose == "neutral" and re.search(_FROM_TO_FUTURE.pattern + r"\W*$", before):
+            whose = "self"
+        # "Ik verhuis van Brussel naar Antwerpen": the "naar" place is where the visitor moves to.
+        if whose == "neutral" and _TO_WORD.fullmatch(before):
+            sentence_before = folded[sentence_start:start]
+            if _FROM_TO_PAST.search(sentence_before):
+                whose = "self"
+            elif _FROM_TO_FUTURE.search(sentence_before):
+                whose = "moving"
+        found.append((region, whose))
+    return found
 
 
 def _one_region(mentions: list[tuple[str, str]]) -> str | None:
@@ -144,7 +172,13 @@ def visitor_region(question: str, earlier_questions: list[str], emergency: bool 
         # In an emergency a move still to come doesn't count: the gas smell is at today's home.
         # Someone else's home only counts for a non-emergency question about them; for a gas smell or
         # outage without "bij mijn zus in …", the visitor is at home, or Karen asks.
-        chosen = own or ([] if emergency else moving) or neutral or (others if index == 0 and not emergency else [])
+        # From earlier messages an emergency only takes a stated home ("ik woon in Gent"), never a place
+        # merely named there ("ik werk in Brussel", "mijn zus heeft een huis in Brussel").
+        if emergency and index:
+            chosen = own
+        else:
+            # Not an emergency ("wie is mijn netbeheerder" with a move planned): the new home first.
+            chosen = (own if emergency else moving or own) or neutral or (others if index == 0 and not emergency else [])
         if chosen:
             region = _one_region(chosen)
             break
@@ -206,7 +240,7 @@ _NOT_OUTAGE = re.compile(
 # "panne" next to solar panels, a boiler or a car is a technical question instead.
 _GAS_SMELL = (
     r"(?:aard)?gas ?(?:geur|lucht|reuk|lek)|(?:ruik|ruikt|ruiken|rook)\W+(?:\w+\W+){0,3}(?:naar )?(?:aard)?gas\b|"
-    r"odeur de gaz|fuite de gaz|sen[st] (?:le|du) gaz|(?:gas|gaz) (?:smell|leak)|smell\w*\W+(?:\w+\W+){0,2}(?:natural )?gas\b|"
+    r"odeur de gaz|fuite de gaz|sen[st]\W+(?:\w+\W+){0,2}(?:le |du )?gaz\b|(?:gas|gaz) (?:smell|leak)|smell\w*\W+(?:\w+\W+){0,2}(?:natural )?gas\b|"
     r"(?:komt|ontsnapt|lekt|stroomt)\W+(?:\w+\W+){0,2}gas\b|\bgas\W+(?:\w+\W+){0,2}(?:komt|ontsnapt|lekt)\b|"
     r"gaz (?:s.echappe|qui fuit|fuit)|gas (?:is )?(?:escaping|leaking)"
 )
@@ -228,7 +262,7 @@ _POWER_GONE = re.compile(
     r"(?:stroom|elektriciteit|electriciteit)\W+(?:\w+\W+){0,2}(?:uitgevallen|weggevallen|ligt eruit|ligt plat|valt uit|viel uit|is uit\b)|"
     r"geen (?:stroom|elektriciteit) meer|zonder (?:stroom|elektriciteit)\b|stroomuitval|"
     r"(?:courant|electricite) (?:est |a ete |vient d.etre )?(?:coupee?|tombee?)|panne de secteur|"
-    r"power (?:failure|outage|is (?:off|out|down))|(?:lights|electricity) (?:went|are|is) out|"
+    r"power (?:failure|outage|is (?:off|out|down))|(?:lights|electricity) (?:went|are|is) out|no (?:mains )?(?:power|electricity)\b|"
     r"(?:plus|pas) (?:d.electricite|de courant)|(?:electricite|courant) (?:a )?(?:saute|coupe)|"
     r"(?:electricity|power) (?:went|is|has gone) (?:out|off|down)|lost (?:power|electricity)|no electricity"
 )
@@ -562,23 +596,35 @@ def _payment_plan_answer(question: str) -> dict[str, Any]:
     return _reply(text, "payment-plan")
 
 
-def _emergency_region(question: str) -> str | None:
-    """The place named in the sentence that reports the gas smell or outage ("ik ruik gas bij mijn
-    zus in Brussel"), whoever lives there: that is where the operator has to come. None if that
-    sentence names no place, or several regions."""
+def _emergency_scene(question: str) -> tuple[str, str | None] | None:
+    """(region, operator) of the place named in the sentence that reports the gas smell or outage.
+
+    "Ik ruik gas in mijn huis in Brussel", "bij mijn zus in Liège, zij is bij RESA": that place is where
+    the operator has to come, whoever lives there. Not "mijn zus woont in Brussel" (where she lives)
+    and not the visitor's home named next to it. The operator is only one named in that same sentence
+    (also someone else's: "zij is bij RESA"), never the visitor's own from elsewhere. None when the
+    sentence names no place or several regions: then the visitor's home decides.
+    """
     for sentence in re.split(r"[.!?;\n]", question):
         folded = _fold(sentence)
         if _is_emergency(folded, check_devices=False):
-            if _AT_HOME.search(folded):
-                return None  # "ik ruik gas thuis": the visitor's own home decides
             mentions = _mentions(sentence)
-            # Where it happens: "bij mijn zus in Brussel" or a plain "in Gent". Not "mijn zus woont in
-            # Brussel" (where she lives) and not the visitor's home named next to it.
             there = [m for m in mentions if m[1] == "there"] or [m for m in mentions if m[1] == "neutral"]
             region = _one_region(there) if there else None
             if region:
-                return region
+                operator = _operator_in(folded) if region == WALLONIA else None
+                return region, operator
     return None
+
+
+def _operator_in(folded_sentence: str) -> str | None:
+    """ORES or RESA named in one sentence, whoever it belongs to; None if denied, absent or both."""
+    found = set()
+    for match in _STATED_OPERATOR.finditer(folded_sentence):
+        if _DENIED.search(folded_sentence[:match.start()][-25:]):
+            return None
+        found.add(match.group(1).upper())
+    return found.pop() if len(found) == 1 else None
 
 
 # "Is een verzekering tegen gaslekken inbegrepen?", "wat kost een stroomonderbreking?": a question about
@@ -600,7 +646,7 @@ _CLOSED_METER = re.compile(
 
 def _is_emergency(folded: str, check_devices: bool = True) -> bool:
     """A gas smell, a leak or an outage being reported (not asked about in general)."""
-    if _CLOSED_METER.search(folded) and not _GAS.search(folded):
+    if _CLOSED_METER.search(folded) and not (_GAS.search(folded) or _STRONG_OUTAGE.search(folded) or _STREET_OUTAGE.search(folded)):
         return False
     def reported(pattern: re.Pattern[str]) -> bool:
         return any(not _ABOUT.search(folded[max(0, m.start() - 40):m.start()]) for m in pattern.finditer(folded))
@@ -632,9 +678,9 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
         return _distress_answer(question, region)
     # A gas smell or an outage comes before everything else, also before fear or debts in the same message.
     if _is_emergency(folded):
-        place = _emergency_region(question)
-        if place is not None:
-            region, walloon_operator = place, _stated_operator(question, []) if place == WALLONIA else None
+        scene = _emergency_scene(question)
+        if scene is not None:
+            region, walloon_operator = scene
         else:
             region, walloon_operator = visitor_region(question, earlier, emergency=True)
         return _outage_answer(question, region, walloon_operator, money_trouble)
