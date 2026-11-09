@@ -80,6 +80,7 @@ from luminus_harness.question_kind import (
     asks_for_opinion, asks_for_tariff, price_route_allowed, regional_tariff_answer, unknown_supplier,
     unknown_supplier_answer,
 )
+from luminus_harness import realtime_voice
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
 from luminus_harness import langfuse_trace
@@ -713,6 +714,11 @@ class PetraSpeechRequest(BaseModel):
     token: str = Field(min_length=40, max_length=8192)
 
 
+class RealtimeSessionRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    language: str = Field(default="nl", pattern="^(nl|fr|en)$")
+
+
 api_app = FastAPI(title="EnergyAgent Karen API", version="0.1.0")
 
 
@@ -739,6 +745,7 @@ _upload_sessions: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _petra_token_secret = secrets.token_bytes(32)
 _petra_rate_limiter = SlidingWindowRateLimiter(requests=3, window_seconds=60, max_clients=10_000)
 _transcribe_rate_limiter = SlidingWindowRateLimiter(requests=6, window_seconds=60, max_clients=10_000)
+_realtime_rate_limiter = SlidingWindowRateLimiter(requests=3, window_seconds=300, max_clients=10_000)
 
 
 def _sign_public_speech(answer: str) -> str | None:
@@ -1190,6 +1197,45 @@ async def api_petra_speech(body: PetraSpeechRequest, request: Request) -> Respon
     except Exception as error:
         raise HTTPException(status_code=503, detail="Petra is nu niet beschikbaar.") from error
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@api_app.post("/api/realtime-session")
+async def api_realtime_session(body: RealtimeSessionRequest, request: Request) -> dict[str, Any]:
+    """A short-lived key for one real-time voice conversation; Realtime is only Karen's ears and voice."""
+    if not realtime_voice.enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    _allow_api_request(request)
+    client_key = request.client.host if request.client else "unknown"
+    if not _realtime_rate_limiter.allow(client_key, time.monotonic()):
+        raise HTTPException(status_code=429, detail="Te veel spraakgesprekken kort na elkaar.")
+    if not realtime_voice.take_daily_slot():
+        raise HTTPException(status_code=503, detail="Spraakgesprekken zijn voor vandaag op. Typ gerust je vraag.")
+    try:
+        return await asyncio.wait_for(realtime_voice.create_client_secret(body.language), timeout=15)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Spraakgesprek is nu niet beschikbaar.") from error
+
+
+@api_app.post("/api/realtime-answer")
+async def api_realtime_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
+    """Karen's normal answer (safety layer, routes, sources) plus the exact text the voice reads aloud."""
+    if not realtime_voice.enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    _allow_api_request(request)
+    reply = await _rated_answer(body)
+    spoken = realtime_voice.spoken_text(str(reply.get("answer", "")))
+    return {**reply, "spoken": spoken, "speak": realtime_voice.read_aloud(spoken)}
+
+
+REALTIME_PAGE = REPO_ROOT / "luminus_harness" / "realtime_page.html"
+
+
+@api_app.get("/realtime", include_in_schema=False)
+async def realtime_page() -> Response:
+    """A plain test page for the real-time voice conversation."""
+    if not realtime_voice.enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return Response(REALTIME_PAGE.read_bytes(), media_type="text/html", headers={"Cache-Control": "no-store"})
 
 
 @api_app.post("/api/transcribe")
