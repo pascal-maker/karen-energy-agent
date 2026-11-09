@@ -371,6 +371,62 @@ def _ask_region(lang: str, vous: bool, about: str) -> str:
             "De naam van je gemeente is genoeg.")
 
 
+def _gas_steps(lang: str, vous: bool) -> str:
+    """Sibelga's own advice (energuide.be): open doors and windows, no light, leave, call from outside."""
+    return {
+        "nl": "Ruik je gas? Open ramen en deuren, doe geen licht aan, verlaat de woning en bel pas als je buiten bent.",
+        "fr": ("Vous sentez le gaz ? Ouvrez portes et fenêtres, n'allumez pas la lumière, quittez le logement et appelez une fois dehors."
+               if vous else
+               "Tu sens le gaz ? Ouvre portes et fenêtres, n'allume pas la lumière, quitte le logement et appelle une fois dehors."),
+        "en": "Smell gas? Open doors and windows, don't switch on a light, leave the house and call once you're outside.",
+    }[lang]
+
+
+def _regions_named(texts: list[str]) -> list[str]:
+    """Every region the visitor's messages name (towns or region words, any person), in a fixed order."""
+    named = {region for text in texts for region, _ in _mentions(text)}
+    return [region for region in (FLANDERS, BRUSSELS, WALLONIA) if region in named]
+
+
+_REGION_NAMES = {
+    "nl": {FLANDERS: "Vlaanderen", BRUSSELS: "Brussel", WALLONIA: "Wallonië"},
+    "fr": {FLANDERS: "en Flandre", BRUSSELS: "à Bruxelles", WALLONIA: "en Wallonie"},
+    "en": {FLANDERS: "Flanders", BRUSSELS: "Brussels", WALLONIA: "Wallonia"},
+}
+
+
+def _outage_answer_for_each(question: str, regions: list[str], money_trouble: bool) -> dict[str, Any]:
+    """Several regions in the conversation: the steps, the question where, and each region's number labelled."""
+    lang, vous = _lang(question), _vous(question)
+    gas = bool(_GAS.search(_fold(question)))
+    kind = "gas" if gas else "power"
+    what = {"nl": "gasgeur" if gas else "stroomstoring", "fr": "odeur de gaz" if gas else "panne",
+            "en": "gas smell" if gas else "power cut"}[lang]
+    danger = _gas_steps(lang, vous) if gas else ""
+    ask = {
+        "nl": "Waar is het precies? Bel de netbeheerder van die plek:",
+        "fr": f"Où est-ce exactement ? {'Appelez' if vous else 'Appelle'} le gestionnaire de réseau de cet endroit :",
+        "en": "Where exactly is it? Call the network operator for that place:",
+    }[lang]
+    lines = []
+    for region in regions:
+        label = _REGION_NAMES[lang][region]
+        if region == WALLONIA:
+            ores = _EMERGENCY["ORES"][kind]
+            text = {
+                "nl": f"netbeheerder op de factuur; staat er ORES: {what} {ores}",
+                "fr": f"gestionnaire indiqué sur la facture ; si c'est ORES : {what} {ores}",
+                "en": f"operator on the bill; if it says ORES: {what} {ores}",
+            }[lang]
+        else:
+            operator = _operator(region, None)
+            text = f"{operator}, {what} {_EMERGENCY[operator][kind]}"
+        lines.append(f"- **{label[0].upper() + label[1:]}:** {text}")
+    tail = {"nl": "Bij direct gevaar: 112.", "fr": "En cas de danger immédiat : 112.", "en": "In immediate danger: 112."}[lang]
+    head = " ".join(part for part in (danger, ask) if part)
+    return _reply("\n".join([head, *lines, tail]), "emergency")
+
+
 def _outage_answer(question: str, region: str | None, walloon_operator: str | None,
                    money_trouble: bool = False) -> dict[str, Any]:
     lang, vous = _lang(question), _vous(question)
@@ -378,14 +434,8 @@ def _outage_answer(question: str, region: str | None, walloon_operator: str | No
     operator = _operator(region, walloon_operator)
     numbers = _EMERGENCY.get(operator or "", {})
     kind = "gas" if gas else "power"
-    # Sibelga's own advice (energuide.be): open doors and windows, no light, leave, call from outside.
-    danger = {
-        "nl": "Ruik je gas? Open ramen en deuren, doe geen licht aan, verlaat de woning en bel pas als je buiten bent.",
-        "fr": ("Vous sentez le gaz ? Ouvrez portes et fenêtres, n'allumez pas la lumière, quittez le logement et appelez une fois dehors."
-               if vous else
-               "Tu sens le gaz ? Ouvre portes et fenêtres, n'allume pas la lumière, quitte le logement et appelle une fois dehors."),
-        "en": "Smell gas? Open doors and windows, don't switch on a light, leave the house and call once you're outside.",
-    }[lang] if gas else ""
+    danger = _gas_steps(lang, vous) if gas else ""
+
     what = {"nl": "gasgeur" if gas else "stroomstoring", "fr": "odeur de gaz" if gas else "panne",
             "en": "gas smell" if gas else "power cut"}[lang]
     if operator and kind in numbers:
@@ -678,6 +728,12 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
         return _distress_answer(question, region)
     # A gas smell or an outage comes before everything else, also before fear or debts in the same message.
     if _is_emergency(folded):
+        # Safety net: when the conversation names more than one region, Karen never picks one
+        # operator's number. She gives the safety steps, asks where it is, and lists the right number
+        # for each region named, labelled, so the visitor picks the place and nobody gets a wrong one.
+        named = _regions_named([question, *earlier])
+        if len(named) > 1:
+            return _outage_answer_for_each(question, named, money_trouble)
         scene = _emergency_scene(question)
         if scene is not None:
             region, walloon_operator = scene

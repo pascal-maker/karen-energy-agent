@@ -89,6 +89,10 @@ Weggehaald, omdat er geen ✅ voor was:
 - **De plaats van het gaslek of de storing** beslist welk nummer Karen geeft, ook als het huis van iemand anders is. Bij geldzorgen in hetzelfde bericht komt eerst de veiligheid: "Over je schulden praten we daarna verder."
 - Er zijn geen nieuwe feiten, nummers of beloftes bijgekomen.
 
+## Vangnet (na zes Codex-rondes)
+
+Noemt het gesprek meer dan één gewest, dan kiest Karen bij een gaslek of storing **geen** netbeheerder. Ze geeft de veiligheidsstappen, vraagt "Waar is het precies?" en zet per genoemd gewest het nummer op een eigen, gelabelde regel. Voor Wallonië blijft dat voorwaardelijk ("staat er ORES: …"). Er komen geen nieuwe feiten of nummers bij: het zijn dezelfde ✅-nummers uit de tabel hierboven.
+
 ## Nog te bevestigen door de eigenaar of op een officiële pagina, voordat PR 1 gemerged wordt
 
 1. Dat Fluvius heel Vlaanderen bedient en Sibelga de 19 Brusselse gemeenten (de sites gaven 403). Het advies bij gasgeur op de energuide-pagina van Sibelga.

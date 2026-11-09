@@ -11,6 +11,25 @@ from luminus_harness.safety import answer_safety_question, visitor_region
 from tests.test_karen_market_prices import api, ask  # noqa: F401  (api is a fixture)
 
 
+_ASKED_WHERE = ("Waar is het precies?", "Où est-ce exactement ?", "Where exactly is it?")
+_SINGLE_OPERATOR = ("je netbeheerder:", "ton gestionnaire de réseau :", "votre gestionnaire de réseau :", "your network operator:")
+# Each number must stand on the line of its own operator, in any language.
+_LABEL = {"0800 65 065": "Fluvius", "078 35 35 00": "Fluvius", "0800 19 400": "Sibelga", "02 274 40 66": "Sibelga",
+          "0800 87 087": "ORES"}
+
+
+def assert_safe_number(answer, must, must_not):
+    """One region: the right number and never the wrong one. Several regions named (the safety net):
+    Karen asks where, gives no single operator, and the right number stands on its own region's line."""
+    if any(asked in answer for asked in _ASKED_WHERE):
+        assert not any(single in answer for single in _SINGLE_OPERATOR)
+        if must in _LABEL:
+            line = next(line for line in answer.splitlines() if must in line)
+            assert _LABEL[must] in line
+        return
+    assert must in answer and must_not not in answer
+
+
 def replay(questions):
     """Karen's reply to every question of a conversation, each with the earlier questions as history."""
     replies = []
@@ -200,7 +219,7 @@ def test_codex_second_review_false_positives(question, history):
 ])
 def test_codex_second_review_right_number(question, history, number, never):
     answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
-    assert number in answer and never not in answer
+    assert_safe_number(answer, number, never)
 
 
 def test_codex_second_review_a_move_to_an_unknown_town_drops_the_old_region():
@@ -246,7 +265,7 @@ def test_only_checked_wording_for_gas_and_operators():
 ])
 def test_codex_third_review_emergencies(question, history, must, must_not):
     answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
-    assert must in answer and must_not not in answer
+    assert_safe_number(answer, must, must_not)
 
 
 @pytest.mark.parametrize("question", [
@@ -289,7 +308,7 @@ def test_codex_third_review_missed_money_trouble_and_rights():
 ])
 def test_codex_fourth_review_emergencies(question, history, must, must_not):
     answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
-    assert must in answer and must_not not in answer
+    assert_safe_number(answer, must, must_not)
 
 
 def test_codex_fourth_review_a_planned_move_still_names_the_new_operator():
@@ -346,7 +365,7 @@ FLU_GAS, SIB_GAS, ORES_GAS, FLU_POWER, SIB_POWER = "0800 65 065", "0800 19 400",
 ])
 def test_codex_fifth_review_and_battery_emergencies(question, history, must, must_not):
     answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
-    assert must in answer and must_not not in answer
+    assert_safe_number(answer, must, must_not)
 
 
 @pytest.mark.parametrize("question", [
@@ -385,7 +404,7 @@ def test_battery_ordinary_questions_stay_with_the_other_routes(question):
 ])
 def test_codex_sixth_review_scene_and_home(question, history, must, must_not):
     answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
-    assert must in answer and must_not not in answer
+    assert_safe_number(answer, must, must_not)
 
 
 @pytest.mark.parametrize("history, must, must_not", [
@@ -394,13 +413,35 @@ def test_codex_sixth_review_scene_and_home(question, history, must, must_not):
 ])
 def test_a_move_from_one_place_to_another_in_an_emergency(history, must, must_not):
     answer = answer_safety_question("Ik ruik gas", [{"question": q} for q in history])["answer"]
-    assert must in answer and must_not not in answer
+    assert_safe_number(answer, must, must_not)
 
 
 def test_an_emergency_without_any_stated_home_asks_for_the_region():
     # Only "ik werk in Brussel" in history: not a home, so Karen asks rather than give Sibelga.
     answer = answer_safety_question("Ik ruik gas, wie bel ik?", [{"question": "Ik werk in Brussel."}])["answer"]
     assert "Vlaanderen, Brussel of Wallonië" in answer and SIB_GAS not in answer
+
+
+# --- the safety net: several regions in one conversation -----------------------------------------
+
+def test_several_regions_never_get_one_operators_number():
+    answer = answer_safety_question("Ik woon in Antwerpen, maar ik ruik gas bij mijn zus in Brussel.")["answer"]
+    assert answer.startswith("Ruik je gas? Open ramen en deuren")
+    assert "Waar is het precies?" in answer and "112" in answer
+    assert "- **Vlaanderen:** Fluvius, gasgeur 0800 65 065" in answer
+    assert "- **Brussel:** Sibelga, gasgeur 0800 19 400" in answer
+    assert "je netbeheerder:" not in answer
+
+
+def test_the_net_also_covers_history_and_wallonia_stays_conditional():
+    answer = answer_safety_question("Ik ruik gas.", [{"question": "Ik woon in Gent."}, {"question": "Mijn zus woont in Namen... in Namur."}])["answer"]
+    assert "Waar is het precies?" in answer
+    assert "staat er ORES: gasgeur 0800 87 087" in answer and "RESA" not in answer.split("ORES")[0][-5:]
+
+
+def test_one_region_still_gets_its_number_directly():
+    answer = answer_safety_question("Ik ruik gas.", [{"question": "Ik woon in Gent."}])["answer"]
+    assert "Bel Fluvius, je netbeheerder: gasgeur 0800 65 065." in answer and "Waar is het precies?" not in answer
 
 
 # --- region detection --------------------------------------------------------------------------------
