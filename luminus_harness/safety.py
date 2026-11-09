@@ -64,7 +64,12 @@ _NEGATION = re.compile(r"\b(?:niet|geen|pas|not|plus)\s+(?:in\s+|en\s+|a\s+|à\s
 # else's ("mijn zus woont in", "ma soeur habite à"), read from the words just before the place.
 _SELF_HOME = re.compile(
     r"(?:\bik woon\w*|\bwij wonen|\bwe wonen|\bj.habite|\bnous habitons|\bje vis\b|\bi live|\bwe live|\bmijn adres|\bchez moi|"
-    r"verhuis\w*.{0,25}\bnaar|\bverhuisd naar|demenage\w*.{0,25}\b(?:a|vers)|\bmov(?:ing|ed) to)\W+(?:\w+\W+){0,3}$"
+    r"\bverhuisd\b.{0,25}\bnaar|\b(?:ai|avons|suis|sommes) demenage\w*.{0,25}\b(?:a|vers)|\bmoved to)\W+(?:\w+\W+){0,3}$"
+)
+# A move still to come ("ik verhuis volgende week naar Brussel"): the destination, not yet the home.
+_MOVING_TO = re.compile(
+    r"(?:\bverhuis\b|\bverhuizen\b|\bga verhuizen|\bdemenage\b|\bdemenager|\bvais demenager|\bmoving to|\bwill move to)"
+    r".{0,30}\b(?:naar|a|vers|to)\W+(?:\w+\W+){0,2}$"
 )
 # Someone else's home: "mijn tante woont in", "ma soeur habite à", "my aunt lives in", "bij mijn zus in".
 _OTHER_HOME = re.compile(
@@ -100,7 +105,8 @@ def _mentions(text: str) -> list[tuple[str, str]]:
             before = folded[max(0, match.start() - 45):match.start()]
             if _NEGATION.search(before[-12:]):
                 continue
-            whose = "self" if _SELF_HOME.search(before) else "other" if _OTHER_HOME.search(before) else "neutral"
+            whose = ("self" if _SELF_HOME.search(before) else "moving" if _MOVING_TO.search(before)
+                     else "other" if _OTHER_HOME.search(before) else "neutral")
             found.append((match.start(), region, whose))
     return [(region, whose) for _, region, whose in sorted(found)]
 
@@ -110,7 +116,7 @@ def _one_region(mentions: list[tuple[str, str]]) -> str | None:
     return regions.pop() if len(regions) == 1 else None
 
 
-def visitor_region(question: str, earlier_questions: list[str]) -> tuple[str | None, str | None]:
+def visitor_region(question: str, earlier_questions: list[str], emergency: bool = False) -> tuple[str | None, str | None]:
     """The visitor's region and, in Wallonia, the operator they named themselves.
 
     Only the visitor's own words count, never Karen's answers. Within a message the visitor's own
@@ -123,9 +129,11 @@ def visitor_region(question: str, earlier_questions: list[str]) -> tuple[str | N
     for index, text in enumerate([question, *reversed(earlier_questions)]):
         mentions = _mentions(text)
         own = [m for m in mentions if m[1] == "self"]
+        moving = [m for m in mentions if m[1] == "moving"]
         neutral = [m for m in mentions if m[1] == "neutral"]
         others = [m for m in mentions if m[1] == "other"]
-        chosen = own or neutral or (others if index == 0 else [])
+        # In an emergency a move still to come doesn't count: the gas smell is at today's home.
+        chosen = own or ([] if emergency else moving) or neutral or (others if index == 0 else [])
         if chosen:
             region = _one_region(chosen)
             break
@@ -147,7 +155,10 @@ def _stated_operator(question: str, earlier_questions: list[str]) -> str | None:
         for sentence in re.split(r"[.!?;\n]", folded):
             for match in _STATED_OPERATOR.finditer(sentence):
                 before = sentence[:match.start()]
-                if _DENIED.search(before[-25:]) or _SOMEONE_ELSE.search(before):
+                if _DENIED.search(before[-25:]):
+                    # "Ik ben niet (meer) bij ORES": whatever an older message said no longer holds.
+                    return None
+                if _SOMEONE_ELSE.search(before):
                     continue
                 found.add(match.group(1).upper())
         if len(found) == 1:
@@ -184,7 +195,9 @@ _NOT_OUTAGE = re.compile(
 # "panne" next to solar panels, a boiler or a car is a technical question instead.
 _GAS_SMELL = (
     r"(?:aard)?gas ?(?:geur|lucht|reuk|lek)|(?:ruik|ruikt|ruiken|rook)\W+(?:\w+\W+){0,3}(?:naar )?(?:aard)?gas\b|"
-    r"odeur de gaz|fuite de gaz|sen[st] (?:le|du) gaz|(?:gas|gaz) (?:smell|leak)|smell\w*\W+(?:\w+\W+){0,2}(?:natural )?gas\b"
+    r"odeur de gaz|fuite de gaz|sen[st] (?:le|du) gaz|(?:gas|gaz) (?:smell|leak)|smell\w*\W+(?:\w+\W+){0,2}(?:natural )?gas\b|"
+    r"(?:komt|ontsnapt|lekt|stroomt)\W+(?:\w+\W+){0,2}gas\b|\bgas\W+(?:\w+\W+){0,2}(?:komt|ontsnapt|lekt)\b|"
+    r"gaz (?:s.echappe|qui fuit|fuit)|gas (?:is )?(?:escaping|leaking)"
 )
 _STRONG_OUTAGE = re.compile(
     r"stroom ?(?:storing|panne|onderbreking|uitval)|stroompanne|panne (?:de courant|d.electricite|electrique)|"
@@ -198,7 +211,13 @@ _STREET_OUTAGE = re.compile(
     r"donker|sans (?:courant|electricite)|coupure|no power|outage|power cut)|"
     r"(?:geen stroom|zonder stroom|panne|storing|sans courant|no power|outage).{0,40}(?:straat|buurt|wijk|quartier|rue|street)"
 )
-_WEAK_OUTAGE = re.compile(r"geen stroom|stroom (?:is )?(?:uitgevallen|weg)|\bpanne\b|no (?:power|electricity)")
+_WEAK_OUTAGE = re.compile(r"geen stroom|stroom (?:is )?weg|\bpanne\b|no (?:power|electricity)")
+# Power gone, said in full: always an outage, solar panels or inverter mentioned or not.
+_POWER_GONE = re.compile(
+    r"(?:stroom|elektriciteit|electriciteit)\W+(?:\w+\W+){0,2}(?:uitgevallen|weggevallen)|geen (?:stroom|elektriciteit) meer|"
+    r"(?:plus|pas) (?:d.electricite|de courant)|(?:electricite|courant) (?:a )?(?:saute|coupe)|"
+    r"(?:electricity|power) (?:went|is|has gone) (?:out|off|down)|lost (?:power|electricity)|no electricity"
+)
 _GAS = re.compile(_GAS_SMELL)
 _OPERATOR_QUESTION = re.compile(
     r"(?:wie|welke?|wat) (?:is|zijn) (?:mijn|de|onze) netbeheerder|netbeheerder (?:is|van)|is (?:dat|het) (?:niet )?fluvius|"
@@ -535,11 +554,37 @@ def _emergency_region(question: str) -> str | None:
     sentence names no place, or several regions."""
     for sentence in re.split(r"[.!?;\n]", question):
         folded = _fold(sentence)
-        if _STRONG_OUTAGE.search(folded) or _STREET_OUTAGE.search(folded) or _WEAK_OUTAGE.search(folded):
-            regions = {region for region, _ in _mentions(sentence)}
-            if len(regions) == 1:
-                return regions.pop()
+        if _is_emergency(folded, check_devices=False):
+            mentions = _mentions(sentence)
+            # "Ik woon in Antwerpen, maar ik ruik gas bij mijn zus in Brussel": the place that is not
+            # the visitor's home is where it happens.
+            elsewhere = [m for m in mentions if m[1] != "self"]
+            region = _one_region(elsewhere) if elsewhere else _one_region(mentions)
+            if region:
+                return region
     return None
+
+
+# "Is een verzekering tegen gaslekken inbegrepen?", "wat kost een stroomonderbreking bij een verhuis?":
+# about an outage or leak, not reporting one, unless the visitor also says it is happening.
+_HYPOTHETICAL = re.compile(
+    r"verzeker|assurance|insurance|inbegrepen|inclus|included|wat kost|kost(?:en)? een|combien|how much|\bprijs|\bprix\b|\bprice|"
+    r"\bwat als\b|\bstel dat\b|\bet si\b|\bwhat if\b"
+)
+_REPORTING = re.compile(
+    r"\bik ruik|\bruikt\b|\bwe ruiken|\bik heb geen|\bwe hebben geen|\bnu\b|\bhier\b|in mijn (?:huis|woning|keuken)|bij (?:mij|ons)\b|"
+    r"\bje sens\b|\bca sent\b|chez (?:moi|nous)|\bj.ai plus\b|\bi (?:can )?smell\b|\bin my (?:house|home|flat)|\bright now\b|"
+    r"is uitgevallen|est coupe|went out|\bwie bel ik|qui appeler|who (?:do|should) i call"
+)
+
+
+def _is_emergency(folded: str, check_devices: bool = True) -> bool:
+    """A gas smell, a leak or an outage being reported (not asked about in general)."""
+    if _HYPOTHETICAL.search(folded) and not _REPORTING.search(folded):
+        return False
+    if _STRONG_OUTAGE.search(folded) or _STREET_OUTAGE.search(folded) or _POWER_GONE.search(folded):
+        return True
+    return bool(_WEAK_OUTAGE.search(folded)) and not (check_devices and _NOT_OUTAGE.search(folded))
 
 
 def _self_harm(folded: str) -> bool:
@@ -564,11 +609,12 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
     if _self_harm(folded):
         return _distress_answer(question, region)
     # A gas smell or an outage comes before everything else, also before fear or debts in the same message.
-    if (_STRONG_OUTAGE.search(folded) or _STREET_OUTAGE.search(folded)
-            or (_WEAK_OUTAGE.search(folded) and not _NOT_OUTAGE.search(folded))):
+    if _is_emergency(folded):
         place = _emergency_region(question)
         if place is not None:
             region, walloon_operator = place, _stated_operator(question, []) if place == WALLONIA else None
+        else:
+            region, walloon_operator = visitor_region(question, earlier, emergency=True)
         return _outage_answer(question, region, walloon_operator, money_trouble)
     if _CHILDREN.search(folded):
         return _distress_answer(question, region)
@@ -587,8 +633,12 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
     if _DISCONNECT.search(folded) and not signing:
         return _winter_answer(question, region, disconnect=True)
     plan = _PAYMENT_PLAN.search(folded)
-    if plan and not _DENIED.search(folded[max(0, plan.start() - 20):plan.start()]):
-        return _payment_plan_answer(question)
+    if plan:
+        clause = re.split(r"[,;:]|\bmaar\b|\bmais\b|\bbut\b", folded[:plan.start()])[-1]
+        denied = re.search(r"\b(?:niet|geen|pas|not|sans|zonder|without)\W+(?:\w+\W+){0,2}$", clause)
+        # "kan mijn factuur niet betalen" carries its own "niet": that is the trouble, not a denial.
+        if not denied or re.search(r"niet|pas|cannot|can.?t|unable", plan.group(0)):
+            return _payment_plan_answer(question)
     if _HELP_REQUEST.search(folded) and money_trouble:
         return _payment_plan_answer(question)
     return None

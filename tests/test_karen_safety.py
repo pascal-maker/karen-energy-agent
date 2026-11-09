@@ -269,6 +269,48 @@ def test_codex_third_review_missed_money_trouble_and_rights():
     assert answer_safety_question("Ik heb geen sociaal tarief op mijn factuur. Heb ik er recht op met IGO?")["processing"] == "safety-social-tariff"
 
 
+# --- Codex review of c0c1059 (A–G) --------------------------------------------------------------
+
+@pytest.mark.parametrize("question, history, must, must_not", [
+    # A: the place of the leak, also in the same sentence as the home
+    ("Ik woon in Antwerpen, maar ik ruik gas bij mijn zus in Brussel.", [], "0800 19 400", "0800 65 065"),
+    ("Je vis à Bruxelles mais je sens le gaz chez ma sœur à Namur.", [], "Si c'est ORES", "0800 19 400"),
+    # B: "niet meer bij ORES" withdraws the older "bij ORES"
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Namur, bij ORES.", "Ik ben niet meer bij ORES."], "Staat er ORES", "Bel ORES"),
+    # C: a move next week doesn't change today's emergency number
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Antwerpen.", "Ik verhuis volgende week naar Brussel."], "0800 65 065", "0800 19 400"),
+    # D: power gone, said in full, in three languages; an inverter doesn't hide it
+    ("Mijn elektriciteit is uitgevallen in Gent.", [], "078 35 35 00", "Sibelga"),
+    ("Il n'y a plus d'électricité chez moi à Bruxelles.", [], "02 274 40 66", "Fluvius"),
+    ("The electricity went out in Brussels. Who should I call?", [], "02 274 40 66", "Fluvius"),
+    ("Ik heb geen stroom meer in Gent, ook mijn omvormer werkt niet.", [], "078 35 35 00", "Sibelga"),
+    # E: gas coming out of a pipe
+    ("Er komt gas uit de leiding in Gent.", [], "0800 65 065", "Sibelga"),
+])
+def test_codex_fourth_review_emergencies(question, history, must, must_not):
+    answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
+    assert must in answer and must_not not in answer
+
+
+def test_codex_fourth_review_a_planned_move_still_names_the_new_operator():
+    # Not an emergency: "wie is mijn netbeheerder" after "ik verhuis naar Antwerpen" is about the new home.
+    assert answer_safety_question("Ik verhuis van Brussel naar Antwerpen. Wie is mijn netbeheerder?")["answer"] == "Je netbeheerder is Fluvius."
+
+
+@pytest.mark.parametrize("question", [
+    "Is een verzekering tegen gaslekken inbegrepen in mijn contract?",        # F
+    "Does my contract include insurance against gas leaks?",                  # F
+    "Wat kost een stroomonderbreking bij een verhuis?",                       # F
+])
+def test_codex_fourth_review_questions_about_outages_are_not_reports(question):
+    assert answer_safety_question(question) is None
+
+
+def test_codex_fourth_review_no_debts_but_cannot_pay_is_payment_trouble():
+    # G: "geen schulden" denies debts, not the payment trouble after "maar".
+    assert answer_safety_question("Ik heb geen schulden, maar kan mijn factuur niet betalen.")["processing"] == "safety-payment-plan"
+
+
 # --- region detection --------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("question, region, operator", [
