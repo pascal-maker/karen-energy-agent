@@ -8,6 +8,9 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 from urllib.parse import urlparse# used to parse URLs
 from urllib.error import HTTPError, URLError# used to handle errors
 from urllib.request import Request, urlopen# used to make requests
@@ -323,6 +326,37 @@ def _fetch_full(url: str) -> str:
 
 # Browserbase Search rejects a query longer than 200 characters.
 _SEARCH_QUERY_LIMIT = 200
+
+# Browserbase Search has a monthly quota (1,000 calls on the free plan). Once it answers 402, every
+# further call fails the same way until the quota resets, so Karen stops asking for a while.
+SEARCH_QUOTA_PAUSE_SECONDS = 3600
+SEARCH_QUOTA_MESSAGE = "Browserbase Search heeft geen beschikbare quota."
+_search_paused_until = 0.0
+# Search calls one question may use (a scope with many sites costs several calls); None = no limit.
+SEARCH_CALLS_PER_QUESTION = int(os.getenv("KAREN_SEARCH_CALLS_PER_QUESTION", "5"))
+_search_budget: ContextVar[list[int] | None] = ContextVar("search_budget", default=None)
+
+
+@contextmanager
+def search_budget(calls: int | None = None) -> Iterator[None]:
+    """Limit the Browserbase Search calls made while answering one question."""
+    token = _search_budget.set([SEARCH_CALLS_PER_QUESTION if calls is None else calls])
+    try:
+        yield
+    finally:
+        _search_budget.reset(token)
+
+
+def _take_search_call() -> str | None:
+    """None when a search call may go out; otherwise why not."""
+    if time.monotonic() < _search_paused_until:
+        return SEARCH_QUOTA_MESSAGE
+    budget = _search_budget.get()
+    if budget is not None:
+        if budget[0] <= 0:
+            return "Zoeklimiet voor deze vraag bereikt."
+        budget[0] -= 1
+    return None
 _MIN_QUESTION_CHARS = 80
 
 
@@ -354,6 +388,10 @@ def _search(query: str, scope: str) -> list[dict[str, str]] | str:# used to sear
     found: list[dict[str, str]] = []
     error = ""
     for scoped_query in _scoped_queries(query, domains):
+        refused = _take_search_call()
+        if refused:
+            error = error or refused
+            break
         results = _search_once(scoped_query, api_key)
         if isinstance(results, str):
             error = error or results
@@ -379,7 +417,9 @@ def _search_once(scoped_query: str, api_key: str) -> list[dict[str, str]] | str:
         if error.code in (401, 403):# used to handle errors
             return "Browserbase heeft deze sleutel geweigerd. Controleer BROWSERBASE_API_KEY."
         if error.code == 402:# used to handle errors
-            return "Browserbase Search heeft geen beschikbare quota."
+            global _search_paused_until
+            _search_paused_until = time.monotonic() + SEARCH_QUOTA_PAUSE_SECONDS
+            return SEARCH_QUOTA_MESSAGE
         if error.code == 429:
             return "Browserbase Search is tijdelijk bezet; probeer later opnieuw."
         try:
