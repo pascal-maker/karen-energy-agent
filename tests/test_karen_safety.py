@@ -311,6 +311,61 @@ def test_codex_fourth_review_no_debts_but_cannot_pay_is_payment_trouble():
     assert answer_safety_question("Ik heb geen schulden, maar kan mijn factuur niet betalen.")["processing"] == "safety-payment-plan"
 
 
+# --- Codex review of f4581de (1–4) plus a wider battery of everyday phrasings -------------------
+
+FLU_GAS, SIB_GAS, ORES_GAS, FLU_POWER, SIB_POWER = "0800 65 065", "0800 19 400", "0800 87 087", "078 35 35 00", "02 274 40 66"
+
+
+@pytest.mark.parametrize("question, history, must, must_not", [
+    # 1: someone else's home in the same sentence, the gas smell at the visitor's own home
+    ("Ik woon in Gent. Mijn zus woont in Brussel en ik ruik gas thuis.", [], FLU_GAS, SIB_GAS),
+    ("Ma mère a déménagé à Bruxelles. Je sens le gaz chez moi.", ["J'habite à Gand."], FLU_GAS, SIB_GAS),
+    ("Mijn ouders zijn verhuisd naar Namur. Ik ruik gas.", ["Ik woon in Leuven."], FLU_GAS, ORES_GAS),
+    # 2: a brother's or sister's move is not the visitor's
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Antwerpen.", "Mijn broer is verhuisd naar Brussel."], FLU_GAS, SIB_GAS),
+    ("Ik ruik gas.", ["Ik woon in Brussel.", "Mijn zus is verhuisd naar Gent."], SIB_GAS, FLU_GAS),
+    ("Ik ben verhuisd naar Gent. Ik ruik gas.", ["Ik woon in Brussel."], FLU_GAS, SIB_GAS),
+    # 3: a cost question next to a real leak is still a leak
+    ("Gas lekt uit mijn leiding in Gent, wat kost een interventie?", [], FLU_GAS, "xx"),
+    ("There is a gas leak in Brussels. How much does a call-out cost?", [], SIB_GAS, "xx"),
+    ("Il y a une fuite de gaz à Bruxelles. Combien coûte une intervention ?", [], SIB_GAS, "xx"),
+    ("Ik denk dat er een gaslek is in Mechelen, wat kost het als Fluvius komt?", [], FLU_GAS, "xx"),
+    ("Gaslek in Brussel! Moet ik betalen voor de interventie?", [], SIB_GAS, "xx"),
+    # 4: everyday ways to say the power is out
+    ("De stroom ligt eruit in Gent.", [], FLU_POWER, "xx"),
+    ("We zitten zonder stroom in Gent.", [], FLU_POWER, "xx"),
+    ("Le courant est coupé chez moi à Bruxelles.", [], SIB_POWER, "xx"),
+    ("We have a power failure in Brussels.", [], SIB_POWER, "xx"),
+    ("Stroomuitval in heel Leuven, wat nu?", [], FLU_POWER, "xx"),
+    ("Plus de courant dans tout le quartier à Ixelles.", [], SIB_POWER, "xx"),
+    ("Mijn buurman in Hasselt heeft geen stroom meer, ik ook niet.", [], FLU_POWER, "xx"),
+    # the place of the event, at home or elsewhere
+    ("Ik ruik gas in de keuken.", ["Ik woon in Brussel."], SIB_GAS, FLU_GAS),
+    ("Ça sent le gaz dans la cuisine, j'habite à Uccle.", [], SIB_GAS, FLU_GAS),
+    ("Bij mijn moeder in Gent ruikt het naar gas, ik woon in Brussel.", [], FLU_GAS, SIB_GAS),
+])
+def test_codex_fifth_review_and_battery_emergencies(question, history, must, must_not):
+    answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
+    assert must in answer and must_not not in answer
+
+
+@pytest.mark.parametrize("question", [
+    "Wat als er een stroompanne is, krijg ik dan een vergoeding?",
+    "Combien coûte une coupure de courant pour un déménagement ?",
+    "Is een contract zonder vaste vergoeding goedkoper?",
+    "Hoeveel stroom verbruikt een warmtepomp?",
+    "Wat kost stroom vandaag in Gent?",
+    "Mijn broer is verhuisd naar Brussel, welke leverancier raad je hem aan?",
+    "What is the price of electricity in Brussels today?",
+    "Le contrat inclut-il le dépannage de la chaudière ?",
+    "Ik wil een laadpaal, valt mijn stroom dan uit als ik te veel verbruik?",
+    # student-3/1: a meter closed after the previous tenant left is not a grid outage
+    "help, de vorige huurder is vertrokken en nu zegt de eigenaar dat de meter afgesloten is. ik zit hier zonder stroom?? wat moet ik doen",
+])
+def test_battery_ordinary_questions_stay_with_the_other_routes(question):
+    assert answer_safety_question(question) is None
+
+
 # --- region detection --------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("question, region, operator", [
