@@ -57,6 +57,22 @@ waar het staat (op de meter, de factuur of de site van de netbeheerder), en noem
 - wallonia-fr-3/5: "ENEO/Fluvius";
 - student-3/1: ORES voor Gent.
 
+## Hulplijnen (voor angst, schaamte en zelfmoordgedachten)
+
+| Dienst | Wat Karen zegt | Status | Bron |
+|---|---|---|---|
+| Zelfmoordlijn | 1813, gratis, anoniem, 24/7 | ✅ | [zelfmoord1813.be](https://www.zelfmoord1813.be/): "Elk gesprek is anoniem en gratis", "24/7 bereikbaar" |
+| Centre de Prévention du Suicide | 0800 32 123, gratuit, anonyme, 24h/24 | ✅ | [preventionsuicide.be](https://www.preventionsuicide.be/la-ligne-decoute-0800-32-123): "anonyme, gratuite et ouverte 24h/24 et 7j/7" |
+| CAW | gratis en vertrouwelijk, 0800 13 500 op werkdagen van 9 tot 17 uur, caw.be | ✅ | [caw.be](https://www.caw.be/): "Gratis, professioneel, vertrouwelijk", [caw.be/contacteer-ons](https://www.caw.be/contacteer-ons/). **Niet** "anoniem": dat staat alleen bij de chat. |
+| OCMW/CPAS | "kan je helpen met je factuur en schulden" (geen "gratis" of "vertrouwelijk") | ✅ | [socialsecurity.be](https://www.socialsecurity.be/citizen/nl/sociale-bijstand-en-ocmw/hulp-bij-je-energiekosten) |
+
+## Na de review van Codex (568b9f4)
+
+Weggehaald, omdat er geen ✅ voor was:
+- "OCMW helpt gratis en vertrouwelijk", "CAW anoniem", "hulp vragen is je recht", "je mag iemand meenemen";
+- de bewering dat er in Brussel en Wallonië een winterbescherming *bestaat*;
+- "(24/7)" bij de netbeheerders. Alleen Fluvius noemt dat zelf.
+
 ## Nog te bevestigen door de eigenaar of op een officiële pagina, voordat PR 1 gemerged wordt
 
 1. De noodnummers van Fluvius, ORES en RESA op hun eigen sites. Ik lees die pagina's tijdens de PR na.

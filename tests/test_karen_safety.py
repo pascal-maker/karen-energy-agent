@@ -100,6 +100,11 @@ def test_social_1_fear_about_a_bill_gets_concrete_steps_not_a_crisis_line():
     assert "112" not in reply["answer"] and "huisarts" not in reply["answer"]
 
 
+def test_social_1_the_supplier_or_fluvius_cutting_off_is_a_disconnection_question():
+    reply = answer_safety_question("maar mag de leverancier of fluvius de stroom gewoon afsluiten als ik niet betaal?")
+    assert reply["processing"] == "safety-winter"
+
+
 def test_social_1_disconnection_without_a_region_asks_for_it():
     reply = answer_safety_question("kunnen ze mij afsluiten? ik heb 2 kinderen")
     assert reply["processing"] == "safety-winter" and "Vlaanderen, Brussel of Wallonië" in reply["answer"]
@@ -108,6 +113,15 @@ def test_social_1_disconnection_without_a_region_asks_for_it():
 def test_self_harm_gets_the_suicide_line():
     reply = answer_safety_question("ik kan niet meer, ik wil niet meer leven met al die schulden")
     assert "1813" in reply["answer"] and "112" in reply["answer"]
+
+
+def test_only_checked_claims_about_help_services():
+    # Codex P2: no "anoniem" for the CAW and no "gratis/vertrouwelijk" for the OCMW without an official page.
+    for question in ("gaan ze mijn kinderen afpakken als ik schulden heb?", "ik schaam me om naar het ocmw te gaan, ik heb schulden"):
+        answer = answer_safety_question(question)["answer"]
+        assert "anoniem" not in answer and "meenemen" not in answer and "hulp vragen is je recht" not in answer
+        assert "OCMW helpt gratis" not in answer
+    assert "0800 13 500" in answer_safety_question("gaan ze mijn kinderen afpakken als ik schulden heb?")["answer"]
 
 
 # --- social-5: "alleen voor beschermde afnemers", "1 november tot 31 maart" for Antwerp ----------------
@@ -131,7 +145,9 @@ def test_brussels_and_wallonia_winter_rules_are_not_guessed():
     for town in ("Ixelles", "Namur"):
         reply = answer_safety_question(f"J'habite à {town}. Peuvent-ils me couper le gaz en hiver ?")
         assert reply["processing"] == "safety-winter"
-        assert "1er décembre" not in reply["answer"] and "pas vérifié" in reply["answer"]
+        assert "1er décembre" not in reply["answer"] and "pas pu vérifier" in reply["answer"]
+        # Not even that a winter protection exists: it is not confirmed on an official page (Codex P2).
+        assert "il existe" not in reply["answer"] and "protection" not in reply["answer"]
 
 
 @pytest.mark.parametrize("question, history", [
@@ -181,6 +197,35 @@ def test_karens_own_answers_never_set_the_region():
 ])
 def test_other_questions_are_left_to_the_other_routes(question):
     assert answer_safety_question(question) is None
+
+
+# --- Codex review of 568b9f4: each reproduced false positive or wrong region is a test --------------
+
+@pytest.mark.parametrize("question, history", [
+    ("Kan ik een nieuw energiecontract afsluiten?", []),                         # P1: a contract, not a cut-off
+    ("Kan ik bij Engie een vast contract voor gas afsluiten?", []),
+    ("Je veux en finir avec mon contrat variable, comment changer ?", []),       # P1: not self-harm
+    ("Mijn zonnepanelen leveren geen stroom terug. Hoe komt dat?", []),          # P2: solar, not an outage
+    ("Ik ben bang dat de prijzen stijgen, vast of variabel?",                    # P2: a neutral payment word earlier
+     ["Hoe betaal ik mijn factuur via domiciliëring?"]),
+])
+def test_codex_false_positives_stay_with_the_other_routes(question, history):
+    assert answer_safety_question(question, [{"question": q} for q in history]) is None
+
+
+def test_codex_frost_is_not_a_brussels_town():
+    reply = answer_safety_question("Ik woon in Vlaanderen. Kan vorst een stroompanne veroorzaken?")
+    assert "02 274 40 66" not in reply["answer"] and "Sibelga" not in reply["answer"]
+    assert visitor_region("Ik woon in Vlaanderen. Kan vorst een stroompanne veroorzaken?", []) == ("flanders", None)
+
+
+@pytest.mark.parametrize("question, region", [
+    ("Ik verhuis van Brussel naar Antwerpen. Wie is mijn netbeheerder?", "flanders"),   # P1: where the visitor moves to
+    ("Brussel of Antwerpen, waar is de netbeheerder goedkoper?", None),                # no home named: ask
+    ("J'habite à Namur, ma sœur à Bruxelles.", "wallonia"),
+])
+def test_codex_several_places_need_a_home(question, region):
+    assert visitor_region(question, [])[0] == region
 
 
 def test_a_false_premise_about_the_social_tariff_is_corrected():

@@ -26,21 +26,21 @@ def _fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
 
 
-# Municipalities by region; names that are also common words ("ans", "spa", "boom", "geel", "bergen")
-# are left out, so "depuis 3 ans" never reads as a town.
-# Municipalities by region. Walloon ones carry their network operator when it is known; the others
+# Municipalities by region. Names that are also common words are left out ("ans", "spa", "boom",
+# "geel", "bergen", "vorst" = frost, "forest", "laken" = sheet, "lier"), so "depuis 3 ans" or
+# "kan vorst een panne veroorzaken?" never reads as a town. Walloon ones carry their network operator when it is known; the others
 # get None, and Karen then says the operator is on the bill instead of guessing.
 _BRUSSELS_TOWNS = (
     "brussel", "bruxelles", "brussels", "anderlecht", "oudergem", "auderghem", "sint-agatha-berchem",
-    "berchem-sainte-agathe", "etterbeek", "evere", "vorst", "forest", "ganshoren", "elsene", "ixelles", "jette",
+    "berchem-sainte-agathe", "etterbeek", "evere", "ganshoren", "elsene", "ixelles", "jette",
     "koekelberg", "sint-jans-molenbeek", "molenbeek", "sint-gillis", "saint-gilles", "sint-joost-ten-node",
     "saint-josse", "schaarbeek", "schaerbeek", "ukkel", "uccle", "watermaal-bosvoorde", "watermael-boitsfort",
-    "sint-lambrechts-woluwe", "woluwe-saint-lambert", "sint-pieters-woluwe", "woluwe-saint-pierre", "laken", "laeken",
+    "sint-lambrechts-woluwe", "woluwe-saint-lambert", "sint-pieters-woluwe", "woluwe-saint-pierre", "laeken",
 )
 _FLEMISH_TOWNS = (
     "antwerpen", "anvers", "gent", "gand", "brugge", "bruges", "leuven", "louvain", "mechelen", "malines",
     "aalst", "alost", "hasselt", "kortrijk", "courtrai", "oostende", "ostende", "genk", "sint-niklaas", "roeselare",
-    "turnhout", "dendermonde", "lier", "beveren", "vilvoorde", "herentals", "lokeren", "ninove",
+    "turnhout", "dendermonde", "beveren", "vilvoorde", "herentals", "lokeren", "ninove",
     "zaventem", "tienen", "tongeren", "ieper", "waregem", "lommel", "deinze", "eeklo", "oudenaarde",
     "knokke", "heist-op-den-berg", "brasschaat", "schoten", "mortsel", "wevelgem", "menen", "torhout", "diest",
     "aarschot", "zottegem", "geraardsbergen", "ronse", "maaseik", "bilzen", "sint-truiden", "beringen",
@@ -77,6 +77,10 @@ _TOWN_PATTERNS = [(_town_pattern(t), region, op) for t, region, op in _TOWNS]
 _REGION_PATTERNS = [(region, re.compile(r"(?<!\w)(?:" + _fold(words) + r")(?!\w)")) for region, words in _REGION_WORDS]
 
 
+# "ik woon in", "j'habite à", "naar Antwerpen" (where someone moves to): marks the visitor's own home.
+_RESIDENCE = re.compile(r"(?:woon|woont|wonen|verhuis\w* naar|naar|habite|j.habite|vis |demenage\w* (?:a|vers)|vers|live|living|moving to)\W+(?:\w+\W+){0,2}$")
+
+
 def _mentions(text: str) -> list[tuple[int, str, str | None]]:
     """(position, region, operator) for every town or region named in one message, skipping 'niet in Wallonië'."""
     folded = _fold(text)
@@ -103,10 +107,27 @@ def visitor_region(question: str, earlier_questions: list[str]) -> tuple[str | N
         mentions = _mentions(text)
         if not mentions:
             continue
-        towns = [m for m in mentions if _is_town_mention(text, m)]
-        _, region, operator = (towns or mentions)[0]
-        return region, operator
+        return _resolve(text, mentions)
     return None, None
+
+
+def _resolve(text: str, mentions: list[tuple[int, str, str | None]]) -> tuple[str | None, str | None]:
+    """One region from one message, or None when it names several and doesn't say which is home.
+
+    "Ik verhuis van Brussel naar Antwerpen" is Antwerpen (where the visitor will live); "Brussel of
+    Antwerpen?" without a home is ambiguous, and Karen asks rather than pick a region's numbers.
+    """
+    folded = _fold(text)
+    regions = {region for _, region, _ in mentions}
+    if len(regions) > 1:
+        home = {m for m in mentions if _RESIDENCE.search(folded[max(0, m[0] - 30):m[0]])}
+        home_regions = {region for _, region, _ in home}
+        if len(home_regions) != 1:
+            return None, None
+        mentions = sorted(home)
+    region = mentions[0][1]
+    operators = [op for position, reg, op in mentions if reg == region and _is_town_mention(text, (position, reg, op))]
+    return region, (operators[0] if operators else None)
 
 
 def _is_town_mention(text: str, mention: tuple[int, str, str | None]) -> bool:
@@ -131,9 +152,14 @@ _EMERGENCY = {
     "RESA": {"site": "resa.be"},
 }
 
+# Solar panels, an inverter or a device that "gives no power" is a technical question, not an outage.
+_NOT_OUTAGE = re.compile(
+    r"zonnepane|omvormer|terug ?lever|injecte|opbrengst|panneaux? solaires?|onduleur|\bsolar|inverter|"
+    r"chaudiere|\bketel|\bvoiture|\bauto\b|laadpaal|\bfrigo|koelkast|wasmachine|lave-linge|lave-vaisselle"
+)
 _OUTAGE = re.compile(
     r"stroom ?(?:storing|panne|onderbreking|uitval)|geen stroom|stroom (?:is )?(?:uitgevallen|weg)|"
-    r"gas ?(?:geur|lek)|ruik(?:t|en)? gas|panne (?:de courant|d.electricite|electrique)|panne\b|coupure de courant|"
+    r"gas ?(?:geur|lek)|ruik(?:t|en)? gas|panne (?:de courant|d.electricite|electrique)|\bpanne\b|coupure de courant|"
     r"odeur de gaz|fuite de gaz|sent le gaz|power (?:cut|outage)|no (?:power|electricity)|gas (?:smell|leak)|smell(?:s)? (?:of )?gas|"
     r"noodnummer|storingsnummer|numero d.urgence|depannage|emergency number|black-?out|stroompanne"
 )
@@ -152,10 +178,13 @@ _WINTER = re.compile(
     r"(?:afsluit|afgesloten|afsnijden|couper|coupe|coupure|cut off|disconnect).{0,40}(?:winter|hiver)|"
     r"(?:winter|hiver).{0,40}(?:afsluit|afgesloten|couper|coupe|coupure|cut off|disconnect)"
 )
+# Cutting off supply, never "een contract afsluiten" (taking out a contract).
 _DISCONNECT = re.compile(
-    r"(?:mag|kan|kunnen|mogen|gaan) (?:de leverancier|ze|zij|fluvius|mijn leverancier)?.{0,30}(?:afsluiten|afsnijden|uitzetten)|"
-    r"afgesloten worden|(?:peu(?:t|vent)|vont)[- ](?:ils|on)? ?(?:me )?couper|can they cut"
+    r"(?:mag|mogen|kan|kunnen|gaan|zullen)\b.{0,40}\b(?:mij|me|ons|stroom|gas|verwarming|elektriciteit|levering)\b.{0,15}\b(?:afsluiten|afsnijden)|"
+    r"(?:stroom|gas|elektriciteit|verwarming|levering) (?:wordt |worden )?afgesloten|afgesloten worden|"
+    r"(?:peu(?:t|vent)|vont)[- ](?:ils|on)? ?(?:me |nous )?couper|can they cut|cut (?:me|us) off"
 )
+_CONTRACT = re.compile(r"contract|contrat|abonnement|verzekering|lening")
 # "Client protégé" / "beschermde afnemer" questions are about the social supplier, not the tariff itself.
 _PROTECTED_CUSTOMER = re.compile(r"client protege|beschermde (?:klant|afnemer)|fournisseur social|sociale leverancier|protected customer")
 _WINTER_FOLLOW_UP = re.compile(r"geldt dat|voor wie|iedereen|beschermd|pour qui|tout le monde|protege|for whom|everyone")
@@ -170,15 +199,17 @@ _HELP_REQUEST = re.compile(r"wie (?:kan |helpt |zal )?(?:mij|me) (?:dan )?(?:hel
 _ABOLISHED = re.compile(r"afgeschaft|bestaat (?:niet meer|nog)|supprime|aboli|abolished|no longer exists")
 _INCREASED_ALLOWANCE = re.compile(r"verhoogde tegemoetkoming|\bvt\b|\bbim\b|intervention majoree|increased (?:allowance|reimbursement)")
 _SELF_HARM = re.compile(
-    r"zelfmoord|wil niet meer leven|er(?:uit| een eind aan) maken|suicide|me suicider|en finir|kill myself|end my life"
+    r"zelfmoord|wil niet meer leven|mezelf iets aandoen|suicid|me tuer|en finir avec (?:la|ma) vie|"
+    r"kill myself|end my life|want to die"
 )
 _CHILDREN = re.compile(r"kinderen (?:afpakken|afnemen|wegnemen|weghalen)|enfants? (?:retire|place|enleve|pris)|take (?:my|the) (?:kids|children)")
 _FEAR = re.compile(r"\bbang\b|\bangst|j.ai (?:tres |vraiment |si )?peur|\bpeur\b|\bscared\b|\bafraid\b")
 _SHAME = re.compile(r"\bschaam|\bhonte\b|\bashamed\b")
 # Fear only counts as distress about money: "bang dat de prijzen stijgen" is a price question.
 _MONEY_TROUBLE = re.compile(
-    r"schuld|betaal|betalen|achterstand|afsluit|afgesloten|herinnering|aanmaning|deurwaarder|ocmw|niet rond|"
-    r"dette|payer|paie|retard|coupe|cpas|huissier|debt|pay|cut off|kinderen|enfant"
+    r"schuld|niet (?:meer )?betalen|kan .{0,20}niet betalen|betaalachterstand|achterstand|afsluiten|afgesloten|herinnering|"
+    r"aanmaning|deurwaarder|ocmw|niet rond|geen geld|dette|pas payer|plus payer|retard de paiement|impaye|huissier|cpas|"
+    r"couper|coupure|debt|arrears|can.?t pay|cut off|geld is op|geld op is|budgetmeter|prepaid|afsluitverbod|winterstop"
 )
 
 
@@ -240,11 +271,11 @@ def _outage_answer(question: str, region: str | None, walloon_operator: str | No
     kind = "gas" if gas else "power"
     if operator and kind in numbers:
         line = {
-            "nl": f"Bel {operator}, je netbeheerder: {'gasgeur' if gas else 'stroomstoring'} {numbers[kind]} (24/7).",
-            "fr": (f"Appelez {operator}, votre gestionnaire de réseau : {'odeur de gaz' if gas else 'panne'} {numbers[kind]} (24h/24)."
+            "nl": f"Bel {operator}, je netbeheerder: {'gasgeur' if gas else 'stroomstoring'} {numbers[kind]}.",
+            "fr": (f"Appelez {operator}, votre gestionnaire de réseau : {'odeur de gaz' if gas else 'panne'} {numbers[kind]}."
                    if vous else
-                   f"Appelle {operator}, ton gestionnaire de réseau : {'odeur de gaz' if gas else 'panne'} {numbers[kind]} (24h/24)."),
-            "en": f"Call {operator}, your network operator: {'gas smell' if gas else 'power cut'} {numbers[kind]} (24/7).",
+                   f"Appelle {operator}, ton gestionnaire de réseau : {'odeur de gaz' if gas else 'panne'} {numbers[kind]}."),
+            "en": f"Call {operator}, your network operator: {'gas smell' if gas else 'power cut'} {numbers[kind]}.",
         }[lang]
     elif operator:
         line = {
@@ -356,7 +387,7 @@ def _winter_answer(question: str, region: str | None, disconnect: bool = False) 
         return _reply(
             "Niet zomaar: in Vlaanderen gaat aan een afsluiting een procedure vooraf, en tussen **1 december en 1 april** mag het, voor iedereen, alleen bij onveiligheid, leegstand, fraude of een verhuizing die niet in orde is.\n"
             "- **Nu doen:** vraag je leverancier om een afbetalingsplan, vóór de volgende herinnering.\n"
-            "- **Hulp:** het OCMW van je gemeente helpt gratis met je factuur en schulden.\n"
+            "- **Hulp:** het OCMW van je gemeente kan je helpen met je factuur en schulden.\n"
             "- **Sociaal tarief:** kijk of je er recht op hebt via de FOD Economie, 0800 120 33 (gratis).",
             "winter", _WINTER_SOURCES_FLANDERS)
     if region == FLANDERS:
@@ -373,14 +404,14 @@ def _winter_answer(question: str, region: str | None, disconnect: bool = False) 
         return _reply(text, "winter", _WINTER_SOURCES_FLANDERS)
     body = "Brugel" if region == BRUSSELS else "la CWaPE"
     text = {
-        "nl": (f"Ook in {'Brussel' if region == BRUSSELS else 'Wallonië'} geldt in de winter een bescherming tegen afsluiten, maar de precieze periode en voor wie ze geldt heb ik niet nagekeken, dus ik geef geen datums.\n"
+        "nl": (f"De regels over afsluiten in de winter in {'Brussel' if region == BRUSSELS else 'Wallonië'} heb ik niet officieel kunnen nakijken, dus ik zeg er niets over dat ik niet zeker weet.\n"
                f"- **Navragen:** bij {'Brugel of Sibelga' if region == BRUSSELS else 'de CWaPE of je netbeheerder (ORES of RESA)'}.\n"
                "- **Hulp:** bij betaalproblemen helpt het OCMW van je gemeente."),
-        "fr": ((f"{'À Bruxelles' if region == BRUSSELS else 'En Wallonie'}, il existe aussi une protection contre les coupures en hiver, mais je n'ai pas vérifié la période exacte ni qui elle protège, donc je ne donne pas de dates. "
+        "fr": ((f"{'À Bruxelles' if region == BRUSSELS else 'En Wallonie'}, je n'ai pas pu vérifier officiellement les règles de coupure en hiver, donc je préfère ne rien affirmer. "
                 f"Renseignez-vous auprès de {body} et du CPAS de votre commune.") if vous else
-               (f"{'À Bruxelles' if region == BRUSSELS else 'En Wallonie'}, il existe aussi une protection contre les coupures en hiver, mais je n'ai pas vérifié la période exacte ni qui elle protège, donc je ne donne pas de dates. "
+               (f"{'À Bruxelles' if region == BRUSSELS else 'En Wallonie'}, je n'ai pas pu vérifier officiellement les règles de coupure en hiver, donc je préfère ne rien affirmer. "
                 f"Renseigne-toi auprès de {body} et du CPAS de ta commune.")),
-        "en": (f"{'Brussels' if region == BRUSSELS else 'Wallonia'} also protects households from disconnection in winter, but I haven't verified the exact period or who it covers, so I won't give dates. "
+        "en": (f"For {'Brussels' if region == BRUSSELS else 'Wallonia'}, I couldn't verify the winter disconnection rules officially, so I won't state them. "
                f"Check with {'Brugel' if region == BRUSSELS else 'the CWaPE'} and the CPAS/OCMW of your town."),
     }[lang]
     return _reply(text, "winter")
@@ -391,47 +422,46 @@ def _distress_answer(question: str, region: str | None) -> dict[str, Any]:
     folded = _fold(question)
     if _SELF_HARM.search(folded):
         text = {
-            "nl": "Wat je schrijft, klinkt heel zwaar, en je hoeft dit niet alleen te dragen. Praat er vandaag nog over: bel de Zelfmoordlijn op 1813 (gratis, dag en nacht). Bij direct gevaar: 112. Over je energiefactuur helpen we daarna samen verder.",
-            "fr": "Ce que vous écrivez semble très lourd, et vous n'avez pas à le porter seul·e. Parlez-en aujourd'hui : appelez le Centre de Prévention du Suicide au 0800 32 123 (gratuit, 24h/24). En cas de danger immédiat : 112.",
+            "nl": "Wat je schrijft, klinkt heel zwaar, en je hoeft dit niet alleen te dragen. Praat er vandaag nog over: bel de Zelfmoordlijn op 1813 (gratis, anoniem, 24/7). Bij direct gevaar: 112. Over je energiefactuur helpen we daarna samen verder.",
+            "fr": "Ce que vous écrivez semble très lourd, et vous n'avez pas à le porter seul·e. Parlez-en aujourd'hui : appelez le Centre de Prévention du Suicide au 0800 32 123 (gratuit, anonyme, 24h/24). En cas de danger immédiat : 112.",
             "en": "What you write sounds very heavy, and you don't have to carry it alone. Please talk to someone today: in Belgium call 1813 (Dutch) or 0800 32 123 (French), free, day and night. In immediate danger: 112.",
         }[lang]
         return _reply(text, "distress")
     if _SHAME.search(folded):
         text = {
-            "nl": ("Schaamte is heel begrijpelijk, maar het OCMW is er precies hiervoor: hulp vragen is je recht, en wat je vertelt blijft vertrouwelijk.\n"
+            "nl": ("Schaamte is heel begrijpelijk, maar het OCMW is er precies voor zulke vragen, en je bent zeker niet de enige.\n"
                    "- **Eerst zonder OCMW:** vraag je leverancier zelf om een afbetalingsplan, en bel gratis de FOD Economie (0800 120 33) om te kijken of je recht hebt op het sociaal tarief.\n"
-                   "- **Iemand om mee te praten:** het CAW helpt gratis en anoniem als je wil (caw.be).\n"
-                   "- **Ga je toch naar het OCMW:** je mag iemand meenemen die je vertrouwt."),
-            "fr": (("La honte est compréhensible, mais le CPAS est là pour ça : demander de l'aide est un droit, et c'est confidentiel. "
+                   "- **Iemand om mee te praten:** het CAW, gratis en vertrouwelijk: 0800 13 500 (werkdagen 9 tot 17 uur) of caw.be."),
+            "fr": (("La honte est compréhensible, mais le CPAS est là pour ce genre de questions, et vous n'êtes pas seul·e dans ce cas. "
                     "Sans passer par le CPAS, vous pouvez demander un plan de paiement à votre fournisseur et vérifier votre droit au tarif social au 0800 120 33 (SPF Économie, gratuit).")
                    if vous else
-                   ("La honte est compréhensible, mais le CPAS est là pour ça : demander de l'aide est un droit, et c'est confidentiel. "
+                   ("La honte est compréhensible, mais le CPAS est là pour ce genre de questions, et tu n'es pas seul·e dans ce cas. "
                     "Sans passer par le CPAS, tu peux demander un plan de paiement à ton fournisseur et vérifier ton droit au tarif social au 0800 120 33 (SPF Économie, gratuit).")),
-            "en": ("Feeling ashamed is understandable, but the OCMW/CPAS exists for exactly this: asking for help is your right, and it's confidential. "
+            "en": ("Feeling ashamed is understandable, but the OCMW/CPAS is there for exactly these questions, and you're far from the only one. "
                    "Without it, you can ask your supplier for a payment plan and check the social tariff on 0800 120 33 (FPS Economy, free)."),
         }[lang]
         return _reply(text, "distress")
     if _CHILDREN.search(folded):
         text = {
             "nl": ("Ik begrijp dat je daar bang voor bent. Wat jeugdhulp beslist, kan ik niet beoordelen, maar je hoeft dit niet alleen op te lossen en hulp vragen is geen zwaktebod.\n"
-                   "- **OCMW:** helpt gratis en vertrouwelijk met schulden en je energiefactuur, ook met een afbetalingsplan.\n"
-                   "- **CAW:** voor een gesprek over je zorgen, gratis en anoniem als je wil (caw.be).\n"
+                   "- **OCMW:** kan je helpen met schulden en je energiefactuur, ook met een afbetalingsplan.\n"
+                   "- **CAW:** voor een gesprek over je zorgen, gratis en vertrouwelijk: 0800 13 500 (werkdagen 9 tot 17 uur) of caw.be.\n"
                    "- **Je energie:** vraag je leverancier om een afbetalingsplan en kijk of je recht hebt op het sociaal tarief."),
-            "fr": ("Je comprends que cela vous fasse peur. Je ne peux pas juger ce que décide l'aide à la jeunesse, mais vous n'êtes pas seul·e : le CPAS aide gratuitement et en toute confidentialité pour les dettes et la facture d'énergie, y compris un plan de paiement."
+            "fr": ("Je comprends que cela vous fasse peur. Je ne peux pas juger ce que décide l'aide à la jeunesse, mais vous n'êtes pas seul·e : le CPAS peut aider pour les dettes et la facture d'énergie, y compris un plan de paiement."
                    if vous else
-                   "Je comprends que ça te fasse peur. Je ne peux pas juger ce que décide l'aide à la jeunesse, mais tu n'es pas seul·e : le CPAS aide gratuitement et en toute confidentialité pour les dettes et la facture d'énergie, y compris un plan de paiement."),
-            "en": ("I understand that frightens you. I can't judge what youth services decide, but you don't have to solve this alone: the OCMW/CPAS helps for free and confidentially with debts and your energy bill, including a payment plan."),
+                   "Je comprends que ça te fasse peur. Je ne peux pas juger ce que décide l'aide à la jeunesse, mais tu n'es pas seul·e : le CPAS peut aider pour les dettes et la facture d'énergie, y compris un plan de paiement."),
+            "en": ("I understand that frightens you. I can't judge what youth services decide, but you don't have to solve this alone: the OCMW/CPAS can help with debts and your energy bill, including a payment plan."),
         }[lang]
         return _reply(text, "distress")
     text = {
         "nl": ("Begrijpelijk dat je bang bent; je staat er niet alleen voor. Dit kan je deze week doen:\n"
                "1. Bel je leverancier en vraag een afbetalingsplan, vóór de volgende herinnering.\n"
-               "2. Maak een afspraak bij het OCMW van je gemeente: het helpt gratis met je factuur en schulden.\n"
+               "2. Maak een afspraak bij het OCMW van je gemeente: het kan je helpen met je factuur en schulden.\n"
                "3. Kijk of je recht hebt op het sociaal tarief: bel gratis de FOD Economie op 0800 120 33."),
-        "fr": (("Je comprends votre inquiétude ; vous n'êtes pas seul·e. Cette semaine : demandez un plan de paiement à votre fournisseur, prenez rendez-vous au CPAS de votre commune (aide gratuite pour la facture et les dettes) et vérifiez votre droit au tarif social au 0800 120 33 (SPF Économie, gratuit).")
+        "fr": (("Je comprends votre inquiétude ; vous n'êtes pas seul·e. Cette semaine : demandez un plan de paiement à votre fournisseur, prenez rendez-vous au CPAS de votre commune (aide pour la facture et les dettes) et vérifiez votre droit au tarif social au 0800 120 33 (SPF Économie, gratuit).")
                if vous else
-               ("Je comprends ton inquiétude ; tu n'es pas seul·e. Cette semaine : demande un plan de paiement à ton fournisseur, prends rendez-vous au CPAS de ta commune (aide gratuite pour la facture et les dettes) et vérifie ton droit au tarif social au 0800 120 33 (SPF Économie, gratuit).")),
-        "en": ("That's understandable; you're not alone in this. This week: ask your supplier for a payment plan, make an appointment at the OCMW/CPAS of your town (free help with your bill and debts), "
+               ("Je comprends ton inquiétude ; tu n'es pas seul·e. Cette semaine : demande un plan de paiement à ton fournisseur, prends rendez-vous au CPAS de ta commune (aide pour la facture et les dettes) et vérifie ton droit au tarif social au 0800 120 33 (SPF Économie, gratuit).")),
+        "en": ("That's understandable; you're not alone in this. This week: ask your supplier for a payment plan, make an appointment at the OCMW/CPAS of your town (help with your bill and debts), "
                "and check whether you're entitled to the social tariff on 0800 120 33 (FPS Economy, free)."),
     }[lang]
     return _reply(text, "distress")
@@ -441,14 +471,14 @@ def _payment_plan_answer(question: str) -> dict[str, Any]:
     lang, vous = _lang(question), _vous(question)
     text = {
         "nl": ("Dat kan je vragen: een afbetalingsplan vraag je aan je leverancier. Het telefoonnummer staat op je factuur of de brief die je kreeg; vraag het liefst vóór de vervaldag.\n"
-               "- **Lukt het niet of is het te veel:** het OCMW van je gemeente helpt gratis, ook met de leverancier praten.\n"
+               "- **Lukt het niet of is het te veel:** het OCMW van je gemeente kan je helpen.\n"
                "- **Sociaal tarief:** kijk of je er recht op hebt via de FOD Economie, 0800 120 33 (gratis)."),
         "fr": (("Vous pouvez le demander : un plan de paiement se demande à votre fournisseur (le numéro est sur votre facture), de préférence avant l'échéance. "
-                "Si c'est trop lourd, le CPAS de votre commune aide gratuitement.") if vous else
+                "Si c'est trop lourd, le CPAS de votre commune peut vous aider.") if vous else
                ("Tu peux le demander : un plan de paiement se demande à ton fournisseur (le numéro est sur ta facture), de préférence avant l'échéance. "
-                "Si c'est trop lourd, le CPAS de ta commune aide gratuitement.")),
+                "Si c'est trop lourd, le CPAS de ta commune peut t'aider.")),
         "en": ("You can ask for it: a payment plan is arranged with your supplier (the number is on your bill), ideally before the due date. "
-               "If it's too much, the OCMW/CPAS of your town helps for free."),
+               "If it's too much, the OCMW/CPAS of your town can help."),
     }[lang]
     return _reply(text, "payment-plan")
 
@@ -463,7 +493,7 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
         return _distress_answer(question, region)
     if (_FEAR.search(folded) or _SHAME.search(folded)) and _MONEY_TROUBLE.search(context):
         return _distress_answer(question, region)
-    if _OUTAGE.search(folded):
+    if _OUTAGE.search(folded) and (_GAS.search(folded) or not _NOT_OUTAGE.search(folded)):
         return _outage_answer(question, region, walloon_operator)
     if _WINTER.search(folded):
         return _winter_answer(question, region)
@@ -473,7 +503,7 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
         return _social_tariff_answer(question)
     if _OPERATOR_QUESTION.search(folded) and not _PROTECTED_CUSTOMER.search(folded):
         return _operator_answer(question, region, walloon_operator)
-    if _DISCONNECT.search(folded):
+    if _DISCONNECT.search(folded) and not _CONTRACT.search(folded):
         return _winter_answer(question, region, disconnect=True)
     if _PAYMENT_PLAN.search(folded):
         return _payment_plan_answer(question)
