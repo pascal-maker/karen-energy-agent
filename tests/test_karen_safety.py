@@ -31,22 +31,35 @@ WALLONIA_FR_3 = [
 ]
 
 
-def test_wallonia_fr_3_namur_gets_ores_and_never_another_operators_number():
+def test_wallonia_fr_3_namur_never_gets_another_regions_number():
     replies = replay(WALLONIA_FR_3)
     assert all(reply is not None for reply in replies)
-    assert "ORES" in replies[0]["answer"]
-    for reply in (replies[1], replies[2], replies[4]):
-        assert "078 78 78 00" in reply["answer"]
+    for reply in replies:
         assert "02 274 40 66" not in reply["answer"] and "Bruxelles" not in reply["answer"]
-        assert "Fluvius" not in reply["answer"]
+        assert "Fluvius" not in reply["answer"] and "0800 65 065" not in reply["answer"]
 
 
-def test_wallonia_fr_3_liege_gets_resa_and_no_unverified_number():
-    gas = replay(WALLONIA_FR_3)[3]["answer"]
-    assert "RESA" in gas and "gaz" in gas and "112" in gas
-    # RESA's numbers could not be read on resa.be: no number at all, certainly not ORES's or Sibelga's.
+def test_wallonia_fr_3_the_town_alone_does_not_pick_ores_or_resa():
+    # Which communes ORES or RESA serve is not on an official page we could read (Codex review I):
+    # for Namur Karen says it's on the bill, and gives ORES's number only labelled "if it's ORES".
+    first, outage = replay(WALLONIA_FR_3)[:2]
+    assert "ORES ou RESA" in first["answer"] and "facture" in first["answer"]
+    assert "Si c'est ORES : panne 078 78 78 00" in outage["answer"]
+
+
+def test_wallonia_fr_3_the_visitor_naming_ores_gets_its_number():
+    third = replay(WALLONIA_FR_3)[2]["answer"]
+    assert "Appelle ORES" in third and "078 78 78 00" in third
+
+
+def test_wallonia_fr_3_the_sisters_resa_is_not_the_visitors_operator():
+    replies = replay(WALLONIA_FR_3)
+    sister = replies[3]["answer"]
+    assert "RESA" in sister and "gaz" in sister and "112" in sister
     for number in ("0800 87 087", "078 78 78 00", "0800 19 400", "0800 65 065"):
-        assert number not in gas
+        assert number not in sister  # RESA's numbers are not verified
+    # Back to the visitor's own street in Namur: ORES, which the visitor named, not the sister's RESA.
+    assert "078 78 78 00" in replies[4]["answer"]
 
 
 # --- elderly-3: IGO got the wholesale price, then "IGO alleen is niet automatisch bepalend" ----------
@@ -163,14 +176,62 @@ def test_payment_trouble_gets_the_supplier_the_ocmw_and_the_social_tariff(questi
     assert "leverancier" in reply["answer"] and "OCMW" in reply["answer"] and "Belastingdienst" not in reply["answer"]
 
 
+# --- Codex review of 46d4d91 (A–I) --------------------------------------------------------------
+
+@pytest.mark.parametrize("question, history", [
+    ("Kan ik deze winter een vast contract afsluiten?", []),                                          # A
+    ("Ik ben bang dat mijn zonnepanelen te weinig opbrengen. Vast of variabel?",                      # B
+     ["Kan ik een nieuw contract afsluiten?"]),
+    ("Ik wil geen sociaal tarief, vergelijk de vaste contracten.", []),                                # F
+    ("Hoeveel bespaar ik met zonnepanelen op het sociaal tarief?", []),                                # F
+    ("Je compare les contrats, je ne suis pas suicidaire.", []),                                       # G
+])
+def test_codex_second_review_false_positives(question, history):
+    assert answer_safety_question(question, [{"question": q} for q in history]) is None
+
+
+@pytest.mark.parametrize("question, history, number, never", [
+    # C: "namen" is a word, not Namur
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Antwerpen.", "Hoeveel namen staan er op mijn factuur?"], "0800 65 065", "0800 87 087"),
+    # E: the visitor's own home beats a sister's, in one message and over several turns
+    ("Ik ruik gas, welk nummer?", ["Ik woon in Antwerpen.", "Mijn zus woont in Brussel."], "0800 65 065", "0800 19 400"),
+    # H: a whole street without power is an outage, solar panels or not
+    ("De hele straat in Antwerpen heeft een stroompanne, ook mijn zonnepanelen werken niet. Wie bel ik?", [], "078 35 35 00", "112x"),
+])
+def test_codex_second_review_right_number(question, history, number, never):
+    answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
+    assert number in answer and never not in answer
+
+
+def test_codex_second_review_a_move_to_an_unknown_town_drops_the_old_region():
+    # D: after "verhuisd naar Geel" the Brussels number is wrong; Karen asks for the region instead.
+    history = [{"question": "Ik woon in Brussel."}, {"question": "Ik woon daar niet meer, ik ben verhuisd naar Geel."}]
+    answer = answer_safety_question("Ik ruik gas, welk nummer?", history)["answer"]
+    assert "0800 19 400" not in answer and "Vlaanderen, Brussel of Wallonië" in answer
+
+
+def test_codex_second_review_own_home_in_liege_is_not_the_sisters_namur():
+    answer = answer_safety_question("Mijn zus woont in Namur, ik woon in Liège. Ik ruik gas, wie bel ik?")["answer"]
+    assert visitor_region("Mijn zus woont in Namur, ik woon in Liège.", [])[0] == "wallonia"
+    assert "ORES of RESA" in answer  # no operator picked from the town
+
+
+def test_only_checked_wording_for_gas_and_operators():
+    # I: Sibelga's own gas advice; no "kabels, leidingen en meter" claim.
+    gas = answer_safety_question("Ik woon in Antwerpen. Ik ruik gas, wie bel ik?")["answer"]
+    assert "doe geen licht aan" in gas and "bel pas als je buiten bent" in gas
+    assert answer_safety_question("Ik woon in Gent. Wie is mijn netbeheerder?")["answer"] == "Je netbeheerder is Fluvius."
+
+
 # --- region detection --------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("question, region, operator", [
     ("ik woon in antwerpen, niet wallonie. wie helpt mij dan?", "flanders", None),
     ("Je ne suis pas à Bruxelles mais à Namur, chez ORES.", "wallonia", "ORES"),
+    ("J'habite à Namur.", "wallonia", None),
     ("Hallo, ik woon op de Kiezelstraat 999, 3500 Hasselt.", "flanders", None),
     ("je suis chez Engie en variable depuis 3 ans", None, None),
-    ("J'habite à Louvain-la-Neuve", "wallonia", "ORES"),
+    ("J'habite à Louvain-la-Neuve", "wallonia", None),
     ("Ik woon in Leuven", "flanders", None),
 ])
 def test_the_region_comes_from_the_visitors_own_words(question, region, operator):

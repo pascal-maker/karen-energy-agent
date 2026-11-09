@@ -73,9 +73,19 @@ Weggehaald, omdat er geen ✅ voor was:
 - de bewering dat er in Brussel en Wallonië een winterbescherming *bestaat*;
 - "(24/7)" bij de netbeheerders. Alleen Fluvius noemt dat zelf.
 
+## Na de tweede review van Codex (46d4d91)
+
+| Onderwerp | Wat Karen nu doet | Status |
+|---|---|---|
+| Gemeente → ORES of RESA | **Geen koppeling meer.** Op ores.be en resa.be staat geen gemeentelijst die we konden lezen. Karen gebruikt ORES of RESA alleen als de gebruiker die zelf noemt ("chez ORES"). Anders zegt ze: "staat ORES op je factuur: …; staat RESA: zie factuur en resa.be". | ❓ → niet gebruikt |
+| Vlaanderen → Fluvius, Brussel → Sibelga | Karen noemt ze. fluvius.be/over-fluvius en sibelga.be gaven **HTTP 403**, dus er is geen ✅ uit een automatische controle. | **Eigenaar bevestigt** |
+| Wat te doen bij gasgeur | "Open ramen en deuren, doe geen licht aan, verlaat de woning en bel pas als je buiten bent." Dat volgt het advies van Sibelga op [energuide.be](https://www.energuide.be/en/questions-answers/do-i-have-to-pay-for-sibelga-to-come-out-if-there-is-a-power-cut-or-the-smell-of-gas/14/): "Open all doors and windows… without turning on a light. Evacuate… once outside the house (!) call". | ✅* uit het zoekresultaat, **eigenaar leest na** |
+| "De netbeheerder beheert kabels, leidingen en meter" | Weggehaald. | — |
+| "Bel je leverancier niet, alleen de netbeheerder herstelt" | Weggehaald. Alleen "bij direct gevaar: 112" blijft. | — |
+
 ## Nog te bevestigen door de eigenaar of op een officiële pagina, voordat PR 1 gemerged wordt
 
-1. De noodnummers van Fluvius, ORES en RESA op hun eigen sites. Ik lees die pagina's tijdens de PR na.
+1. Dat Fluvius heel Vlaanderen bedient en Sibelga de 19 Brusselse gemeenten (de sites gaven 403). Het advies bij gasgeur op de energuide-pagina van Sibelga.
 2. De einddatum van de Waalse trêve hivernale (31 maart?) en de Brusselse periode (1 oktober tot 31 maart) op cwape.be en brugel.brussels.
 3. Of er sinds juli 2023 een nieuwe uitbreiding van het sociaal tarief is (economie.fgov.be).
 4. Of er een verlenging van de Vlaamse winterperiode geldt voor 2026–27.
