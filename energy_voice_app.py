@@ -75,11 +75,16 @@ from luminus_harness.feedback import FeedbackError, build_record, sign_feedback,
 from luminus_harness.conversation_log import build_log_record, load_recent, store_log_record
 from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness import expert_judge
-from luminus_harness.safety import answer_safety_question
+from luminus_harness.safety import BRUSSELS, WALLONIA, answer_safety_question, visitor_region
+from luminus_harness.question_kind import (
+    asks_for_opinion, asks_for_tariff, price_route_allowed, regional_tariff_answer, unknown_supplier,
+    unknown_supplier_answer,
+)
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
 from luminus_harness import langfuse_trace
 from luminus_harness.invoice_schema import FOLLOW_UP_SUGGESTIONS
+from luminus_harness.market_prices import answer_language, question_language, reply_language
 from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, today_summary
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
@@ -1058,6 +1063,17 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
 
 
 async def _public_answer(asked: str, history: list[dict[str, Any]]) -> dict[str, Any]:
+    earlier = [str(turn.get("question", "")) for turn in history if turn.get("question")]
+    # The reply language comes from the visitor's own words, before a follow-up is rewritten.
+    with reply_language(answer_language(asked, earlier)):
+        return await _routed_answer(asked, history, earlier)
+
+
+# Fixed price routes whose numbers are residential Flemish tariff cards.
+_FLEMISH_CARD_ROUTES = {"supplier-tariff-card", "offer-comparison"}
+
+
+async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: list[str]) -> dict[str, Any]:
     # Outages, the network operator, the social tariff, winter disconnection, payment plans and a
     # scared visitor: answered in code from checked facts, for the visitor's own region, before any
     # model or price list can pick another region's rules or numbers.
@@ -1065,10 +1081,26 @@ async def _public_answer(asked: str, history: list[dict[str, Any]]) -> dict[str,
     if safety is not None:
         return _with_petra_speech(safety)
     question = await standalone_question(asked, history)
+    language = question_language(asked)
+    if asks_for_opinion(asked) or asks_for_opinion(question):
+        return _with_petra_speech(await answer_small_talk(question, "off_topic"))
+    # A price at a supplier without a tariff card: say so, never today's market price instead.
+    missing = unknown_supplier(asked) or unknown_supplier(question)
+    if missing:
+        return _with_petra_speech(unknown_supplier_answer(missing, language))
+    # A price route answers a price question; why, how, where and must-I questions go to the sources.
+    prices_asked = price_route_allowed(asked) and price_route_allowed(question)
+    region, _ = visitor_region(asked, earlier)
+
+    def for_region(reply: dict[str, Any]) -> dict[str, Any]:
+        if region in (BRUSSELS, WALLONIA) and reply.get("processing") in _FLEMISH_CARD_ROUTES:
+            return regional_tariff_answer(region, language)
+        return reply
+
     # "Wanneer is stroom het goedkoopst?", "is 3500 kWh veel?", "Luminus of Engie?": a direct answer, never the price list.
-    specific = await answer_specific_price_question(question)
+    specific = await answer_specific_price_question(question) if prices_asked else None
     if specific is not None:
-        return _with_petra_speech(specific)
+        return _with_petra_speech(for_region(specific))
     # Jev picks the route when enabled and confident; otherwise the word lists below decide.
     route = await route_question(question)
     if route in (None, "contract_advice"):
@@ -1076,24 +1108,25 @@ async def _public_answer(asked: str, history: list[dict[str, Any]]) -> dict[str,
         if advice is not None:
             return _with_petra_speech(advice)
     # "What does Octa+ fixed cost?": that supplier's own verified tariff cards.
-    supplier_prices = await answer_supplier_price_question(question)
+    supplier_prices = await answer_supplier_price_question(question) if prices_asked else None
     if supplier_prices is not None:
-        return _with_petra_speech(supplier_prices)
-    # Checking or switching a contract: hand-checked steps and rules, whatever route Jev picked.
-    check = answer_contract_check(question)
+        return _with_petra_speech(for_region(supplier_prices))
+    # Checking or switching a contract: hand-checked steps and rules, whatever route Jev picked
+    # (not a supplier's kWh price or fixed fee, which those steps don't give).
+    check = None if asks_for_tariff(question) else answer_contract_check(question)
     if check is not None:
         return _with_petra_speech(check)
     # Heating oil, diesel, petrol, propane: today's official maximum price, whatever route Jev picked.
     fuel = await answer_fuel_price_question(question)
     if fuel is not None:
         return _with_petra_speech(fuel)
-    if route == "compare" or (route is None and is_offer_comparison_question(question)):
+    if prices_asked and (route == "compare" or (route is None and is_offer_comparison_question(question))):
         # No form: today's supplier cards plus the official comparator for a price on the person's own usage.
         comparison = await answer_offer_comparison(question)
         if comparison is not None:
-            return _with_petra_speech(comparison)
+            return _with_petra_speech(for_region(comparison))
     # Jev sometimes files a gas price question as small talk or another energy question.
-    if route in (None, "price") or (route != "compare" and is_gas_price_question(question)):
+    if prices_asked and (route in (None, "price") or (route != "compare" and is_gas_price_question(question))):
         prices = await answer_market_price_question(question, recognised=route == "price")
         if prices is not None:
             return _with_petra_speech(prices)

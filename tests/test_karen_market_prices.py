@@ -143,7 +143,9 @@ def test_how_to_compare_leads_with_the_official_comparators(api, monkeypatch):
 def test_comparison_in_brussels_points_to_brusim(api, monkeypatch):
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=market()))
     reply = ask(api, "goedkoopste energieleverancier in Brussel")
-    assert reply["suggested_sources"][0]["title"] == "BruSim (BRUGEL)"
+    # The tariff cards are Flemish: Brussels gets BruSim, not Flemish prices (swarm audit, PR 2).
+    assert reply["processing"] == "regional-tariff"
+    assert reply["sources"][0]["title"] == "BruSim (BRUGEL)" and "cent" not in reply["answer"]
 
 
 def test_an_old_comparison_token_is_ignored(api, monkeypatch):

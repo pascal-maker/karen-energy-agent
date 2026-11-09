@@ -14,6 +14,9 @@ import asyncio
 import json
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 import time
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -61,7 +64,9 @@ _DUTCH = re.compile(
 _FRENCH = re.compile(
     r"\b(?:le|la|les|est|quel|quelle|quels|prix|électricité|electricite|aujourd|je|j|mon|ma|mes|un|une|des|du|pour|"
     r"combien|coûte|coute|fixe|contrat|gaz|vous|tu|que|qui|bonjour|ça|c|pourquoi|mieux|dois|prendre|moins|cher|chère|"
-    r"facture|acompte|chauffage|chaudière|consommation|merci|avec|sur|pas)\b",
+    r"facture|acompte|chauffage|chaudière|consommation|merci|avec|sur|pas|oui|non|français|francais|explique\w*|"
+    r"s'il|stp|svp|aussi|alors|mais|où|comment|parle\w*|et|ton|tes|ta|réponds|reponds|seulement|contenu|règles|regles|"
+    r"il|elle|nous|ils|sont|peux|peut|dans|chez|au|aux|ce|cette|ces|j'ai|c'est|qu'est)\b",
     re.IGNORECASE,
 )
 
@@ -94,7 +99,55 @@ def is_gas_price_question(question: str, *, recognised: bool = False) -> bool:
     )
 
 
+# The reply language for the current question, fixed once from the visitor's own words (see
+# answer_language); a rewritten follow-up or a Dutch search query can't change it.
+_reply_language: ContextVar[str | None] = ContextVar("reply_language", default=None)
+_ASKED_LANGUAGE = [
+    ("fr", re.compile(r"\b(?:en\s+fran[cç]ais|in\s+(?:het\s+)?frans|in\s+french|parle[sz]?\s+fran[cç]ais|french,?\s+please)\b", re.IGNORECASE)),
+    ("en", re.compile(r"\b(?:in\s+english|en\s+anglais|in\s+(?:het\s+)?engels|english,?\s+please|speak\s+english)\b", re.IGNORECASE)),
+    ("nl", re.compile(r"\b(?:in\s+(?:het\s+)?nederlands|en\s+n[ée]erlandais|in\s+dutch|in\s+het\s+vlaams)\b", re.IGNORECASE)),
+]
+
+
+def _asked_language(text: str) -> str | None:
+    return next((lang for lang, pattern in _ASKED_LANGUAGE if pattern.search(text)), None)
+
+
+def answer_language(question: str, earlier_questions: list[str]) -> str:
+    """The language to answer in, from the visitor's own words only.
+
+    An explicit request ("en français", "in English, please") wins and holds for the next short
+    messages; a question of four words or more is answered in its own language; a short one
+    ("Explique.", "Oké.") in the language of the conversation so far."""
+    asked = _asked_language(question)
+    if asked:
+        return asked
+    if len(question.split()) >= 4:
+        return _detect_language(question)
+    for earlier in reversed(earlier_questions[-3:]):
+        asked = _asked_language(earlier)
+        if asked:
+            return asked
+        if len(earlier.split()) >= 4:
+            return _detect_language(earlier)
+    return _detect_language(question)
+
+
+@contextmanager
+def reply_language(language: str) -> Iterator[None]:
+    token = _reply_language.set(language)
+    try:
+        yield
+    finally:
+        _reply_language.reset(token)
+
+
 def question_language(question: str) -> str:
+    """The reply language fixed for this question, or else the language the question reads as."""
+    return _reply_language.get() or _detect_language(question)
+
+
+def _detect_language(question: str) -> str:
     """'en' or 'fr' when the question reads as English or French, otherwise Karen's default 'nl'."""
     english = len(_ENGLISH.findall(question))
     dutch = len(_DUTCH.findall(question))

@@ -152,7 +152,16 @@ def named_supplier(question: str) -> str | None:
     for alias in sorted(_SUPPLIER_ALIASES, key=len, reverse=True):
         if re.search(r"\b" + re.escape(alias) + r"\b", normalized):
             return _SUPPLIER_ALIASES[alias]
+    # "Bolt" with a capital as the supplier: "bij Bolt", "Bolt Vast", "En Bolt?" (not a door bolt).
+    if _BOLT_SUPPLIER.search(question):
+        return "bolt"
     return None
+
+
+_BOLT_SUPPLIER = re.compile(
+    r"\b(?:bij|van|chez|at|from|with|naar|vers|en|and|of|ou)\s+Bolt\b|\bBolt\s+(?:Vast|Variabel|Fixe|Variable|Fixed)\b"
+    r"|^\W*(?:En\s+|And\s+|Et\s+)?Bolt\b"
+)
 
 FETCH_FAILURE_PREFIXES = (
     "Deze URL valt buiten",
