@@ -41,7 +41,7 @@ from luminus_harness.voice_agent import (
     is_electricity_price_question,# used to recognize electricity price questions
     search_current_electricity_price,# used to search for the current electricity price
 )
-from luminus_harness.browserbase_sources import ENERGY_SOURCES, ENERGY_SOURCE_SCOPES# used to get energy sources and scopes
+from luminus_harness.browserbase_sources import ENERGY_SOURCES, ENERGY_SOURCE_SCOPES, search_budget# used to get energy sources and scopes
 from luminus_harness.knowledge import (
     KnowledgeChunk,
     load_pdf_chunks,
@@ -1012,7 +1012,8 @@ async def _rated_answer(body: AnswerRequest) -> dict[str, Any]:
     )
     try:
         with turn as root:
-            reply = await _answer(body)
+            with search_budget():
+                reply = await _answer(body)
             if root is not None:
                 langfuse_trace.finish_turn(root, reply, steps)
     finally:
