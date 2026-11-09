@@ -43,7 +43,7 @@ def test_wallonia_fr_3_the_town_alone_does_not_pick_ores_or_resa():
     # Which communes ORES or RESA serve is not on an official page we could read (Codex review I):
     # for Namur Karen says it's on the bill, and gives ORES's number only labelled "if it's ORES".
     first, outage = replay(WALLONIA_FR_3)[:2]
-    assert "ORES ou RESA" in first["answer"] and "facture" in first["answer"]
+    assert "facture" in first["answer"] and "Appelle ORES" not in first["answer"]
     assert "Si c'est ORES : panne 078 78 78 00" in outage["answer"]
 
 
@@ -213,7 +213,7 @@ def test_codex_second_review_a_move_to_an_unknown_town_drops_the_old_region():
 def test_codex_second_review_own_home_in_liege_is_not_the_sisters_namur():
     answer = answer_safety_question("Mijn zus woont in Namur, ik woon in Liège. Ik ruik gas, wie bel ik?")["answer"]
     assert visitor_region("Mijn zus woont in Namur, ik woon in Liège.", [])[0] == "wallonia"
-    assert "ORES of RESA" in answer  # no operator picked from the town
+    assert "staat op je factuur" in answer and "Bel ORES" not in answer  # no operator picked from the town
 
 
 def test_only_checked_wording_for_gas_and_operators():
@@ -221,6 +221,52 @@ def test_only_checked_wording_for_gas_and_operators():
     gas = answer_safety_question("Ik woon in Antwerpen. Ik ruik gas, wie bel ik?")["answer"]
     assert "doe geen licht aan" in gas and "bel pas als je buiten bent" in gas
     assert answer_safety_question("Ik woon in Gent. Wie is mijn netbeheerder?")["answer"] == "Je netbeheerder is Fluvius."
+
+
+# --- Codex review of 32b8d7b (1–9) --------------------------------------------------------------
+
+@pytest.mark.parametrize("question, history, must, must_not", [
+    # 1: a gas smell comes before fear or debts in the same message
+    ("Ik ruik gas en ben bang, ik heb schulden. Ik woon in Antwerpen.", [], "0800 65 065", "afbetalingsplan"),
+    ("J'ai peur car je sens le gaz et j'ai des dettes. J'habite à Bruxelles.", [], "0800 19 400", "plan de paiement"),
+    # 2: everyday ways to say it
+    ("Het ruikt naar gas in mijn huis in Gent.", [], "0800 65 065", "Sibelga"),
+    ("Er is een gaslucht in mijn huis in Gent.", [], "0800 65 065", "Sibelga"),
+    ("I can smell natural gas in my house in Brussels.", [], "0800 19 400", "Fluvius"),
+    # 3: ORES named before a move is not the operator after it
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Namur, bij ORES.", "Ik ben verhuisd naar Liège."], "Staat er ORES", "Bel ORES"),
+    # 4: a denied operator, or someone else's, is not the visitor's
+    ("J'habite à Liège, je ne suis pas chez ORES. Odeur de gaz, qui appeler ?", [], "Si c'est ORES", "Appelle ORES"),
+    ("Ik woon in Namur. Mijn zus is bij ORES. Ik ruik gas.", [], "Staat er ORES", "Bel ORES"),
+    # 5: the place of the gas smell decides; an aunt's home in history does not
+    ("Ik ruik gas bij mijn zus in Brussel. Ik woon in Antwerpen.", [], "0800 19 400", "0800 65 065"),
+    ("Ik ruik gas, wie bel ik?", ["Ik woon in Antwerpen.", "Mijn tante woont in Brussel."], "0800 65 065", "0800 19 400"),
+    # 9: no claim that ORES and RESA are the only Walloon operators
+    ("Mijn zus woont in Namur, ik woon in Liège. Ik ruik gas, wie bel ik?", [], "staat op je factuur", "ORES of RESA"),
+])
+def test_codex_third_review_emergencies(question, history, must, must_not):
+    answer = answer_safety_question(question, [{"question": q} for q in history])["answer"]
+    assert must in answer and must_not not in answer
+
+
+@pytest.mark.parametrize("question", [
+    "De hele straat heeft zonnepanelen. Is een vast contract goedkoper?",                         # 6
+    "Our whole street is comparing electricity contracts. Which is cheapest?",                    # 6
+    "Toute la rue compare les prix du gaz. Quel contrat choisir ?",                               # 6
+    "Je veux un contrat avec dépannage de chaudière inclus, quel prix ?",                         # 6
+    "Un contrat avec service de dépannage chaudière, c'est utile ?",
+    "Ik krijg het sociaal tarief. Wat is mijn prijs per kWh?",                                    # 7
+    "I receive the social tariff. What is the price per kWh?",                                    # 7
+    "Ik wil mijn energiefactuur automatisch betalen, niet via een afbetalingsplan. Hoe stel ik domiciliëring in?",  # 7
+    "I can't afford a home battery. Which solar contract is cheapest?",                           # 7
+])
+def test_codex_third_review_false_positives(question):
+    assert answer_safety_question(question) is None
+
+
+def test_codex_third_review_missed_money_trouble_and_rights():
+    assert answer_safety_question("I cannot pay my electricity bill and have no money left.")["processing"] == "safety-payment-plan"
+    assert answer_safety_question("Ik heb geen sociaal tarief op mijn factuur. Heb ik er recht op met IGO?")["processing"] == "safety-social-tariff"
 
 
 # --- region detection --------------------------------------------------------------------------------

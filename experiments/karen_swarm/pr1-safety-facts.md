@@ -83,6 +83,12 @@ Weggehaald, omdat er geen ✅ voor was:
 | "De netbeheerder beheert kabels, leidingen en meter" | Weggehaald. | — |
 | "Bel je leverancier niet, alleen de netbeheerder herstelt" | Weggehaald. Alleen "bij direct gevaar: 112" blijft. | — |
 
+## Na de derde review van Codex (32b8d7b)
+
+- **Wallonië zonder door de gebruiker genoemde netbeheerder:** "Je netbeheerder staat op je factuur. Staat er ORES: … Staat er een andere netbeheerder (zoals RESA): het nummer staat op je factuur en op diens website." Er is geen bewering meer dat ORES en RESA samen heel Wallonië dekken. Dat RESA een netbeheerder is, staat op [resa.be](https://www.resa.be/fr/) ("Opérateur des réseaux de distribution de gaz et d'électricité", ✅).
+- **De plaats van het gaslek of de storing** beslist welk nummer Karen geeft, ook als het huis van iemand anders is. Bij geldzorgen in hetzelfde bericht komt eerst de veiligheid: "Over je schulden praten we daarna verder."
+- Er zijn geen nieuwe feiten, nummers of beloftes bijgekomen.
+
 ## Nog te bevestigen door de eigenaar of op een officiële pagina, voordat PR 1 gemerged wordt
 
 1. Dat Fluvius heel Vlaanderen bedient en Sibelga de 19 Brusselse gemeenten (de sites gaven 403). Het advies bij gasgeur op de energuide-pagina van Sibelga.

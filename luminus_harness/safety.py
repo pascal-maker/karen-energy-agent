@@ -66,15 +66,17 @@ _SELF_HOME = re.compile(
     r"(?:\bik woon\w*|\bwij wonen|\bwe wonen|\bj.habite|\bnous habitons|\bje vis\b|\bi live|\bwe live|\bmijn adres|\bchez moi|"
     r"verhuis\w*.{0,25}\bnaar|\bverhuisd naar|demenage\w*.{0,25}\b(?:a|vers)|\bmov(?:ing|ed) to)\W+(?:\w+\W+){0,3}$"
 )
+# Someone else's home: "mijn tante woont in", "ma soeur habite à", "my aunt lives in", "bij mijn zus in".
 _OTHER_HOME = re.compile(
-    r"\b(?:zus|broer|moeder|vader|ouders|zoon|dochter|vriend\w*|buur\w*|collega|s(?:oe|\u0153)ur|frere|mere|pere|parents|fils|fille|"
-    r"ami\w*|voisin\w*|sister|brother|mother|father|son|daughter|friend|neighbou?r)\b.{0,25}"
-    r"(?:woont|wonen|habite\w*|vit|vivent|lives?)\W+(?:\w+\W+){0,3}$"
+    r"(?:\b(?:mijn|onze|ma|mon|mes|my|our)\s+\w+(?:\s+\w+)?\s+(?:woont|wonen|habite\w*|vit|vivent|lives?)|"
+    r"\b(?:bij|chez|at)\s+(?:mijn|onze|ma|mon|mes|my|our)\s+\w+)\W+(?:\w+\W+){0,3}$"
 )
+_SOMEONE_ELSE = re.compile(r"\b(?:mijn|onze|ma|mon|mes|my|our)\s+(?!adres|factuur|facture|huis|maison|meter|compteur|contract|contrat)\w+")
 # "Ik ben verhuisd", "ik woon daar niet meer": an earlier place no longer counts.
 _MOVED = re.compile(r"verhuisd|woon (?:er |daar |hier )?niet meer|demenage|n.habite plus|moved\b|no longer live")
 # The visitor stating their own operator ("chez ORES", "bij RESA", "mon gestionnaire est ORES").
 _STATED_OPERATOR = re.compile(r"(?:chez|bij|klant (?:bij|van)|client\w* (?:de|chez)|gestionnaire (?:est|c.est)|netbeheerder is|est|is)\s+(ores|resa)\b(?!\s*(?:ou|of|or)\b)")
+_DENIED = re.compile(r"\b(?:niet|geen|pas|not|plus|jamais|nooit|never)\b")
 
 
 def _town_pattern(town: str) -> re.Pattern[str]:
@@ -134,14 +136,24 @@ def visitor_region(question: str, earlier_questions: list[str]) -> tuple[str | N
 
 
 def _stated_operator(question: str, earlier_questions: list[str]) -> str | None:
-    """ORES or RESA as the visitor named it; an earlier message about someone else's home doesn't count."""
-    for index, text in enumerate([question, *reversed(earlier_questions)]):
-        mentions = _mentions(text)
-        if index and mentions and all(whose == "other" for _, whose in mentions):
-            continue
-        found = {m.group(1).upper() for m in _STATED_OPERATOR.finditer(_fold(text))}
+    """ORES or RESA as the visitor named it for their own home.
+
+    Not when denied ("je ne suis pas chez ORES"), not someone else's ("mijn zus is bij ORES"), and
+    not from before a move ("ik ben verhuisd naar Luik" ends what an older message said).
+    """
+    for text in [question, *reversed(earlier_questions)]:
+        folded = _fold(text)
+        found = set()
+        for sentence in re.split(r"[.!?;\n]", folded):
+            for match in _STATED_OPERATOR.finditer(sentence):
+                before = sentence[:match.start()]
+                if _DENIED.search(before[-25:]) or _SOMEONE_ELSE.search(before):
+                    continue
+                found.add(match.group(1).upper())
         if len(found) == 1:
             return found.pop()
+        if _MOVED.search(folded):
+            return None
     return None
 
 
@@ -170,14 +182,24 @@ _NOT_OUTAGE = re.compile(
 )
 # An outage named as such (or a whole street without power) is always one; "geen stroom" or a bare
 # "panne" next to solar panels, a boiler or a car is a technical question instead.
+_GAS_SMELL = (
+    r"(?:aard)?gas ?(?:geur|lucht|reuk|lek)|(?:ruik|ruikt|ruiken|rook)\W+(?:\w+\W+){0,3}(?:naar )?(?:aard)?gas\b|"
+    r"odeur de gaz|fuite de gaz|sen[st] (?:le|du) gaz|(?:gas|gaz) (?:smell|leak)|smell\w*\W+(?:\w+\W+){0,2}(?:natural )?gas\b"
+)
 _STRONG_OUTAGE = re.compile(
     r"stroom ?(?:storing|panne|onderbreking|uitval)|stroompanne|panne (?:de courant|d.electricite|electrique)|"
-    r"coupure de courant|power (?:cut|outage)|black-?out|noodnummer|storingsnummer|numero d.urgence|depannage|"
-    r"emergency number|(?:hele|de|onze) (?:straat|buurt|wijk)|tout le quartier|toute la rue|whole street|"
-    r"gas ?(?:geur|lek)|ruik(?:t|en)? gas|odeur de gaz|fuite de gaz|sent le gaz|gas (?:smell|leak)|smell(?:s)? (?:of )?gas"
+    r"coupure de courant|power (?:cut|outage)|black-?out|noodnummer|storingsnummer|numero d.urgence|"
+    r"(?:numero|ligne) de depannage|depannage (?:d.|de |chez )?(?:ores|resa|sibelga|fluvius)|"
+    r"emergency number|" + _GAS_SMELL
+)
+# "De hele straat" is only an outage together with "geen stroom", "panne", "zonder stroom"...
+_STREET_OUTAGE = re.compile(
+    r"(?:straat|buurt|wijk|quartier|rue|street|neighbou?rhood)\b.{0,40}(?:geen stroom|zonder stroom|panne|storing|uitval|"
+    r"donker|sans (?:courant|electricite)|coupure|no power|outage|power cut)|"
+    r"(?:geen stroom|zonder stroom|panne|storing|sans courant|no power|outage).{0,40}(?:straat|buurt|wijk|quartier|rue|street)"
 )
 _WEAK_OUTAGE = re.compile(r"geen stroom|stroom (?:is )?(?:uitgevallen|weg)|\bpanne\b|no (?:power|electricity)")
-_GAS = re.compile(r"gas ?(?:geur|lek)|ruik(?:t|en)? gas|odeur de gaz|fuite de gaz|sent le gaz|gas (?:smell|leak)|smell(?:s)? (?:of )?gas")
+_GAS = re.compile(_GAS_SMELL)
 _OPERATOR_QUESTION = re.compile(
     r"(?:wie|welke?|wat) (?:is|zijn) (?:mijn|de|onze) netbeheerder|netbeheerder (?:is|van)|is (?:dat|het) (?:niet )?fluvius|"
     r"(?:quel|qui) est (?:mon|le|notre) gestionnaire|gestionnaire de reseau|c.est (?:ores|resa|sibelga)|"
@@ -211,8 +233,8 @@ _SOCIAL_ASK = re.compile(
     r"existe|supprime|appeler|c.est quoi|entitled|eligib|apply|who (?:gets|can)|how do i get|still exist|what is|call|\bigo\b|inkomensgarantie"
 )
 _SOCIAL_NOT = re.compile(
-    r"geen sociaal tarief|pas (?:de|le) tarif social|don.?t want|vergelijk|compar|bespaar|econom|\bsave\b|bereken|calcul|"
-    r"hoeveel (?:kost|goedkoper|bespaar)|combien|how much"
+    r"wil geen sociaal tarief|ne veux pas (?:de|le) tarif social|don.?t want|vergelijk|compar|bespaar|econom|\bsave\b|bereken|calcul|"
+    r"hoeveel (?:kost|goedkoper|bespaar)|combien|how much|prijs|\bprix\b|\bprice|per kwh|tarief per|\bkost\b|\bcost"
 )
 # "Client protégé" / "beschermde afnemer" questions are about the social supplier, not the tariff itself.
 _PROTECTED_CUSTOMER = re.compile(r"client protege|beschermde (?:klant|afnemer)|fournisseur social|sociale leverancier|protected customer")
@@ -221,7 +243,8 @@ _PAYMENT_PLAN = re.compile(
     r"afbetal|in (?:stukjes|delen|schijven|termijnen) (?:te )?betalen|gespreid (?:te )?betalen|plan de paiement|"
     r"payer en plusieurs fois|etaler|payment plan|pay in (?:parts|instalments|installments)|"
     r"(?:kan|kunnen) (?:mijn |de |onze )?(?:energie)?(?:factuur|rekening|afrekening)? ?niet (?:meer )?betalen|"
-    r"ne (?:peux|pouvons) (?:pas|plus) payer|can.?t (?:afford|pay)"
+    r"ne (?:peux|pouvons) (?:pas|plus) payer|(?:can.?t|cannot|can not|unable to) pay|no money left|"
+    r"can.?t afford (?:my|the|our) (?:energy |electricity |gas )?(?:bill|invoice)"
 )
 # "Who helps me?" after money trouble: the same help as a payment plan.
 _HELP_REQUEST = re.compile(r"wie (?:kan |helpt |zal )?(?:mij|me) (?:dan )?(?:helpen|help)|wie helpt (?:mij|me)|qui peut m.aider|who can help")
@@ -238,7 +261,7 @@ _SHAME = re.compile(r"\bschaam|\bhonte\b|\bashamed\b")
 _MONEY_TROUBLE = re.compile(
     r"schuld|niet (?:meer )?betalen|kan .{0,20}niet betalen|betaalachterstand|achterstand|herinnering|"
     r"aanmaning|deurwaarder|ocmw|niet rond|geen geld|dette|pas payer|plus payer|retard de paiement|impaye|huissier|cpas|"
-    r"debt|arrears|can.?t pay|geld is op|geld op is|budgetmeter|prepaid|afsluitverbod|winterstop"
+    r"debt|arrears|can.?t pay|cannot pay|no money|geld is op|geld op is|budgetmeter|prepaid|afsluitverbod|winterstop"
 )
 
 
@@ -281,7 +304,8 @@ def _ask_region(lang: str, vous: bool, about: str) -> str:
             "De naam van je gemeente is genoeg.")
 
 
-def _outage_answer(question: str, region: str | None, walloon_operator: str | None) -> dict[str, Any]:
+def _outage_answer(question: str, region: str | None, walloon_operator: str | None,
+                   money_trouble: bool = False) -> dict[str, Any]:
     lang, vous = _lang(question), _vous(question)
     gas = bool(_GAS.search(_fold(question)))
     operator = _operator(region, walloon_operator)
@@ -312,15 +336,20 @@ def _outage_answer(question: str, region: str | None, walloon_operator: str | No
     elif region == WALLONIA:
         ores = _EMERGENCY["ORES"][kind]
         line = {
-            "nl": f"In Wallonië is je netbeheerder ORES of RESA; welke het is, staat op je factuur. Staat er ORES: {what} {ores}. Staat er RESA: het nummer staat op je factuur en op resa.be.",
-            "fr": f"En Wallonie, {'votre' if vous else 'ton'} gestionnaire est ORES ou RESA : c'est indiqué sur {'votre' if vous else 'ta'} facture. Si c'est ORES : {what} {ores}. Si c'est RESA : le numéro figure sur la facture et sur resa.be.",
-            "en": f"In Wallonia your operator is ORES or RESA; it's on your bill. If it says ORES: {what} {ores}. If it says RESA: the number is on your bill and on resa.be.",
+            "nl": f"Je netbeheerder staat op je factuur. Staat er ORES: {what} {ores}. Staat er een andere netbeheerder (zoals RESA): het nummer staat op je factuur en op diens website.",
+            "fr": f"{'Votre' if vous else 'Ton'} gestionnaire de réseau est indiqué sur {'votre' if vous else 'ta'} facture. Si c'est ORES : {what} {ores}. Si c'est un autre (comme RESA) : le numéro figure sur la facture et sur son site.",
+            "en": f"Your network operator is on your bill. If it says ORES: {what} {ores}. If it's another one (such as RESA): the number is on your bill and on its website.",
         }[lang]
     else:
         line = _ask_region(lang, vous, {"nl": "het juiste noodnummer", "fr": "le bon numéro d'urgence",
                                         "en": "the right emergency number"}[lang])
     tail = {"nl": "Bij direct gevaar: 112.", "fr": "En cas de danger immédiat : 112.", "en": "In immediate danger: 112."}[lang]
-    return _reply(" ".join(part for part in (danger, line, tail) if part), "emergency")
+    later = {
+        "nl": "Over je schulden praten we daarna verder: eerst je veiligheid.",
+        "fr": "Pour les dettes, on en reparle ensuite : d'abord la sécurité.",
+        "en": "We can talk about the debts afterwards: safety first.",
+    }[lang] if money_trouble else ""
+    return _reply(" ".join(part for part in (danger, line, tail, later) if part), "emergency")
 
 
 def _operator_answer(question: str, region: str | None, walloon_operator: str | None) -> dict[str, Any]:
@@ -334,9 +363,9 @@ def _operator_answer(question: str, region: str | None, walloon_operator: str | 
         }[lang]
     elif region == WALLONIA:
         answer = {
-            "nl": "In Wallonië is dat ORES of RESA; welke het is, staat op je factuur.",
-            "fr": f"En Wallonie, c'est ORES ou RESA : c'est indiqué sur {'votre' if vous else 'ta'} facture.",
-            "en": "In Wallonia it's ORES or RESA; it's on your bill.",
+            "nl": "In Wallonië staat je netbeheerder op je factuur (bijvoorbeeld ORES of RESA).",
+            "fr": f"En Wallonie, ton gestionnaire de réseau est indiqué sur ta facture (par exemple ORES ou RESA)." if not vous else "En Wallonie, votre gestionnaire de réseau est indiqué sur votre facture (par exemple ORES ou RESA).",
+            "en": "In Wallonia your network operator is on your bill (for example ORES or RESA).",
         }[lang]
     else:
         answer = _ask_region(lang, vous, {"nl": "je netbeheerder", "fr": "le gestionnaire de réseau",
@@ -500,6 +529,19 @@ def _payment_plan_answer(question: str) -> dict[str, Any]:
     return _reply(text, "payment-plan")
 
 
+def _emergency_region(question: str) -> str | None:
+    """The place named in the sentence that reports the gas smell or outage ("ik ruik gas bij mijn
+    zus in Brussel"), whoever lives there: that is where the operator has to come. None if that
+    sentence names no place, or several regions."""
+    for sentence in re.split(r"[.!?;\n]", question):
+        folded = _fold(sentence)
+        if _STRONG_OUTAGE.search(folded) or _STREET_OUTAGE.search(folded) or _WEAK_OUTAGE.search(folded):
+            regions = {region for region, _ in _mentions(sentence)}
+            if len(regions) == 1:
+                return regions.pop()
+    return None
+
+
 def _self_harm(folded: str) -> bool:
     """A self-harm signal, unless the visitor denies it ("je ne suis pas suicidaire", "niet suïcidaal")."""
     for match in _SELF_HARM.finditer(folded):
@@ -519,12 +561,19 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
         _MONEY_TROUBLE.search(text) or ((_DISCONNECT.search(text) or _WINTER.search(text)) and not _CONTRACT_SIGN.search(text))
         for text in recent
     )
-    if _self_harm(folded) or _CHILDREN.search(folded):
+    if _self_harm(folded):
+        return _distress_answer(question, region)
+    # A gas smell or an outage comes before everything else, also before fear or debts in the same message.
+    if (_STRONG_OUTAGE.search(folded) or _STREET_OUTAGE.search(folded)
+            or (_WEAK_OUTAGE.search(folded) and not _NOT_OUTAGE.search(folded))):
+        place = _emergency_region(question)
+        if place is not None:
+            region, walloon_operator = place, _stated_operator(question, []) if place == WALLONIA else None
+        return _outage_answer(question, region, walloon_operator, money_trouble)
+    if _CHILDREN.search(folded):
         return _distress_answer(question, region)
     if (_FEAR.search(folded) or _SHAME.search(folded)) and money_trouble:
         return _distress_answer(question, region)
-    if _STRONG_OUTAGE.search(folded) or (_WEAK_OUTAGE.search(folded) and not _NOT_OUTAGE.search(folded)):
-        return _outage_answer(question, region, walloon_operator)
     signing = bool(_CONTRACT_SIGN.search(folded))
     if _WINTER.search(folded) and not signing:
         return _winter_answer(question, region)
@@ -537,7 +586,8 @@ def answer_safety_question(question: str, history: list[dict[str, Any]] | None =
         return _operator_answer(question, region, walloon_operator)
     if _DISCONNECT.search(folded) and not signing:
         return _winter_answer(question, region, disconnect=True)
-    if _PAYMENT_PLAN.search(folded):
+    plan = _PAYMENT_PLAN.search(folded)
+    if plan and not _DENIED.search(folded[max(0, plan.start() - 20):plan.start()]):
         return _payment_plan_answer(question)
     if _HELP_REQUEST.search(folded) and money_trouble:
         return _payment_plan_answer(question)
