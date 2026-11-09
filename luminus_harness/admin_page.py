@@ -21,6 +21,12 @@ _PATHS = {
     "contract-advice": "Contractadvies",
     "contract-check": "Contractcheck",
     "fuel-prices": "Brandstofprijzen",
+    "safety-emergency": "Veiligheid: storing",
+    "safety-operator": "Veiligheid: netbeheerder",
+    "safety-social-tariff": "Veiligheid: sociaal tarief",
+    "safety-winter": "Veiligheid: afsluiten",
+    "safety-payment-plan": "Veiligheid: afbetalingsplan",
+    "safety-distress": "Veiligheid: hulp",
 }
 _ROUTES = {
     "price": "Prijs",

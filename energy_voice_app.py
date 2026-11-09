@@ -75,6 +75,7 @@ from luminus_harness.feedback import FeedbackError, build_record, sign_feedback,
 from luminus_harness.conversation_log import build_log_record, load_recent, store_log_record
 from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness import expert_judge
+from luminus_harness.safety import answer_safety_question
 from luminus_harness.jev import route_question
 from luminus_harness.steps import answer_steps
 from luminus_harness import langfuse_trace
@@ -1056,6 +1057,12 @@ async def _answer(body: AnswerRequest) -> dict[str, Any]:
 
 
 async def _public_answer(asked: str, history: list[dict[str, Any]]) -> dict[str, Any]:
+    # Outages, the network operator, the social tariff, winter disconnection, payment plans and a
+    # scared visitor: answered in code from checked facts, for the visitor's own region, before any
+    # model or price list can pick another region's rules or numbers.
+    safety = answer_safety_question(asked, history)
+    if safety is not None:
+        return _with_petra_speech(safety)
     question = await standalone_question(asked, history)
     # "Wanneer is stroom het goedkoopst?", "is 3500 kWh veel?", "Luminus of Engie?": a direct answer, never the price list.
     specific = await answer_specific_price_question(question)
