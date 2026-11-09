@@ -746,6 +746,7 @@ _petra_token_secret = secrets.token_bytes(32)
 _petra_rate_limiter = SlidingWindowRateLimiter(requests=3, window_seconds=60, max_clients=10_000)
 _transcribe_rate_limiter = SlidingWindowRateLimiter(requests=6, window_seconds=60, max_clients=10_000)
 _realtime_rate_limiter = SlidingWindowRateLimiter(requests=3, window_seconds=300, max_clients=10_000)
+_realtime_speech_rate_limiter = SlidingWindowRateLimiter(requests=30, window_seconds=60, max_clients=10_000)
 
 
 def _sign_public_speech(answer: str) -> str | None:
@@ -1201,7 +1202,7 @@ async def api_petra_speech(body: PetraSpeechRequest, request: Request) -> Respon
 
 @api_app.post("/api/realtime-session")
 async def api_realtime_session(body: RealtimeSessionRequest, request: Request) -> dict[str, Any]:
-    """A short-lived key for one real-time voice conversation; Realtime is only Karen's ears and voice."""
+    """A short-lived key for one real-time voice conversation; OpenAI only transcribes there."""
     if not realtime_voice.enabled():
         raise HTTPException(status_code=404, detail="Not Found")
     _allow_api_request(request)
@@ -1211,20 +1212,52 @@ async def api_realtime_session(body: RealtimeSessionRequest, request: Request) -
     if not realtime_voice.take_daily_slot():
         raise HTTPException(status_code=503, detail="Spraakgesprekken zijn voor vandaag op. Typ gerust je vraag.")
     try:
-        return await asyncio.wait_for(realtime_voice.create_client_secret(body.language), timeout=15)
+        session = await asyncio.wait_for(realtime_voice.create_client_secret(body.language), timeout=15)
     except Exception as error:
         raise HTTPException(status_code=503, detail="Spraakgesprek is nu niet beschikbaar.") from error
+    return {
+        **session,
+        "greeting_token": _sign_public_speech(realtime_voice.GREETINGS[body.language]),
+        "wait_token": _sign_public_speech(realtime_voice.WAIT_LINES[body.language]),
+    }
 
 
 @api_app.post("/api/realtime-answer")
 async def api_realtime_answer(body: AnswerRequest, request: Request) -> dict[str, Any]:
-    """Karen's normal answer (safety layer, routes, sources) plus the exact text the voice reads aloud."""
+    """Karen's normal answer (safety layer, routes, sources) plus a token for exactly the text that is spoken."""
     if not realtime_voice.enabled():
         raise HTTPException(status_code=404, detail="Not Found")
     _allow_api_request(request)
     reply = await _rated_answer(body)
     spoken = realtime_voice.spoken_text(str(reply.get("answer", "")))
-    return {**reply, "spoken": spoken, "speak": realtime_voice.read_aloud(spoken)}
+    return {**reply, "spoken": spoken, "speech_token": _sign_public_speech(spoken)}
+
+
+@api_app.get("/api/realtime-speech")
+async def api_realtime_speech(request: Request, token: str, language: str = "nl") -> StreamingResponse:
+    """Read a signed text aloud as streamed MP3; only text Karen signed can be spoken."""
+    if not realtime_voice.enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    client_key = request.client.host if request.client else "unknown"
+    if not _realtime_speech_rate_limiter.allow(client_key, time.monotonic()):
+        raise HTTPException(status_code=429, detail="Te veel spraak kort na elkaar.")
+    text = _public_speech_from_token(token)
+    language = language if language in realtime_voice.LANGUAGES else "nl"
+    chunks = realtime_voice.stream_speech(text, language)
+    try:
+        first = await asyncio.to_thread(next, chunks, b"")
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="De stem is nu niet beschikbaar.") from error
+
+    async def body_stream():
+        yield first
+        while True:
+            chunk = await asyncio.to_thread(next, chunks, b"")
+            if not chunk:
+                return
+            yield chunk
+
+    return StreamingResponse(body_stream(), media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
 
 
 REALTIME_PAGE = REPO_ROOT / "luminus_harness" / "realtime_page.html"

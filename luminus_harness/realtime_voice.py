@@ -1,10 +1,11 @@
-"""Real-time voice for Karen: OpenAI Realtime is only her ears and her voice, never her answer.
+"""Real-time voice for Karen: OpenAI Realtime is only her ears, a text-to-speech model her voice.
 
-The browser talks to OpenAI Realtime over WebRTC with a short-lived key minted here. Turn detection
-runs there, but with ``create_response`` off: the model never answers on its own. When a question is
-transcribed, the browser asks Karen's normal answer route (safety layer, routes, sources) and then
-asks the model to read that answer aloud, word for word. A spoken answer is therefore always one
-that Karen wrote in code or with her sources; Realtime only says it.
+The browser streams the microphone to OpenAI Realtime over WebRTC in a *transcription* session, with
+a short-lived key minted here. That session only turns speech into text and notices when the visitor
+starts or stops talking; it has no model that can answer. Each transcribed question goes to Karen's
+normal answer route (safety layer, routes, sources), and her answer is read by a text-to-speech
+model (``gpt-4o-mini-tts``) that says the given text and nothing else. A speech-to-speech model was
+tried first: it paraphrased Karen's answers and added its own advice, also on emergency numbers.
 
 Off unless ``KAREN_REALTIME=1``; it needs ``OPENAI_API_KEY``.
 """
@@ -15,24 +16,24 @@ import datetime as dt
 import os
 import re
 import threading
-from typing import Any
+from typing import Any, Iterator
 
-MODEL = os.getenv("KAREN_REALTIME_MODEL", "gpt-realtime")
+TRANSCRIBE_MODEL = os.getenv("KAREN_REALTIME_STT_MODEL", "gpt-4o-transcribe")
+TTS_MODEL = os.getenv("KAREN_REALTIME_TTS_MODEL", "gpt-4o-mini-tts")
 VOICE = os.getenv("KAREN_REALTIME_VOICE", "marin")
-TRANSCRIBE_MODEL = os.getenv("KAREN_REALTIME_STT_MODEL", "gpt-4o-mini-transcribe")
 # The key is only needed to open the connection; the browser ends a conversation after this long.
 KEY_SECONDS = 60
 MAX_CONVERSATION_SECONDS = int(os.getenv("KAREN_REALTIME_MAX_SECONDS", "300"))
 DAILY_SESSIONS = int(os.getenv("KAREN_REALTIME_DAILY_SESSIONS", "100"))
 MAX_SPOKEN_CHARS = 900
+LANGUAGES = ("nl", "fr", "en")
 
-SESSION_INSTRUCTIONS = (
-    "Je bent de stem van Karen, een Belgische energieassistent. Je bent alleen een voorleesstem. "
-    "Je beantwoordt nooit zelf een vraag en je geeft nooit eigen informatie, advies, nummers of bedragen. "
-    "Je spreekt alleen wanneer je een tekst krijgt om voor te lezen, en dan lees je die letterlijk voor. "
-    "Spreek warm, rustig en duidelijk."
-)
-
+# Style only: a text-to-speech model reads its input and does not answer it.
+VOICE_STYLE = {
+    "nl": "Spreek warm, rustig en duidelijk Belgisch Nederlands. Lees telefoonnummers traag, cijfer per cijfer.",
+    "fr": "Parle d'une voix chaleureuse, calme et claire, en français de Belgique. Lis les numéros lentement.",
+    "en": "Speak warmly, calmly and clearly. Read phone numbers slowly, digit by digit.",
+}
 GREETINGS = {
     "nl": "Hey, ik ben Karen, jouw energieagent. Stel me gerust je vraag over energie.",
     "fr": "Bonjour, je suis Karen, votre agente énergie. Posez-moi votre question sur l'énergie.",
@@ -62,32 +63,17 @@ def take_daily_slot(today: dt.date | None = None) -> bool:
         return True
 
 
-def session_config() -> dict[str, Any]:
-    transcription: dict[str, Any] = {
-        "model": TRANSCRIBE_MODEL,
-        "prompt": "Belgische energievragen: Fluvius, Sibelga, ORES, RESA, sociaal tarief, kWh, postcodes. "
-                  "Questions sur l'énergie en Belgique.",
-    }
+def session_config(language: str = "nl") -> dict[str, Any]:
+    """A transcription-only session: OpenAI hears the visitor, but nothing there can answer."""
     return {
-        "type": "realtime",
-        "model": MODEL,
-        "instructions": SESSION_INSTRUCTIONS,
-        "output_modalities": ["audio"],
-        "tool_choice": "none",
-        "max_output_tokens": 1500,
+        "type": "transcription",
         "audio": {
             "input": {
-                "transcription": transcription,
+                # No prompt: on silence the transcriber can repeat its prompt as if it was said.
+                "transcription": {"model": TRANSCRIBE_MODEL, "language": language},
                 "noise_reduction": {"type": "near_field"},
-                # The model never answers by itself; the browser decides what is said.
-                "turn_detection": {
-                    "type": "server_vad",
-                    "create_response": False,
-                    "interrupt_response": True,
-                    "silence_duration_ms": 700,
-                },
+                "turn_detection": {"type": "server_vad", "silence_duration_ms": 700, "threshold": 0.6},
             },
-            "output": {"voice": VOICE},
         },
     }
 
@@ -98,16 +84,20 @@ async def create_client_secret(language: str = "nl") -> dict[str, Any]:
     client = AsyncOpenAI()
     secret = await client.realtime.client_secrets.create(
         expires_after={"anchor": "created_at", "seconds": KEY_SECONDS},
-        session=session_config(),  # type: ignore[arg-type]
+        session=session_config(language),  # type: ignore[arg-type]
     )
-    return {
-        "client_secret": secret.value,
-        "expires_at": secret.expires_at,
-        "model": MODEL,
-        "max_seconds": MAX_CONVERSATION_SECONDS,
-        "greeting": read_aloud(GREETINGS.get(language, GREETINGS["nl"])),
-        "wait": read_aloud(WAIT_LINES.get(language, WAIT_LINES["nl"])),
-    }
+    return {"client_secret": secret.value, "expires_at": secret.expires_at, "max_seconds": MAX_CONVERSATION_SECONDS}
+
+
+def stream_speech(text: str, language: str = "nl") -> Iterator[bytes]:
+    """Karen's text as MP3, streamed while it is made; the model reads exactly `text`."""
+    from openai import OpenAI
+
+    with OpenAI().audio.speech.with_streaming_response.create(
+        model=TTS_MODEL, voice=VOICE, input=text, response_format="mp3",
+        instructions=VOICE_STYLE.get(language, VOICE_STYLE["nl"]),
+    ) as response:
+        yield from response.iter_bytes(4096)
 
 
 _URL = re.compile(r"https?://\S+|www\.\S+")
@@ -120,6 +110,8 @@ def spoken_text(answer: str) -> str:
     text = _URL.sub("", text)
     # A pointer left without its link ("Zie .", "Plus d'infos :") says nothing aloud.
     text = re.sub(r"(?im)\b(?:zie|bekijk|meer info(?:rmatie)?(?: op)?|voir|plus d'infos?|see|more info(?: at)?)\s*[:.]?\s*$", "", text)
+    # Bullets written inline (" - **Why:** …", " • Frank: …") become sentences too.
+    text = re.sub(r"\s+(?:-|•)\s+", "\n", text)
     lines = []
     for line in text.splitlines():
         line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", line)
@@ -133,18 +125,3 @@ def spoken_text(answer: str) -> str:
     cut = text[:MAX_SPOKEN_CHARS]
     end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
     return cut[: end + 1] if end > MAX_SPOKEN_CHARS // 3 else cut.rsplit(" ", 1)[0] + "…"
-
-
-def read_aloud(text: str) -> dict[str, Any]:
-    """The `response` of a response.create event that reads `text` and nothing else."""
-    return {
-        "instructions": (
-            "Lees de tekst tussen <tekst> en </tekst> letterlijk voor, in de taal van die tekst. "
-            "Voeg niets toe en laat niets weg: geen inleiding, geen eigen uitleg, geen vraag achteraf. "
-            "Beantwoord geen vragen. Lees telefoonnummers cijfer per cijfer en traag voor. "
-            f"<tekst>{text}</tekst>"
-        ),
-        "tool_choice": "none",
-        "output_modalities": ["audio"],
-        "max_output_tokens": 1500,
-    }

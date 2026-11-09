@@ -27,7 +27,7 @@
 <body>
 <main>
   <h1>Karen — spraakgesprek</h1>
-  <p class="lead">Praat gewoon; je kunt Karen onderbreken. Elk antwoord komt uit Karens eigen route (veiligheidslaag, bronnen); de stem leest het alleen voor. Gebruik liefst een koptelefoon.</p>
+  <p class="lead">Praat gewoon; je kunt Karen onderbreken. Elk antwoord komt uit Karens eigen route (veiligheidslaag, bronnen); een voorleesstem zegt precies die tekst. Gebruik liefst een koptelefoon.</p>
   <div class="bar">
     <select id="lang" aria-label="Taal"><option value="nl">Nederlands</option><option value="fr">Français</option><option value="en">English</option></select>
     <button id="start">Start gesprek</button>
@@ -40,8 +40,9 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const statusEl = $("status"), logEl = $("log");
-  let pc = null, dc = null, mic = null, audioEl = null, stopTimer = null;
-  let active = 0, idleWaiters = [], generation = 0, pending = [], meantById = {}, history = [], waitSpeak = null;
+  const voice = new Audio();
+  let pc = null, dc = null, mic = null, stopTimer = null, session = null;
+  let generation = 0, history = [], lastSpoken = "", language = "nl";
 
   const setStatus = (text) => { statusEl.textContent = text; };
   function addTurn(kind, text, meta) {
@@ -51,27 +52,30 @@
     if (meta) { const m = document.createElement("div"); m.className = "meta"; m.innerHTML = meta; div.appendChild(m); }
     logEl.appendChild(div);
     div.scrollIntoView({ block: "end", behavior: "smooth" });
-    return div;
   }
-  const send = (event) => { if (dc && dc.readyState === "open") dc.send(JSON.stringify(event)); };
-  const whenIdle = () => active === 0 ? Promise.resolve() : new Promise((r) => idleWaiters.push(r));
 
-  async function speak(response, text, outOfBand) {
-    await whenIdle();
-    pending.push(text || null);
-    send({ type: "response.create", response: outOfBand ? { ...response, conversation: "none", input: [] } : response });
+  // Karen's voice: a signed text read by the text-to-speech model, streamed as MP3.
+  function say(token) {
+    if (!token) return;
+    voice.pause();
+    voice.volume = 1;
+    voice.src = `/api/realtime-speech?language=${language}&token=${encodeURIComponent(token)}`;
+    voice.play().catch((e) => console.warn("[karen-realtime] play", e));
   }
+  voice.onplaying = () => setStatus("Karen spreekt…");
+  voice.onended = () => setStatus("Ik luister…");
+  const speaking = () => !voice.paused && !voice.ended;
 
   const words = (t) => (t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").match(/[a-z0-9]+/g) || [];
-  function overlap(said, meant) {
-    const a = words(said), b = new Set(words(meant));
-    if (!a.length || !b.size) return 1;
+  function overlap(heard, said) {
+    const a = words(heard), b = new Set(words(said));
+    if (!a.length || !b.size) return 0;
     return a.filter((w) => b.has(w)).length / a.length;
   }
 
   async function ask(question, myGeneration) {
     setStatus("Karen zoekt het antwoord…");
-    const waitTimer = setTimeout(() => { if (myGeneration === generation && active === 0) speak(waitSpeak, null, true); }, 1500);
+    const waitTimer = setTimeout(() => { if (myGeneration === generation && !speaking()) say(session.wait_token); }, 1500);
     let reply;
     try {
       const res = await fetch("/api/realtime-answer", {
@@ -90,68 +94,52 @@
     history.push({ question, answer: String(reply.answer || "").slice(0, 800) });
     const sources = (reply.sources || []).slice(0, 3).map((s) => /^https?:\/\//.test(s.url || "") ? `<a href="${encodeURI(s.url)}" target="_blank" rel="noopener">${(s.title || s.url).replace(/</g, "&lt;")}</a>` : "").filter(Boolean).join(" · ");
     addTurn("karen", reply.answer, `route: ${reply.processing || "?"}${sources ? " · " + sources : ""}`);
-    setStatus("Karen spreekt…");
-    await speak(reply.speak, reply.spoken, false);
+    lastSpoken = reply.spoken || "";
+    say(reply.speech_token);
   }
 
   function onEvent(event) {
     switch (event.type) {
       case "input_audio_buffer.speech_started":
+        // Someone talks: Karen goes quiet until we know it was a question and not her own echo.
+        if (speaking()) voice.volume = 0.15;
         setStatus("Ik luister…");
         break;
       case "conversation.item.input_audio_transcription.completed": {
         const question = (event.transcript || "").trim();
-        if (question.length < 2) { setStatus("Ik luister…"); break; }
+        const echo = lastSpoken && speaking() && overlap(question, lastSpoken) > 0.6;
+        if (question.length < 3 || echo) { voice.volume = 1; break; }
+        voice.pause();
         addTurn("user", question);
         generation += 1;
         ask(question, generation);
         break;
       }
-      case "response.created":
-        active += 1;
-        meantById[event.response?.id] = pending.shift() ?? null;
-        break;
-      case "response.done":
-        active = Math.max(0, active - 1);
-        if (active === 0) { idleWaiters.splice(0).forEach((r) => r()); setStatus("Ik luister…"); }
-        break;
-      case "response.output_audio_transcript.done": {
-        const meant = meantById[event.response_id];
-        delete meantById[event.response_id];
-        if (meant) {
-          const score = overlap(event.transcript, meant);
-          if (score < 0.85) addTurn("karen", "Gesproken: " + event.transcript, `<span class="warn">⚠ de stem week af van Karens tekst (${Math.round(score * 100)}% overlap)</span>`);
-          console.info("[karen-realtime] spoken overlap", score.toFixed(2));
-        }
-        break;
-      }
       case "error":
         console.warn("[karen-realtime]", event.error);
-        if (!/active response|no active response/i.test(event.error?.message || "")) setStatus("Fout: " + (event.error?.message || "onbekend"));
+        setStatus("Fout: " + (event.error?.message || "onbekend"));
         break;
     }
   }
 
   async function start() {
     $("start").disabled = true;
+    language = $("lang").value;
     setStatus("Verbinden…");
     try {
       const res = await fetch("/api/realtime-session", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ language: $("lang").value }),
+        body: JSON.stringify({ language }),
       });
-      const session = await res.json();
+      session = await res.json();
       if (!res.ok) throw new Error(session.detail || res.status);
-      waitSpeak = session.wait;
 
       pc = new RTCPeerConnection();
-      audioEl = new Audio(); audioEl.autoplay = true;
-      pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; };
       mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       pc.addTrack(mic.getTracks()[0], mic);
       dc = pc.createDataChannel("oai-events");
       dc.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (e) { console.warn(e); } };
-      dc.onopen = () => { setStatus("Ik luister…"); speak(session.greeting, null, false); };
+      dc.onopen = () => { setStatus("Ik luister…"); say(session.greeting_token); };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -159,7 +147,7 @@
         method: "POST", body: offer.sdp,
         headers: { Authorization: "Bearer " + session.client_secret, "Content-Type": "application/sdp" },
       });
-      if (!sdp.ok) throw new Error("OpenAI " + sdp.status);
+      if (!sdp.ok) throw new Error("OpenAI " + sdp.status + " " + (await sdp.text()).slice(0, 200));
       await pc.setRemoteDescription({ type: "answer", sdp: await sdp.text() });
       stopTimer = setTimeout(() => { stop(); setStatus("Het gesprek stopte na " + Math.round(session.max_seconds / 60) + " minuten. Start opnieuw als je nog iets wilt vragen."); }, session.max_seconds * 1000);
       $("stop").disabled = false;
@@ -172,10 +160,11 @@
   function stop() {
     clearTimeout(stopTimer);
     generation += 1;
+    voice.pause();
     try { dc && dc.close(); } catch (e) {}
     try { pc && pc.close(); } catch (e) {}
     mic && mic.getTracks().forEach((t) => t.stop());
-    pc = dc = mic = null; active = 0; pending = []; meantById = {}; idleWaiters.splice(0).forEach((r) => r());
+    pc = dc = mic = null;
     $("start").disabled = false; $("stop").disabled = true;
     setStatus("Gestopt.");
   }
