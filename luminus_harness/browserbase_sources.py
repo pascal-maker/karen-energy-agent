@@ -335,6 +335,12 @@ _search_paused_until = 0.0
 # Search calls one question may use (a scope with many sites costs several calls); None = no limit.
 SEARCH_CALLS_PER_QUESTION = int(os.getenv("KAREN_SEARCH_CALLS_PER_QUESTION", "5"))
 _search_budget: ContextVar[list[int] | None] = ContextVar("search_budget", default=None)
+# Search calls per day for the whole Space (0 = no limit). Counted in memory: a restart starts at zero.
+SEARCH_DAILY_CAP = int(os.getenv("KAREN_SEARCH_DAILY_CAP", "100"))
+SEARCH_DAILY_CAP_MESSAGE = "Daglimiet voor zoeken bereikt."
+_search_day = ""
+_searches_today = 0
+_search_count_lock = threading.Lock()
 
 
 @contextmanager
@@ -349,12 +355,20 @@ def search_budget(calls: int | None = None) -> Iterator[None]:
 
 def _take_search_call() -> str | None:
     """None when a search call may go out; otherwise why not."""
+    global _search_day, _searches_today
     if time.monotonic() < _search_paused_until:
         return SEARCH_QUOTA_MESSAGE
     budget = _search_budget.get()
+    if budget is not None and budget[0] <= 0:
+        return "Zoeklimiet voor deze vraag bereikt."
+    with _search_count_lock:
+        today = time.strftime("%Y-%m-%d")
+        if _search_day != today:
+            _search_day, _searches_today = today, 0
+        if SEARCH_DAILY_CAP > 0 and _searches_today >= SEARCH_DAILY_CAP:
+            return SEARCH_DAILY_CAP_MESSAGE
+        _searches_today += 1
     if budget is not None:
-        if budget[0] <= 0:
-            return "Zoeklimiet voor deze vraag bereikt."
         budget[0] -= 1
     return None
 _MIN_QUESTION_CHARS = 80

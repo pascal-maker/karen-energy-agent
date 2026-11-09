@@ -47,3 +47,18 @@ def test_one_question_has_a_search_budget(monkeypatch):
     assert len(made) == 3
     bb._search("kilowattuur", "consumer")  # outside a question: no limit
     assert len(made) == 4
+
+
+def test_the_daily_cap_stops_searching_for_the_day(monkeypatch):
+    monkeypatch.setenv("BROWSERBASE_API_KEY", "bb_test")
+    monkeypatch.setattr(bb, "_search_paused_until", 0.0)
+    monkeypatch.setattr(bb, "SEARCH_DAILY_CAP", 2)
+    monkeypatch.setattr(bb, "_search_day", "")
+    made = []
+    monkeypatch.setattr(bb, "_search_once", lambda query, key: made.append(query) or [])
+    for _ in range(3):
+        result = bb._search("kilowattuur", "consumer")
+    assert len(made) == 2 and result == bb.SEARCH_DAILY_CAP_MESSAGE
+    monkeypatch.setattr(bb, "_search_day", "2000-01-01")  # a new day
+    bb._search("kilowattuur", "consumer")
+    assert len(made) == 3
