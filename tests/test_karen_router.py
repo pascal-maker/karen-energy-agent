@@ -18,6 +18,17 @@ from luminus_harness import market_prices
 from tests.test_karen_market_prices import _cards, api  # noqa: F401  (api is a fixture)
 
 
+@pytest.fixture(autouse=True)
+def no_model_rewrite(monkeypatch):
+    """The follow-up rewrite calls a model; these tests route the visitor's question as asked."""
+    import energy_voice_app
+
+    async def as_asked(question, history):
+        return question
+
+    monkeypatch.setattr(energy_voice_app, "standalone_question", as_asked)
+
+
 @pytest.mark.parametrize("question", [
     # where / how long before (brussels-fr-2/2), "I didn't ask for prices" (brussels-fr-2/3)
     "Ok merci. Le document de reprise, je le trouve où ? Et je dois prévenir Engie combien de temps avant ?",
