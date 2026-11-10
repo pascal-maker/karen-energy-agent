@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Karen spraakgesprek</title>
+<style>
+  :root { --bg:#f7f6f2; --card:#fff; --ink:#1d1d1b; --muted:#6b6a64; --line:#e3e1d9; --accent:#1f6f5c; --warn:#a4501a; --user:#e8f1ee; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151514; --card:#1f1f1d; --ink:#ecebe6; --muted:#a09f98; --line:#33322f; --accent:#5fbfa5; --warn:#e59b62; --user:#203430; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.4rem; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 20px; }
+  .bar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+  button { font:inherit; border:0; border-radius:999px; padding:10px 20px; background:var(--accent); color:#fff; cursor:pointer; }
+  button[disabled] { opacity:.5; cursor:default; }
+  select { font:inherit; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); }
+  #status { color:var(--muted); }
+  #log { display:flex; flex-direction:column; gap:10px; }
+  .turn { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; }
+  .turn.user { background:var(--user); align-self:flex-end; max-width:85%; }
+  .meta { font-size:.8rem; color:var(--muted); margin-top:4px; }
+  .warn { color:var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Karen — spraakgesprek</h1>
+  <p class="lead">Praat gewoon; je kunt Karen onderbreken. Elk antwoord komt uit Karens eigen route (veiligheidslaag, bronnen); een voorleesstem zegt precies die tekst. Gebruik liefst een koptelefoon.</p>
+  <div class="bar">
+    <select id="lang" aria-label="Taal"><option value="nl">Nederlands</option><option value="fr">Français</option><option value="en">English</option></select>
+    <select id="mode" aria-label="Manier van praten"><option value="tap">Tik om te praten</option><option value="open">Open microfoon</option></select>
+    <button id="start">Start gesprek</button>
+    <button id="talk" hidden>🎙 Tik en spreek</button>
+    <button id="stop" disabled>Stop</button>
+    <span id="status">Klaar.</span>
+  </div>
+  <div id="log" aria-live="polite"></div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $("status"), logEl = $("log");
+  const voice = new Audio();
+  let pc = null, dc = null, mic = null, stopTimer = null, session = null;
+  let generation = 0, history = [], lastSpoken = "", language = "nl", mode = "tap", listening = false;
+  const talkButton = $("talk");
+
+  // Tap mode: the microphone only sends sound after a tap, until the question is transcribed.
+  function listen(on) {
+    listening = on;
+    if (mic) mic.getTracks().forEach((t) => { t.enabled = mode === "open" || on; });
+    talkButton.textContent = on ? "🎙 Ik luister…" : "🎙 Tik en spreek";
+    talkButton.disabled = on;
+  }
+  let listenTimer = null;
+  talkButton.onclick = () => {
+    voice.pause(); setStatus("Ik luister…"); listen(true);
+    clearTimeout(listenTimer);
+    // Nothing heard: stop listening again after 15 seconds.
+    listenTimer = setTimeout(() => { if (listening) { listen(false); setStatus("Ik hoorde niets. Tik opnieuw om te praten."); } }, 15000);
+  };
+
+  // In open-microphone mode, one loose word is usually noise or someone else in the room.
+  const SHORT_OK = /^(ja|nee|neen|oke?|okay|oui|non|yes|no|merci|bedankt|dankjewel|thanks|stop|gas|stroom|elektriciteit|électricité|electricity)$/i;
+  function worthAnswering(text) {
+    const words = text.split(/\s+/).filter(Boolean);
+    if (mode === "tap") return text.length >= 2;
+    return words.length >= 2 || /\d/.test(text) || SHORT_OK.test(text.replace(/[.!?,]/g, ""));
+  }
+
+  const setStatus = (text) => { statusEl.textContent = text; };
+  function addTurn(kind, text, meta) {
+    const div = document.createElement("div");
+    div.className = "turn " + kind;
+    div.textContent = text;
+    if (meta) { const m = document.createElement("div"); m.className = "meta"; m.innerHTML = meta; div.appendChild(m); }
+    logEl.appendChild(div);
+    div.scrollIntoView({ block: "end", behavior: "smooth" });
+  }
+
+  // Karen's voice: a signed text read by the text-to-speech model, streamed as MP3.
+  function say(token) {
+    if (!token) return;
+    voice.pause();
+    voice.volume = 1;
+    voice.src = `/api/realtime-speech?language=${language}&session=${encodeURIComponent(session.session)}&token=${encodeURIComponent(token)}`;
+    voice.play().catch((e) => console.warn("[karen-realtime] play", e));
+  }
+  voice.onplaying = () => setStatus("Karen spreekt…");
+  voice.onended = () => setStatus(mode === "tap" ? "Tik op de knop en stel je vraag." : "Ik luister…");
+  const speaking = () => !voice.paused && !voice.ended;
+
+  const words = (t) => (t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").match(/[a-z0-9]+/g) || [];
+  function overlap(heard, said) {
+    const a = words(heard), b = new Set(words(said));
+    if (!a.length || !b.size) return 0;
+    return a.filter((w) => b.has(w)).length / a.length;
+  }
+
+  async function ask(question, myGeneration) {
+    setStatus("Karen zoekt het antwoord…");
+    const waitTimer = setTimeout(() => { if (myGeneration === generation && !speaking()) say(session.wait_token); }, 1500);
+    let reply;
+    try {
+      const res = await fetch("/api/realtime-answer", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Karen-Voice-Session": session.session },
+        body: JSON.stringify({ question, history: history.slice(-4) }),
+      });
+      reply = await res.json();
+      if (!res.ok) throw new Error(reply.detail || res.status);
+    } catch (error) {
+      clearTimeout(waitTimer);
+      if (myGeneration === generation) addTurn("karen", "Er ging iets mis: " + error.message);
+      return;
+    }
+    clearTimeout(waitTimer);
+    if (myGeneration !== generation) return; // the visitor already asked something else
+    history.push({ question, answer: String(reply.answer || "").slice(0, 800) });
+    const sources = (reply.sources || []).slice(0, 3).map((s) => /^https?:\/\//.test(s.url || "") ? `<a href="${encodeURI(s.url)}" target="_blank" rel="noopener">${(s.title || s.url).replace(/</g, "&lt;")}</a>` : "").filter(Boolean).join(" · ");
+    addTurn("karen", reply.answer, `route: ${reply.processing || "?"}${sources ? " · " + sources : ""}`);
+    lastSpoken = reply.spoken || "";
+    say(reply.speech_token);
+  }
+
+  function onEvent(event) {
+    switch (event.type) {
+      case "input_audio_buffer.speech_started":
+        // Someone talks: Karen goes quiet until we know it was a question and not her own echo.
+        if (speaking()) voice.volume = 0.15;
+        setStatus("Ik luister…");
+        break;
+      case "conversation.item.input_audio_transcription.completed": {
+        const question = (event.transcript || "").trim();
+        const echo = lastSpoken && speaking() && overlap(question, lastSpoken) > 0.6;
+        if (mode === "tap") listen(false);
+        if (!worthAnswering(question) || echo) { voice.volume = 1; break; }
+        voice.pause();
+        addTurn("user", question);
+        generation += 1;
+        ask(question, generation);
+        break;
+      }
+      case "error":
+        console.warn("[karen-realtime]", event.error);
+        setStatus("Fout: " + (event.error?.message || "onbekend"));
+        break;
+    }
+  }
+
+  async function start() {
+    $("start").disabled = true;
+    language = $("lang").value;
+    mode = $("mode").value;
+    setStatus("Verbinden…");
+    try {
+      pc = new RTCPeerConnection();
+      mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      pc.addTrack(mic.getTracks()[0], mic);
+      listen(false);
+      talkButton.hidden = mode !== "tap";
+      dc = pc.createDataChannel("oai-events");
+      dc.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (e) { console.warn(e); } };
+      dc.onopen = () => { setStatus(mode === "tap" ? "Tik op de knop en stel je vraag." : "Ik luister…"); say(session.greeting_token); };
+
+      // The offer goes to Karen's server, which opens the call at OpenAI: no OpenAI key in the browser.
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const res = await fetch("/api/realtime-call", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sdp: offer.sdp, language }),
+      });
+      session = await res.json();
+      if (!res.ok) throw new Error(session.detail || res.status);
+      await pc.setRemoteDescription({ type: "answer", sdp: session.sdp });
+      stopTimer = setTimeout(() => { stop(); setStatus("Het gesprek stopte na " + Math.round(session.max_seconds / 60) + " minuten. Start opnieuw als je nog iets wilt vragen."); }, session.max_seconds * 1000);
+      $("stop").disabled = false;
+    } catch (error) {
+      stop();
+      setStatus("Kon niet starten: " + error.message);
+    }
+  }
+
+  function stop() {
+    clearTimeout(stopTimer);
+    clearTimeout(listenTimer);
+    listening = false;
+    generation += 1;
+    voice.pause();
+    if (session && session.session) {
+      fetch("/api/realtime-hangup", { method: "POST", keepalive: true, headers: { "X-Karen-Voice-Session": session.session } }).catch(() => {});
+      session.session = "";
+    }
+    try { dc && dc.close(); } catch (e) {}
+    try { pc && pc.close(); } catch (e) {}
+    mic && mic.getTracks().forEach((t) => t.stop());
+    pc = dc = mic = null;
+    talkButton.hidden = true;
+    $("start").disabled = false; $("stop").disabled = true;
+    setStatus("Gestopt.");
+  }
+
+  $("start").onclick = start;
+  $("stop").onclick = stop;
+})();
+</script>
+</body>
+</html>

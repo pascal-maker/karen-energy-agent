@@ -56,6 +56,8 @@ def main() -> None:
         "luminus_harness/petra_tts.py": repo_root / "luminus_harness" / "petra_tts.py",
         "luminus_harness/transcribe.py": repo_root / "luminus_harness" / "transcribe.py",
         "luminus_harness/voice_agent.py": repo_root / "luminus_harness" / "voice_agent.py",
+        "luminus_harness/realtime_voice.py": repo_root / "luminus_harness" / "realtime_voice.py",
+        "luminus_harness/realtime_page.html": repo_root / "luminus_harness" / "realtime_page.html",
     }
     component = repo_root / "build" / "karen-component.js"
     if not component.is_file():
