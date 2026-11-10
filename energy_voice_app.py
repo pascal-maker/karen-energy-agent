@@ -1214,19 +1214,24 @@ async def api_realtime_call(body: RealtimeCallRequest, request: Request) -> dict
     client_key = request.client.host if request.client else "unknown"
     if not _realtime_rate_limiter.allow(client_key, time.monotonic()):
         raise HTTPException(status_code=429, detail="Te veel spraakgesprekken kort na elkaar.")
-    if not realtime_voice.room_for_a_call():
+    # A place and a daily slot are taken before OpenAI is asked, so two requests at once can't share one.
+    full = realtime_voice.reserve_call()
+    if full == "busy":
         raise HTTPException(status_code=503, detail="Er lopen nu te veel spraakgesprekken. Probeer het zo meteen opnieuw.")
-    if not realtime_voice.take_daily_slot():
+    if full:
         raise HTTPException(status_code=503, detail="Spraakgesprekken zijn voor vandaag op. Typ gerust je vraag.")
     try:
         answer_sdp, call_id = await asyncio.wait_for(realtime_voice.open_call(body.sdp, body.language), timeout=20)
-    except Exception as error:
-        realtime_voice.give_back_daily_slot()
+    except BaseException as error:
+        realtime_voice.release_reservation(refused=isinstance(error, realtime_voice.CallRefused))
+        if not isinstance(error, Exception):
+            raise
         raise HTTPException(status_code=503, detail="Spraakgesprek is nu niet beschikbaar.") from error
+    session = realtime_voice.register_call(call_id)
     realtime_voice.hang_up_later(call_id)
     return {
         "sdp": answer_sdp,
-        "session": realtime_voice.register_call(call_id),
+        "session": session,
         "max_seconds": realtime_voice.MAX_CONVERSATION_SECONDS,
         "greeting_token": _sign_public_speech(realtime_voice.GREETINGS[body.language]),
         "wait_token": _sign_public_speech(realtime_voice.WAIT_LINES[body.language]),
@@ -1238,11 +1243,7 @@ async def api_realtime_hangup(request: Request) -> dict[str, bool]:
     """The visitor stopped: end the call at OpenAI now and free its place."""
     if not realtime_voice.enabled():
         raise HTTPException(status_code=404, detail="Not Found")
-    call_id = realtime_voice.end_call(request.headers.get("x-karen-voice-session", ""))
-    if call_id:
-        with suppress(Exception):
-            await asyncio.wait_for(realtime_voice.hang_up(call_id), timeout=10)
-    return {"ended": bool(call_id)}
+    return {"ended": await realtime_voice.hang_up_now(request.headers.get("x-karen-voice-session", ""))}
 
 
 @api_app.post("/api/realtime-answer")

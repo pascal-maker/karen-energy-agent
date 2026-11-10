@@ -18,6 +18,7 @@ import asyncio
 import datetime as dt
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -53,6 +54,8 @@ GREETINGS = {
 }
 WAIT_LINES = {"nl": "Even kijken.", "fr": "Un instant, je regarde.", "en": "One moment, let me check."}
 
+log = logging.getLogger(__name__)
+
 _lock = threading.Lock()
 _day: dt.date | None = None
 _sessions_today = 0
@@ -60,19 +63,6 @@ _sessions_today = 0
 
 def enabled() -> bool:
     return os.getenv("KAREN_REALTIME", "").strip() == "1" and bool(os.getenv("OPENAI_API_KEY", "").strip())
-
-
-def take_daily_slot(today: dt.date | None = None) -> bool:
-    """Count one conversation against the daily cap; False when the cap is reached."""
-    global _day, _sessions_today
-    today = today or dt.date.today()
-    with _lock:
-        if _day != today:
-            _day, _sessions_today = today, 0
-        if _sessions_today >= DAILY_SESSIONS:
-            return False
-        _sessions_today += 1
-        return True
 
 
 def session_config(language: str = "nl") -> dict[str, Any]:
@@ -92,34 +82,55 @@ def session_config(language: str = "nl") -> dict[str, Any]:
 
 # --- calls: opened, counted and ended by this server ---
 
+class CallRefused(RuntimeError):
+    """OpenAI answered and did not open a call, so nothing runs there."""
+
+
+# A call stays in `_calls`, and keeps its place, until OpenAI confirmed that it ended.
 _calls: dict[str, dict[str, Any]] = {}
+_pending = 0
 _hangups: set[asyncio.Task] = set()
+# Calls we could not end at OpenAI after every retry: kept and logged, never silently forgotten.
+unended_calls: list[str] = []
+HANGUP_RETRY_SECONDS = (2, 5, 15, 30, 60, 120, 300, 600)
 
 
-def _open_calls(now: float) -> int:
-    for session, call in list(_calls.items()):
-        if call["ends"] <= now:
-            del _calls[session]
-    return len(_calls)
+def reserve_call(today: dt.date | None = None) -> str:
+    """Take a place and a daily slot for a call that is about to be opened, in one step.
 
-
-def room_for_a_call(now: float | None = None) -> bool:
+    Returns "" when reserved, else "busy" (too many calls right now) or "day" (today's calls are used up).
+    """
+    global _pending, _day, _sessions_today
+    today = today or dt.date.today()
     with _lock:
-        return _open_calls(time.monotonic() if now is None else now) < MAX_OPEN_CALLS
+        if _day != today:
+            _day, _sessions_today = today, 0
+        if len(_calls) + _pending >= MAX_OPEN_CALLS:
+            return "busy"
+        if _sessions_today >= DAILY_SESSIONS:
+            return "day"
+        _pending += 1
+        _sessions_today += 1
+        return ""
 
 
-def give_back_daily_slot() -> None:
-    """A call that OpenAI refused does not count against the day."""
-    global _sessions_today
+def release_reservation(refused: bool) -> None:
+    """The call was not opened. Only a confirmed refusal gives the daily slot back: after a timeout
+    OpenAI may have opened a call anyway, so that one stays counted."""
+    global _pending, _sessions_today
     with _lock:
-        _sessions_today = max(0, _sessions_today - 1)
+        _pending = max(0, _pending - 1)
+        if refused:
+            _sessions_today = max(0, _sessions_today - 1)
 
 
 def register_call(call_id: str, now: float | None = None) -> str:
-    """Remember an opened call; the returned id is what the browser shows to ask and to hear answers."""
+    """Turn the reservation into an open call; the returned id is what the browser shows to ask and to hear answers."""
+    global _pending
     now = time.monotonic() if now is None else now
     session = secrets.token_urlsafe(24)
     with _lock:
+        _pending = max(0, _pending - 1)
         _calls[session] = {"call_id": call_id, "ends": now + MAX_CONVERSATION_SECONDS, "answers": 0}
     return session
 
@@ -142,11 +153,21 @@ def take_answer(session: str, now: float | None = None) -> bool:
         return True
 
 
-def end_call(session: str) -> str | None:
-    """Forget a call the visitor stopped; returns its OpenAI call id so it can be hung up there."""
+def close_call(session: str) -> str | None:
+    """No more questions or speech in this call. It keeps its place until OpenAI confirmed the end."""
     with _lock:
-        call = _calls.pop(session or "", None)
-    return call["call_id"] if call else None
+        call = _calls.get(session or "")
+        if not call:
+            return None
+        call["ends"] = 0.0
+        return call["call_id"]
+
+
+def _forget_call(call_id: str) -> None:
+    with _lock:
+        for session, call in list(_calls.items()):
+            if call["call_id"] == call_id:
+                del _calls[session]
 
 
 async def open_call(offer_sdp: str, language: str = "nl") -> tuple[str, str]:
@@ -157,35 +178,71 @@ async def open_call(offer_sdp: str, language: str = "nl") -> tuple[str, str]:
     files = {"sdp": (None, offer_sdp), "session": (None, json.dumps(session_config(language)))}
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.post(CALLS_URL, headers=headers, files=files)
+    if response.status_code >= 400:
+        raise CallRefused(f"OpenAI Realtime gaf HTTP {response.status_code}.")
     call_id = response.headers.get("location", "").rstrip("/").rsplit("/", 1)[-1]
-    if response.status_code >= 300 or not call_id:
-        raise RuntimeError(f"OpenAI Realtime gaf HTTP {response.status_code}.")
+    if not call_id:
+        raise RuntimeError(f"OpenAI Realtime gaf HTTP {response.status_code} zonder gesprek-id.")
     return response.text, call_id
 
 
 async def hang_up(call_id: str) -> None:
+    """End the call at OpenAI; raises unless OpenAI confirmed (404 means it had already ended)."""
     import httpx
 
     headers = {"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"].strip()}
     async with httpx.AsyncClient(timeout=15) as client:
-        await client.post(f"{CALLS_URL}/{call_id}/hangup", headers=headers)
+        response = await client.post(f"{CALLS_URL}/{call_id}/hangup", headers=headers)
+    if response.status_code != 404 and response.status_code >= 300:
+        raise RuntimeError(f"OpenAI hangup gaf HTTP {response.status_code}.")
+
+
+async def end_call(call_id: str, retries: tuple[float, ...] | None = None) -> bool:
+    """Hang up until OpenAI confirms, then free the call's place. False when every try failed."""
+    for wait in (0, *(HANGUP_RETRY_SECONDS if retries is None else retries)):
+        await asyncio.sleep(wait)
+        try:
+            await hang_up(call_id)
+        except Exception as error:
+            log.warning("Real-time voice: hangup of %s failed (%s); trying again.", call_id, error)
+            continue
+        _forget_call(call_id)
+        return True
+    unended_calls.append(call_id)
+    log.error("Real-time voice: call %s could NOT be ended at OpenAI after every retry.", call_id)
+    _forget_call(call_id)
+    return False
+
+
+def _in_background(work: Any) -> None:
+    task = asyncio.get_running_loop().create_task(work)
+    _hangups.add(task)
+    task.add_done_callback(_hangups.discard)
 
 
 def hang_up_later(call_id: str, seconds: float | None = None) -> None:
     """End the call at OpenAI after the time limit, whatever the browser does."""
     async def end() -> None:
         await asyncio.sleep(MAX_CONVERSATION_SECONDS if seconds is None else seconds)
-        # Hanging up a call that already ended is harmless.
-        for _ in range(3):
-            try:
-                await hang_up(call_id)
-                return
-            except Exception:
-                await asyncio.sleep(5)
+        await end_call(call_id)
 
-    task = asyncio.get_running_loop().create_task(end())
-    _hangups.add(task)
-    task.add_done_callback(_hangups.discard)
+    _in_background(end())
+
+
+async def hang_up_now(session: str) -> bool:
+    """The visitor stopped: close the call here and end it at OpenAI. If OpenAI does not confirm
+    at once, the retries go on in the background and the call keeps its place meanwhile."""
+    call_id = close_call(session)
+    if not call_id:
+        return False
+    try:
+        await asyncio.wait_for(hang_up(call_id), timeout=10)
+    except Exception as error:
+        log.warning("Real-time voice: hangup of %s failed (%s); trying again.", call_id, error)
+        _in_background(end_call(call_id, retries=HANGUP_RETRY_SECONDS[1:]))
+    else:
+        _forget_call(call_id)
+    return True
 
 
 # --- speech: a daily budget, and each text is only made once ---

@@ -19,6 +19,9 @@ def realtime_on(monkeypatch):
     monkeypatch.setenv("KAREN_REALTIME", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "unended_calls", [])
+    monkeypatch.setattr(realtime_voice, "HANGUP_RETRY_SECONDS", (0, 0))
     monkeypatch.setattr(realtime_voice, "_audio", realtime_voice.OrderedDict())
     monkeypatch.setattr(realtime_voice, "_sessions_today", 0)
     monkeypatch.setattr(realtime_voice, "_spoken_today", 0)
@@ -71,9 +74,16 @@ def test_spoken_text_is_cut_at_a_sentence():
 
 def test_daily_cap(monkeypatch):
     monkeypatch.setattr(realtime_voice, "DAILY_SESSIONS", 2)
+    monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "_day", None)
     day = dt.date(2026, 11, 9)
-    assert [realtime_voice.take_daily_slot(day) for _ in range(3)] == [True, True, False]
-    assert realtime_voice.take_daily_slot(day + dt.timedelta(days=1)) is True
+    taken = []
+    for _ in range(3):
+        taken.append(realtime_voice.reserve_call(day))
+        realtime_voice.release_reservation(refused=False)  # not opened, but not refused either: stays counted
+    assert taken == ["", "", "day"]
+    assert realtime_voice.reserve_call(day + dt.timedelta(days=1)) == ""
 
 
 def test_off_by_default(api, monkeypatch):  # noqa: F811
@@ -133,20 +143,29 @@ def test_a_fourth_conversation_in_five_minutes_is_refused(api, realtime_on):  # 
     assert len(realtime_on["opened"]) == 3
 
 
-def test_the_daily_cap_counts_calls_that_were_really_opened(api, realtime_on, monkeypatch):  # noqa: F811
+def test_a_refused_call_is_not_counted_but_an_uncertain_one_is(api, realtime_on, monkeypatch):  # noqa: F811
+    import energy_voice_app
+
     client, _, _ = api
-    monkeypatch.setattr(realtime_voice, "DAILY_SESSIONS", 1)
+    monkeypatch.setattr(realtime_voice, "DAILY_SESSIONS", 2)
+    monkeypatch.setattr(energy_voice_app, "_realtime_rate_limiter",
+                        energy_voice_app.SlidingWindowRateLimiter(requests=10, window_seconds=300, max_clients=10))
+    opened = realtime_voice.open_call
 
     async def refused(sdp, language):
-        raise RuntimeError("OpenAI said no")
+        raise realtime_voice.CallRefused("OpenAI said no")
 
-    opened = realtime_voice.open_call
+    async def timed_out(sdp, language):
+        raise TimeoutError("no answer: OpenAI may have opened it anyway")
+
     monkeypatch.setattr(realtime_voice, "open_call", refused)
     assert client.post("/api/realtime-call", json={"sdp": SDP}).status_code == 503  # not counted
+    monkeypatch.setattr(realtime_voice, "open_call", timed_out)
+    assert client.post("/api/realtime-call", json={"sdp": SDP}).status_code == 503  # counted
     monkeypatch.setattr(realtime_voice, "open_call", opened)
     assert client.post("/api/realtime-call", json={"sdp": SDP}).status_code == 200
     assert client.post("/api/realtime-call", json={"sdp": SDP}).status_code == 503
-    assert len(realtime_on["opened"]) == 1
+    assert len(realtime_on["opened"]) == 1 and realtime_voice._pending == 0
 
 
 def test_no_more_calls_at_once_than_the_limit(api, realtime_on, monkeypatch):  # noqa: F811
@@ -157,6 +176,97 @@ def test_no_more_calls_at_once_than_the_limit(api, realtime_on, monkeypatch):  #
     ended = client.post("/api/realtime-hangup", headers={"X-Karen-Voice-Session": call["session"]})
     assert ended.json() == {"ended": True} and realtime_on["hung_up"] == ["rtc_1"]
     start_call(client)  # the place is free again
+
+
+def test_two_calls_opening_at_the_same_moment_cannot_share_one_place(monkeypatch):
+    monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "_sessions_today", 0)
+    monkeypatch.setattr(realtime_voice, "MAX_OPEN_CALLS", 1)
+    # Both ask for a place before either has heard back from OpenAI.
+    assert [realtime_voice.reserve_call(), realtime_voice.reserve_call()] == ["", "busy"]
+    realtime_voice.register_call("rtc_1")
+    assert realtime_voice.reserve_call() == "busy" and len(realtime_voice._calls) == 1
+
+
+def _run(work):
+    import asyncio
+
+    return asyncio.run(work)
+
+
+def test_a_hangup_that_openai_did_not_confirm_is_tried_again(monkeypatch):
+    monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "unended_calls", [])
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    statuses = [503, 429, 200]
+    asked = []
+
+    class Client:
+        def __init__(self, **_):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def post(self, url, headers):
+            asked.append(url)
+            return type("Response", (), {"status_code": statuses[len(asked) - 1]})()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    session = realtime_voice.register_call("rtc_7")
+    assert _run(realtime_voice.end_call("rtc_7", retries=(0, 0, 0))) is True
+    assert len(asked) == 3 and asked[0].endswith("/rtc_7/hangup")
+    assert session not in realtime_voice._calls and realtime_voice.unended_calls == []
+
+
+def test_a_call_that_cannot_be_ended_keeps_its_place_while_we_try_and_is_recorded(monkeypatch):
+    monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "_sessions_today", 0)
+    monkeypatch.setattr(realtime_voice, "unended_calls", [])
+    monkeypatch.setattr(realtime_voice, "MAX_OPEN_CALLS", 1)
+    places_while_trying = []
+
+    async def hang_up(call_id):
+        places_while_trying.append(realtime_voice.reserve_call())
+        raise RuntimeError("OpenAI hangup gaf HTTP 503.")
+
+    monkeypatch.setattr(realtime_voice, "hang_up", hang_up)
+    session = realtime_voice.register_call("rtc_8")
+    realtime_voice.close_call(session)
+    assert not realtime_voice.call_is_open(session) and not realtime_voice.take_answer(session)
+    assert _run(realtime_voice.end_call("rtc_8", retries=(0, 0))) is False
+    assert places_while_trying == ["busy", "busy", "busy"]
+    assert realtime_voice.unended_calls == ["rtc_8"]
+
+
+def test_a_call_that_had_already_ended_counts_as_hung_up(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    class Client:
+        def __init__(self, **_):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def post(self, url, headers):
+            return type("Response", (), {"status_code": 404})()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    _run(realtime_voice.hang_up("rtc_gone"))  # does not raise
 
 
 def test_answers_and_speech_need_an_open_call(api, realtime_on, monkeypatch):  # noqa: F811
@@ -181,12 +291,14 @@ def test_answers_and_speech_need_an_open_call(api, realtime_on, monkeypatch):  #
 
 def test_a_call_is_over_after_the_time_limit_and_has_a_share_of_questions(monkeypatch):
     monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
     monkeypatch.setattr(realtime_voice, "MAX_ANSWERS_PER_CALL", 2)
     session = realtime_voice.register_call("rtc_1", now=1000.0)
     assert [realtime_voice.take_answer(session, now=1001.0) for _ in range(3)] == [True, True, False]
     late = 1000.0 + realtime_voice.MAX_CONVERSATION_SECONDS + 1
     assert realtime_voice.call_is_open(session, now=1001.0) and not realtime_voice.call_is_open(session, now=late)
-    assert realtime_voice.room_for_a_call(now=late) and session not in realtime_voice._calls
+    # Its place is only free once OpenAI confirmed the hangup.
+    assert session in realtime_voice._calls
 
 
 def test_the_server_hangs_the_call_up_after_the_time_limit(monkeypatch):
@@ -241,3 +353,30 @@ def test_a_signed_text_can_no_longer_be_spoken_after_five_minutes(api, realtime_
     now = energy_voice_app.time.time()
     monkeypatch.setattr(energy_voice_app.time, "time", lambda: now + 301)
     assert client.get("/api/realtime-speech", params=params).status_code == 404
+
+
+def test_stop_keeps_trying_when_openai_does_not_confirm_at_once(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "unended_calls", [])
+    monkeypatch.setattr(realtime_voice, "HANGUP_RETRY_SECONDS", (0, 0, 0))
+    tries = []
+
+    async def hang_up(call_id):
+        tries.append(call_id)
+        if len(tries) < 3:
+            raise RuntimeError("OpenAI hangup gaf HTTP 503.")
+
+    monkeypatch.setattr(realtime_voice, "hang_up", hang_up)
+
+    async def run():
+        session = realtime_voice.register_call("rtc_5")
+        assert await realtime_voice.hang_up_now(session) is True
+        assert session in realtime_voice._calls and not realtime_voice.call_is_open(session)  # closed, place kept
+        await asyncio.sleep(0.05)
+        return session
+
+    session = asyncio.run(run())
+    assert tries == ["rtc_5"] * 3 and session not in realtime_voice._calls
