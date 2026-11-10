@@ -14,6 +14,9 @@ import asyncio
 import json
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator
 import time
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -61,7 +64,9 @@ _DUTCH = re.compile(
 _FRENCH = re.compile(
     r"\b(?:le|la|les|est|quel|quelle|quels|prix|électricité|electricite|aujourd|je|j|mon|ma|mes|un|une|des|du|pour|"
     r"combien|coûte|coute|fixe|contrat|gaz|vous|tu|que|qui|bonjour|ça|c|pourquoi|mieux|dois|prendre|moins|cher|chère|"
-    r"facture|acompte|chauffage|chaudière|consommation|merci|avec|sur|pas)\b",
+    r"facture|acompte|chauffage|chaudière|consommation|merci|avec|sur|pas|oui|non|français|francais|explique\w*|"
+    r"s'il|stp|svp|aussi|alors|mais|où|comment|parle\w*|et|ton|tes|ta|réponds|reponds|seulement|contenu|règles|regles|"
+    r"il|elle|nous|ils|sont|peux|peut|dans|chez|au|aux|ce|cette|ces|j'ai|c'est|qu'est)\b",
     re.IGNORECASE,
 )
 
@@ -94,7 +99,55 @@ def is_gas_price_question(question: str, *, recognised: bool = False) -> bool:
     )
 
 
+# The reply language for the current question, fixed once from the visitor's own words (see
+# answer_language); a rewritten follow-up or a Dutch search query can't change it.
+_reply_language: ContextVar[str | None] = ContextVar("reply_language", default=None)
+_ASKED_LANGUAGE = [
+    ("fr", re.compile(r"\b(?:en\s+fran[cç]ais|in\s+(?:het\s+)?frans|in\s+french|parle[sz]?\s+fran[cç]ais|french,?\s+please)\b", re.IGNORECASE)),
+    ("en", re.compile(r"\b(?:in\s+english|en\s+anglais|in\s+(?:het\s+)?engels|english,?\s+please|speak\s+english)\b", re.IGNORECASE)),
+    ("nl", re.compile(r"\b(?:in\s+(?:het\s+)?nederlands|en\s+n[ée]erlandais|in\s+dutch|in\s+het\s+vlaams)\b", re.IGNORECASE)),
+]
+
+
+def _asked_language(text: str) -> str | None:
+    return next((lang for lang, pattern in _ASKED_LANGUAGE if pattern.search(text)), None)
+
+
+def answer_language(question: str, earlier_questions: list[str]) -> str:
+    """The language to answer in, from the visitor's own words only.
+
+    An explicit request ("en français", "in English, please") wins and holds for the next short
+    messages; a question of four words or more is answered in its own language; a short one
+    ("Explique.", "Oké.") in the language of the conversation so far."""
+    asked = _asked_language(question)
+    if asked:
+        return asked
+    if len(question.split()) >= 4:
+        return _detect_language(question)
+    for earlier in reversed(earlier_questions[-3:]):
+        asked = _asked_language(earlier)
+        if asked:
+            return asked
+        if len(earlier.split()) >= 4:
+            return _detect_language(earlier)
+    return _detect_language(question)
+
+
+@contextmanager
+def reply_language(language: str) -> Iterator[None]:
+    token = _reply_language.set(language)
+    try:
+        yield
+    finally:
+        _reply_language.reset(token)
+
+
 def question_language(question: str) -> str:
+    """The reply language fixed for this question, or else the language the question reads as."""
+    return _reply_language.get() or _detect_language(question)
+
+
+def _detect_language(question: str) -> str:
     """'en' or 'fr' when the question reads as English or French, otherwise Karen's default 'nl'."""
     english = len(_ENGLISH.findall(question))
     dutch = len(_DUTCH.findall(question))
@@ -199,8 +252,11 @@ def _day_label(day: str, lang: str) -> str:
     return {"en": f"on {day}", "fr": f"le {day}"}.get(lang, f"op {day}")
 
 
-def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | None:
-    """Karen's reply from market.json, or None when the file has no usable spot day."""
+def market_price_reply(data: dict[str, Any], lang: str = "nl", region: str = "flanders") -> dict[str, Any] | None:
+    """Karen's reply from market.json, or None when the file has no usable spot day.
+
+    The wholesale price is Belgian; the supplier cards are residential Flanders, so a visitor in
+    Brussels or Wallonia gets the wholesale price and their region's comparator instead of the cards."""
     spot = data.get("spot") or {}
     day = _current_spot_day(spot)
     if spot.get("unit") != "EUR/MWh" or not all(isinstance(day.get(key), (int, float)) for key in ("avg", "min", "max")):
@@ -232,8 +288,17 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         ]
 
     contracts = data.get("contracts") or {}
-    suppliers = verified_cards(data)[:MAX_SUPPLIERS]
-    fixed_cards = verified_cards(data, "fixed")[:MAX_FIXED]
+    flemish = region not in ("brussels", "wallonia")
+    suppliers = verified_cards(data)[:MAX_SUPPLIERS] if flemish else []
+    fixed_cards = verified_cards(data, "fixed")[:MAX_FIXED] if flemish else []
+    if not flemish:
+        name, url = _COMPARATORS[region]
+        place = {"brussels": {"nl": "Brussel", "fr": "Bruxelles", "en": "Brussels"},
+                 "wallonia": {"nl": "Wallonië", "fr": "la Wallonie", "en": "Wallonia"}}[region][lang]
+        lines.append({
+            "en": f"The supplier tariff cards I have are for Flanders, not {place}. Compare prices for your usage with {name}: {url}",
+            "fr": f"Les fiches tarifaires que j'ai valent pour la Flandre, pas pour {place}. Compare les prix pour ta consommation avec {name} : {url}",
+        }.get(lang, f"De tariefkaarten van leveranciers die ik heb, gelden voor Vlaanderen, niet voor {place}. Vergelijk de prijzen voor jouw verbruik met {name}: {url}"))
     if suppliers:
         lines.append({
             "en": "Variable contracts on the suppliers' current tariff cards (energy price incl. 6% VAT, without network costs):",
@@ -331,13 +396,18 @@ def gas_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | 
     }
 
 
-async def answer_market_price_question(question: str, *, recognised: bool = False) -> dict[str, Any] | None:
+async def answer_market_price_question(question: str, *, recognised: bool = False, region: str = "flanders") -> dict[str, Any] | None:
     """None when this isn't a general price question or market.json is unavailable.
 
     `recognised` skips the price-word check when Jev already routed the question here; network-cost
     and household-detail questions still go elsewhere, since market.json can't answer them.
     """
     if is_gas_price_question(question, recognised=recognised):
+        if region in ("brussels", "wallonia"):
+            # The gas cards are Flemish too: the region's comparator instead.
+            from .question_kind import regional_tariff_answer
+
+            return regional_tariff_answer(region, question_language(question))
         data = await load_market_data()
         return gas_price_reply(data, question_language(question)) if data is not None else None
     if recognised:
@@ -348,7 +418,7 @@ async def answer_market_price_question(question: str, *, recognised: bool = Fals
     data = await load_market_data()
     if data is None:
         return None
-    return market_price_reply(data, question_language(question))
+    return market_price_reply(data, question_language(question), region or "flanders")
 
 
 _COMPARATORS = {
