@@ -8,6 +8,13 @@ from luminus_harness import realtime_voice
 from tests.test_karen_market_prices import api  # noqa: F401  (api is a fixture)
 
 
+@pytest.fixture(autouse=True)
+def fresh_counters(monkeypatch):
+    for name, value in (("_calls", {}), ("_pending", 0), ("_uncertain_until", []), ("unended_calls", []),
+                        ("_sessions_today", 0), ("_spoken_today", 0)):
+        monkeypatch.setattr(realtime_voice, name, value)
+
+
 SDP = "v=0 an offer from the browser" + " x" * 20
 
 
@@ -20,6 +27,7 @@ def realtime_on(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(realtime_voice, "_calls", {})
     monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "_uncertain_until", [])
     monkeypatch.setattr(realtime_voice, "unended_calls", [])
     monkeypatch.setattr(realtime_voice, "HANGUP_RETRY_SECONDS", (0, 0))
     monkeypatch.setattr(realtime_voice, "_audio", realtime_voice.OrderedDict())
@@ -221,30 +229,50 @@ def test_a_hangup_that_openai_did_not_confirm_is_tried_again(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", Client)
     session = realtime_voice.register_call("rtc_7")
-    assert _run(realtime_voice.end_call("rtc_7", retries=(0, 0, 0))) is True
+    _run(realtime_voice.end_call("rtc_7", retries=(0, 0, 0)))
     assert len(asked) == 3 and asked[0].endswith("/rtc_7/hangup")
     assert session not in realtime_voice._calls and realtime_voice.unended_calls == []
 
 
-def test_a_call_that_cannot_be_ended_keeps_its_place_while_we_try_and_is_recorded(monkeypatch):
+def test_a_call_keeps_its_place_until_openai_confirms_also_after_the_retry_schedule(monkeypatch):
     monkeypatch.setattr(realtime_voice, "_calls", {})
     monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "_uncertain_until", [])
     monkeypatch.setattr(realtime_voice, "_sessions_today", 0)
     monkeypatch.setattr(realtime_voice, "unended_calls", [])
     monkeypatch.setattr(realtime_voice, "MAX_OPEN_CALLS", 1)
-    places_while_trying = []
+    seen = []
 
     async def hang_up(call_id):
-        places_while_trying.append(realtime_voice.reserve_call())
-        raise RuntimeError("OpenAI hangup gaf HTTP 503.")
+        # What a new visitor would get at this moment, and whether the call is listed as unended.
+        seen.append((realtime_voice.reserve_call(), list(realtime_voice.unended_calls)))
+        if len(seen) <= 5:
+            raise RuntimeError("OpenAI hangup gaf HTTP 503.")
 
     monkeypatch.setattr(realtime_voice, "hang_up", hang_up)
     session = realtime_voice.register_call("rtc_8")
     realtime_voice.close_call(session)
     assert not realtime_voice.call_is_open(session) and not realtime_voice.take_answer(session)
-    assert _run(realtime_voice.end_call("rtc_8", retries=(0, 0))) is False
-    assert places_while_trying == ["busy", "busy", "busy"]
-    assert realtime_voice.unended_calls == ["rtc_8"]
+    # The schedule is three tries; tries four to six come after it was exhausted.
+    _run(realtime_voice.end_call("rtc_8", retries=(0, 0), keep_trying=0))
+    assert [place for place, _ in seen] == ["busy"] * 6
+    assert [unended for _, unended in seen] == [[], [], [], ["rtc_8"], ["rtc_8"], ["rtc_8"]]
+    # Only OpenAI's confirmation frees the place and clears the record.
+    assert realtime_voice.unended_calls == [] and realtime_voice.reserve_call() == ""
+
+
+def test_an_opening_with_an_unknown_outcome_keeps_a_place_for_the_length_of_a_call(monkeypatch):
+    monkeypatch.setattr(realtime_voice, "_calls", {})
+    monkeypatch.setattr(realtime_voice, "_pending", 0)
+    monkeypatch.setattr(realtime_voice, "_uncertain_until", [])
+    monkeypatch.setattr(realtime_voice, "_sessions_today", 0)
+    monkeypatch.setattr(realtime_voice, "MAX_OPEN_CALLS", 1)
+    assert realtime_voice.reserve_call(now=100.0) == ""
+    realtime_voice.release_reservation(refused=False, now=100.0)  # a timeout: OpenAI may have opened it
+    assert realtime_voice.reserve_call(now=101.0) == "busy"
+    assert realtime_voice.reserve_call(now=101.0 + realtime_voice.MAX_CONVERSATION_SECONDS) == ""
+    realtime_voice.release_reservation(refused=True)  # a refusal frees the place at once
+    assert realtime_voice.reserve_call() == ""
 
 
 def test_a_call_that_had_already_ended_counts_as_hung_up(monkeypatch):
