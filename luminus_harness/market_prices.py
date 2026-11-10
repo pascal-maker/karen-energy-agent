@@ -252,8 +252,11 @@ def _day_label(day: str, lang: str) -> str:
     return {"en": f"on {day}", "fr": f"le {day}"}.get(lang, f"op {day}")
 
 
-def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | None:
-    """Karen's reply from market.json, or None when the file has no usable spot day."""
+def market_price_reply(data: dict[str, Any], lang: str = "nl", region: str = "flanders") -> dict[str, Any] | None:
+    """Karen's reply from market.json, or None when the file has no usable spot day.
+
+    The wholesale price is Belgian; the supplier cards are residential Flanders, so a visitor in
+    Brussels or Wallonia gets the wholesale price and their region's comparator instead of the cards."""
     spot = data.get("spot") or {}
     day = _current_spot_day(spot)
     if spot.get("unit") != "EUR/MWh" or not all(isinstance(day.get(key), (int, float)) for key in ("avg", "min", "max")):
@@ -285,8 +288,17 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any]
         ]
 
     contracts = data.get("contracts") or {}
-    suppliers = verified_cards(data)[:MAX_SUPPLIERS]
-    fixed_cards = verified_cards(data, "fixed")[:MAX_FIXED]
+    flemish = region not in ("brussels", "wallonia")
+    suppliers = verified_cards(data)[:MAX_SUPPLIERS] if flemish else []
+    fixed_cards = verified_cards(data, "fixed")[:MAX_FIXED] if flemish else []
+    if not flemish:
+        name, url = _COMPARATORS[region]
+        place = {"brussels": {"nl": "Brussel", "fr": "Bruxelles", "en": "Brussels"},
+                 "wallonia": {"nl": "Wallonië", "fr": "la Wallonie", "en": "Wallonia"}}[region][lang]
+        lines.append({
+            "en": f"The supplier tariff cards I have are for Flanders, not {place}. Compare prices for your usage with {name}: {url}",
+            "fr": f"Les fiches tarifaires que j'ai valent pour la Flandre, pas pour {place}. Compare les prix pour ta consommation avec {name} : {url}",
+        }.get(lang, f"De tariefkaarten van leveranciers die ik heb, gelden voor Vlaanderen, niet voor {place}. Vergelijk de prijzen voor jouw verbruik met {name}: {url}"))
     if suppliers:
         lines.append({
             "en": "Variable contracts on the suppliers' current tariff cards (energy price incl. 6% VAT, without network costs):",
@@ -384,13 +396,18 @@ def gas_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | 
     }
 
 
-async def answer_market_price_question(question: str, *, recognised: bool = False) -> dict[str, Any] | None:
+async def answer_market_price_question(question: str, *, recognised: bool = False, region: str = "flanders") -> dict[str, Any] | None:
     """None when this isn't a general price question or market.json is unavailable.
 
     `recognised` skips the price-word check when Jev already routed the question here; network-cost
     and household-detail questions still go elsewhere, since market.json can't answer them.
     """
     if is_gas_price_question(question, recognised=recognised):
+        if region in ("brussels", "wallonia"):
+            # The gas cards are Flemish too: the region's comparator instead.
+            from .question_kind import regional_tariff_answer
+
+            return regional_tariff_answer(region, question_language(question))
         data = await load_market_data()
         return gas_price_reply(data, question_language(question)) if data is not None else None
     if recognised:
@@ -401,7 +418,7 @@ async def answer_market_price_question(question: str, *, recognised: bool = Fals
     data = await load_market_data()
     if data is None:
         return None
-    return market_price_reply(data, question_language(question))
+    return market_price_reply(data, question_language(question), region or "flanders")
 
 
 _COMPARATORS = {

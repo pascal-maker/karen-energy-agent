@@ -1127,7 +1127,7 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
             return _with_petra_speech(for_region(comparison))
     # Jev sometimes files a gas price question as small talk or another energy question.
     if prices_asked and (route in (None, "price") or (route != "compare" and is_gas_price_question(question))):
-        prices = await answer_market_price_question(question, recognised=route == "price")
+        prices = await answer_market_price_question(question, recognised=route == "price", region=region or "flanders")
         if prices is not None:
             return _with_petra_speech(prices)
     if route in ("small_talk", "off_topic") and mentions_energy(question):

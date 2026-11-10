@@ -61,10 +61,27 @@ def asks_for_price(question: str) -> bool:
     return bool(_PRICE_ASK.search(_SCHEME.sub(" ", question)))
 
 
+# A why or how-does-it-work question: price words in it ("per kWh", "vaste vergoeding") name the
+# subject, they don't ask for an amount. Only an outright amount ask still wants the price list.
+_EXPLAIN_ASK = re.compile(
+    r"\b(?:waarom|hoe\s+(?:kan|komt|werkt|verandert|evolueert|wordt|zit)|wat\s+(?:betekent|houdt)|leg\s+(?:uit|eens\s+uit)|"
+    r"pourquoi|comment\s+(?:fonctionne|ça\s+marche|se\s+fait|est\s+calcul|évolue|change)|explique\w*|"
+    r"why|how\s+(?:does|do|is|are|can)|explain)\b",
+    re.IGNORECASE,
+)
+_AMOUNT_ASK = re.compile(
+    r"\b(?:wat|hoeveel)\s+(?:kost|kosten|betaal|betaalt|bedraagt)\b|\bwat\s+is\s+(?:de|het)\s+(?:\w+-?)?(?:prijs|bedrag)\b|"
+    r"\bcombien\s+(?:co[uû]te|ça\s+co[uû]te|coûtent|je\s+paie)|\bquel\s+est\s+le\s+prix\b|\bhow\s+much\b",
+    re.IGNORECASE,
+)
+
+
 def price_route_allowed(question: str) -> bool:
     """False when a fixed price route would answer something other than what was asked."""
     if _NO_PRICES.search(question):
         return False
+    if _EXPLAIN_ASK.search(question):
+        return bool(_AMOUNT_ASK.search(question))
     if asks_for_price(question):
         return True
     return not _OTHER_ASK.search(question)
@@ -118,7 +135,7 @@ def regional_tariff_answer(region: str, language: str) -> dict:
 _OTHER_SUPPLIERS = ("Ecopower", "Trevion", "DATS 24", "Wase Wind", "Energie.be", "Elindus", "Vivi", "Watz",
                     "Cociter", "Comfort Energy", "Belgian Eco Energy", "Bee")
 _NAME_AFTER = re.compile(
-    r"\b(?:bij|van|over|chez|de|at|from|with)\s+((?:[A-Z][\w+&.-]*)(?:\s+[A-Z][\w+&.-]*){0,3})"
+    r"\b(?:bij|van|over|chez|de|at|from|with)\s+((?:[A-Z][\w+&.-]*)(?:\s+[A-Z0-9][\w+&.-]*){0,3})"
 )
 _NOT_A_SUPPLIER = re.compile(
     r"^(?:Vlaanderen|Brussel|Wallonië|Wallonie|Bruxelles|Belgi[eë]|Belgique|Flandre|VREG|CREG|Brugel|CWaPE|Fluvius|"
@@ -136,10 +153,33 @@ def _known_card_suppliers() -> set[str]:
     return {entry["name"].casefold() for key in ("suppliers", "gas_suppliers") for entry in data.get(key, [])}
 
 
+# The price of energy supply (not of a heat pump, battery or panels sold under a brand name).
+_SUPPLY = re.compile(
+    r"\b(?:stroom|elektriciteit|gas|energie|contract\w*|kwh|leverancier\w*|tarie\w*|"
+    r"électricité|electricite|gaz|énergie|fournisseur\w*|tarif\w*|electricity|energy|supplier\w*|tariff\w*|"
+    r"vast|variabel|fixe|variable|fixed)\b",
+    re.IGNORECASE,
+)
+_PRODUCT = re.compile(
+    r"\b(?:warmtepomp\w*|batterij\w*|thuisbatterij\w*|zonnepane\w*|panelen|laadpa\w*|laadstation\w*|boiler\w*|"
+    r"omvormer\w*|airco\w*|auto\w*|wagen\w*|ketel\w*|pompe\s+à\s+chaleur|batterie\w*|panneaux|borne\w*|"
+    r"voiture\w*|chaudière\w*|heat\s+pump\w*|batter(?:y|ies)|panels?|charger\w*|car|boiler\w*|inverter\w*)\b",
+    re.IGNORECASE,
+)
+_OTHER_SUPPLIER_PATTERN = re.compile(
+    r"(?<!\w)(" + "|".join(re.escape(name) for name in sorted(_OTHER_SUPPLIERS, key=len, reverse=True) if name != "Bee")
+    + r")(?!\w)",
+    re.IGNORECASE,
+)
+
+
 def unknown_supplier(question: str) -> str | None:
-    """The supplier named in a price question when Karen has no tariff card for it."""
-    if not asks_for_price(question):
+    """The supplier named in a question about the price of energy supply when Karen has no tariff card for it."""
+    if not asks_for_price(question) or not _SUPPLY.search(question) or _PRODUCT.search(question):
         return None
+    listed = _OTHER_SUPPLIER_PATTERN.search(question)
+    if listed:
+        return next(name for name in _OTHER_SUPPLIERS if name.casefold() == listed.group(1).casefold())
     known = _known_card_suppliers()
     for match in _NAME_AFTER.finditer(question):
         name = match.group(1).strip(" .,?!")
