@@ -85,7 +85,7 @@
     if (!token) return;
     voice.pause();
     voice.volume = 1;
-    voice.src = `/api/realtime-speech?language=${language}&token=${encodeURIComponent(token)}`;
+    voice.src = `/api/realtime-speech?language=${language}&session=${encodeURIComponent(session.session)}&token=${encodeURIComponent(token)}`;
     voice.play().catch((e) => console.warn("[karen-realtime] play", e));
   }
   voice.onplaying = () => setStatus("Karen spreekt…");
@@ -105,7 +105,7 @@
     let reply;
     try {
       const res = await fetch("/api/realtime-answer", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", "X-Karen-Voice-Session": session.session },
         body: JSON.stringify({ question, history: history.slice(-4) }),
       });
       reply = await res.json();
@@ -155,13 +155,6 @@
     mode = $("mode").value;
     setStatus("Verbinden…");
     try {
-      const res = await fetch("/api/realtime-session", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ language }),
-      });
-      session = await res.json();
-      if (!res.ok) throw new Error(session.detail || res.status);
-
       pc = new RTCPeerConnection();
       mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       pc.addTrack(mic.getTracks()[0], mic);
@@ -171,14 +164,16 @@
       dc.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (e) { console.warn(e); } };
       dc.onopen = () => { setStatus(mode === "tap" ? "Tik op de knop en stel je vraag." : "Ik luister…"); say(session.greeting_token); };
 
+      // The offer goes to Karen's server, which opens the call at OpenAI: no OpenAI key in the browser.
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      const sdp = await fetch("https://api.openai.com/v1/realtime/calls", {
-        method: "POST", body: offer.sdp,
-        headers: { Authorization: "Bearer " + session.client_secret, "Content-Type": "application/sdp" },
+      const res = await fetch("/api/realtime-call", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sdp: offer.sdp, language }),
       });
-      if (!sdp.ok) throw new Error("OpenAI " + sdp.status + " " + (await sdp.text()).slice(0, 200));
-      await pc.setRemoteDescription({ type: "answer", sdp: await sdp.text() });
+      session = await res.json();
+      if (!res.ok) throw new Error(session.detail || res.status);
+      await pc.setRemoteDescription({ type: "answer", sdp: session.sdp });
       stopTimer = setTimeout(() => { stop(); setStatus("Het gesprek stopte na " + Math.round(session.max_seconds / 60) + " minuten. Start opnieuw als je nog iets wilt vragen."); }, session.max_seconds * 1000);
       $("stop").disabled = false;
     } catch (error) {
@@ -193,6 +188,10 @@
     listening = false;
     generation += 1;
     voice.pause();
+    if (session && session.session) {
+      fetch("/api/realtime-hangup", { method: "POST", keepalive: true, headers: { "X-Karen-Voice-Session": session.session } }).catch(() => {});
+      session.session = "";
+    }
     try { dc && dc.close(); } catch (e) {}
     try { pc && pc.close(); } catch (e) {}
     mic && mic.getTracks().forEach((t) => t.stop());

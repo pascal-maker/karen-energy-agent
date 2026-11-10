@@ -714,8 +714,9 @@ class PetraSpeechRequest(BaseModel):
     token: str = Field(min_length=40, max_length=8192)
 
 
-class RealtimeSessionRequest(BaseModel):
+class RealtimeCallRequest(BaseModel):
     model_config = {"extra": "forbid"}
+    sdp: str = Field(min_length=20, max_length=realtime_voice.MAX_SDP_CHARS)
     language: str = Field(default="nl", pattern="^(nl|fr|en)$")
 
 
@@ -1200,26 +1201,48 @@ async def api_petra_speech(body: PetraSpeechRequest, request: Request) -> Respon
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
-@api_app.post("/api/realtime-session")
-async def api_realtime_session(body: RealtimeSessionRequest, request: Request) -> dict[str, Any]:
-    """A short-lived key for one real-time voice conversation; OpenAI only transcribes there."""
+@api_app.post("/api/realtime-call")
+async def api_realtime_call(body: RealtimeCallRequest, request: Request) -> dict[str, Any]:
+    """Open one real-time voice call for the browser's WebRTC offer. OpenAI only transcribes there.
+
+    This server opens the call with its own key, so the browser holds no OpenAI credential, every
+    call is counted, and the call is hung up here after the time limit.
+    """
     if not realtime_voice.enabled():
         raise HTTPException(status_code=404, detail="Not Found")
     _allow_api_request(request)
     client_key = request.client.host if request.client else "unknown"
     if not _realtime_rate_limiter.allow(client_key, time.monotonic()):
         raise HTTPException(status_code=429, detail="Te veel spraakgesprekken kort na elkaar.")
+    if not realtime_voice.room_for_a_call():
+        raise HTTPException(status_code=503, detail="Er lopen nu te veel spraakgesprekken. Probeer het zo meteen opnieuw.")
     if not realtime_voice.take_daily_slot():
         raise HTTPException(status_code=503, detail="Spraakgesprekken zijn voor vandaag op. Typ gerust je vraag.")
     try:
-        session = await asyncio.wait_for(realtime_voice.create_client_secret(body.language), timeout=15)
+        answer_sdp, call_id = await asyncio.wait_for(realtime_voice.open_call(body.sdp, body.language), timeout=20)
     except Exception as error:
+        realtime_voice.give_back_daily_slot()
         raise HTTPException(status_code=503, detail="Spraakgesprek is nu niet beschikbaar.") from error
+    realtime_voice.hang_up_later(call_id)
     return {
-        **session,
+        "sdp": answer_sdp,
+        "session": realtime_voice.register_call(call_id),
+        "max_seconds": realtime_voice.MAX_CONVERSATION_SECONDS,
         "greeting_token": _sign_public_speech(realtime_voice.GREETINGS[body.language]),
         "wait_token": _sign_public_speech(realtime_voice.WAIT_LINES[body.language]),
     }
+
+
+@api_app.post("/api/realtime-hangup")
+async def api_realtime_hangup(request: Request) -> dict[str, bool]:
+    """The visitor stopped: end the call at OpenAI now and free its place."""
+    if not realtime_voice.enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    call_id = realtime_voice.end_call(request.headers.get("x-karen-voice-session", ""))
+    if call_id:
+        with suppress(Exception):
+            await asyncio.wait_for(realtime_voice.hang_up(call_id), timeout=10)
+    return {"ended": bool(call_id)}
 
 
 @api_app.post("/api/realtime-answer")
@@ -1228,22 +1251,28 @@ async def api_realtime_answer(body: AnswerRequest, request: Request) -> dict[str
     if not realtime_voice.enabled():
         raise HTTPException(status_code=404, detail="Not Found")
     _allow_api_request(request)
+    if not realtime_voice.take_answer(request.headers.get("x-karen-voice-session", "")):
+        raise HTTPException(status_code=403, detail="Dit spraakgesprek is afgelopen. Start een nieuw gesprek.")
     reply = await _rated_answer(body)
     spoken = realtime_voice.spoken_text(str(reply.get("answer", "")))
     return {**reply, "spoken": spoken, "speech_token": _sign_public_speech(spoken)}
 
 
 @api_app.get("/api/realtime-speech")
-async def api_realtime_speech(request: Request, token: str, language: str = "nl") -> StreamingResponse:
-    """Read a signed text aloud as streamed MP3; only text Karen signed can be spoken."""
+async def api_realtime_speech(request: Request, token: str, session: str = "", language: str = "nl") -> StreamingResponse:
+    """Read a signed text aloud as streamed MP3: only text Karen signed, only inside an open call."""
     if not realtime_voice.enabled():
         raise HTTPException(status_code=404, detail="Not Found")
     client_key = request.client.host if request.client else "unknown"
     if not _realtime_speech_rate_limiter.allow(client_key, time.monotonic()):
         raise HTTPException(status_code=429, detail="Te veel spraak kort na elkaar.")
+    if not realtime_voice.call_is_open(session):
+        raise HTTPException(status_code=403, detail="Dit spraakgesprek is afgelopen. Start een nieuw gesprek.")
     text = _public_speech_from_token(token)
     language = language if language in realtime_voice.LANGUAGES else "nl"
-    chunks = realtime_voice.stream_speech(text, language)
+    chunks = realtime_voice.speech(text, language)
+    if chunks is None:
+        raise HTTPException(status_code=503, detail="De stem is voor vandaag op. Het antwoord staat op het scherm.")
     try:
         first = await asyncio.to_thread(next, chunks, b"")
     except Exception as error:

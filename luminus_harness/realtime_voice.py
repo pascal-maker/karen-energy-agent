@@ -1,10 +1,12 @@
 """Real-time voice for Karen: OpenAI Realtime is only her ears, a text-to-speech model her voice.
 
-The browser streams the microphone to OpenAI Realtime over WebRTC in a *transcription* session, with
-a short-lived key minted here. That session only turns speech into text and notices when the visitor
-starts or stops talking; it has no model that can answer. Each transcribed question goes to Karen's
-normal answer route (safety layer, routes, sources), and her answer is read by a text-to-speech
-model (``gpt-4o-mini-tts``) that says the given text and nothing else. A speech-to-speech model was
+The browser streams the microphone to OpenAI Realtime over WebRTC in a *transcription* session. That
+session only turns speech into text and notices when the visitor starts or stops talking; it has no
+model that can answer. The browser never gets an OpenAI credential: it sends its WebRTC offer here,
+this server opens the call with its own key, counts it, and hangs it up after the time limit.
+
+Each transcribed question goes to Karen's normal answer route (safety layer, routes, sources), and
+her answer is read by a text-to-speech model (``gpt-4o-mini-tts``) that says the given text and nothing else. A speech-to-speech model was
 tried first: it paraphrased Karen's answers and added its own advice, also on emergency numbers.
 
 Off unless ``KAREN_REALTIME=1``; it needs ``OPENAI_API_KEY``.
@@ -12,19 +14,29 @@ Off unless ``KAREN_REALTIME=1``; it needs ``OPENAI_API_KEY``.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import hashlib
+import json
 import os
 import re
+import secrets
 import threading
+import time
+from collections import OrderedDict
 from typing import Any, Iterator
 
 TRANSCRIBE_MODEL = os.getenv("KAREN_REALTIME_STT_MODEL", "gpt-4o-transcribe")
 TTS_MODEL = os.getenv("KAREN_REALTIME_TTS_MODEL", "gpt-4o-mini-tts")
 VOICE = os.getenv("KAREN_REALTIME_VOICE", "marin")
-# The key is only needed to open the connection; the browser ends a conversation after this long.
-KEY_SECONDS = 60
 MAX_CONVERSATION_SECONDS = int(os.getenv("KAREN_REALTIME_MAX_SECONDS", "300"))
 DAILY_SESSIONS = int(os.getenv("KAREN_REALTIME_DAILY_SESSIONS", "100"))
+# All visitors together, so the caps hold even when every visitor arrives from one proxy address.
+MAX_OPEN_CALLS = int(os.getenv("KAREN_REALTIME_MAX_OPEN_CALLS", "5"))
+MAX_ANSWERS_PER_CALL = int(os.getenv("KAREN_REALTIME_MAX_ANSWERS", "30"))
+DAILY_SPOKEN_CHARS = int(os.getenv("KAREN_REALTIME_DAILY_SPOKEN_CHARS", "200000"))
+MAX_SDP_CHARS = 20_000
+CALLS_URL = "https://api.openai.com/v1/realtime/calls"
 MAX_SPOKEN_CHARS = 900
 LANGUAGES = ("nl", "fr", "en")
 
@@ -78,15 +90,152 @@ def session_config(language: str = "nl") -> dict[str, Any]:
     }
 
 
-async def create_client_secret(language: str = "nl") -> dict[str, Any]:
-    from openai import AsyncOpenAI
+# --- calls: opened, counted and ended by this server ---
 
-    client = AsyncOpenAI()
-    secret = await client.realtime.client_secrets.create(
-        expires_after={"anchor": "created_at", "seconds": KEY_SECONDS},
-        session=session_config(language),  # type: ignore[arg-type]
-    )
-    return {"client_secret": secret.value, "expires_at": secret.expires_at, "max_seconds": MAX_CONVERSATION_SECONDS}
+_calls: dict[str, dict[str, Any]] = {}
+_hangups: set[asyncio.Task] = set()
+
+
+def _open_calls(now: float) -> int:
+    for session, call in list(_calls.items()):
+        if call["ends"] <= now:
+            del _calls[session]
+    return len(_calls)
+
+
+def room_for_a_call(now: float | None = None) -> bool:
+    with _lock:
+        return _open_calls(time.monotonic() if now is None else now) < MAX_OPEN_CALLS
+
+
+def give_back_daily_slot() -> None:
+    """A call that OpenAI refused does not count against the day."""
+    global _sessions_today
+    with _lock:
+        _sessions_today = max(0, _sessions_today - 1)
+
+
+def register_call(call_id: str, now: float | None = None) -> str:
+    """Remember an opened call; the returned id is what the browser shows to ask and to hear answers."""
+    now = time.monotonic() if now is None else now
+    session = secrets.token_urlsafe(24)
+    with _lock:
+        _calls[session] = {"call_id": call_id, "ends": now + MAX_CONVERSATION_SECONDS, "answers": 0}
+    return session
+
+
+def call_is_open(session: str, now: float | None = None) -> bool:
+    now = time.monotonic() if now is None else now
+    with _lock:
+        call = _calls.get(session or "")
+        return bool(call) and call["ends"] > now
+
+
+def take_answer(session: str, now: float | None = None) -> bool:
+    """One question in an open call; False when the call is over or has asked its share."""
+    now = time.monotonic() if now is None else now
+    with _lock:
+        call = _calls.get(session or "")
+        if not call or call["ends"] <= now or call["answers"] >= MAX_ANSWERS_PER_CALL:
+            return False
+        call["answers"] += 1
+        return True
+
+
+def end_call(session: str) -> str | None:
+    """Forget a call the visitor stopped; returns its OpenAI call id so it can be hung up there."""
+    with _lock:
+        call = _calls.pop(session or "", None)
+    return call["call_id"] if call else None
+
+
+async def open_call(offer_sdp: str, language: str = "nl") -> tuple[str, str]:
+    """Open the call at OpenAI with the server's key; returns (answer SDP, call id)."""
+    import httpx
+
+    headers = {"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"].strip()}
+    files = {"sdp": (None, offer_sdp), "session": (None, json.dumps(session_config(language)))}
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(CALLS_URL, headers=headers, files=files)
+    call_id = response.headers.get("location", "").rstrip("/").rsplit("/", 1)[-1]
+    if response.status_code >= 300 or not call_id:
+        raise RuntimeError(f"OpenAI Realtime gaf HTTP {response.status_code}.")
+    return response.text, call_id
+
+
+async def hang_up(call_id: str) -> None:
+    import httpx
+
+    headers = {"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"].strip()}
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.post(f"{CALLS_URL}/{call_id}/hangup", headers=headers)
+
+
+def hang_up_later(call_id: str, seconds: float | None = None) -> None:
+    """End the call at OpenAI after the time limit, whatever the browser does."""
+    async def end() -> None:
+        await asyncio.sleep(MAX_CONVERSATION_SECONDS if seconds is None else seconds)
+        # Hanging up a call that already ended is harmless.
+        for _ in range(3):
+            try:
+                await hang_up(call_id)
+                return
+            except Exception:
+                await asyncio.sleep(5)
+
+    task = asyncio.get_running_loop().create_task(end())
+    _hangups.add(task)
+    task.add_done_callback(_hangups.discard)
+
+
+# --- speech: a daily budget, and each text is only made once ---
+
+_spoken_day: dt.date | None = None
+_spoken_today = 0
+_audio: OrderedDict[str, bytes] = OrderedDict()
+AUDIO_CACHE_ITEMS = 60
+
+
+def take_spoken_chars(count: int, today: dt.date | None = None) -> bool:
+    global _spoken_day, _spoken_today
+    today = today or dt.date.today()
+    with _lock:
+        if _spoken_day != today:
+            _spoken_day, _spoken_today = today, 0
+        if _spoken_today + count > DAILY_SPOKEN_CHARS:
+            return False
+        _spoken_today += count
+        return True
+
+
+def _audio_key(text: str, language: str) -> str:
+    return hashlib.sha256(f"{TTS_MODEL}|{VOICE}|{language}|{text}".encode("utf-8")).hexdigest()
+
+
+def speech(text: str, language: str = "nl") -> Iterator[bytes] | None:
+    """Karen's text as MP3 chunks. A text made before is replayed from memory; None when today's budget is spent."""
+    key = _audio_key(text, language)
+    with _lock:
+        cached = _audio.get(key)
+        if cached is not None:
+            _audio.move_to_end(key)
+    if cached is not None:
+        return iter([cached])
+    if not take_spoken_chars(len(text)):
+        return None
+
+    def made() -> Iterator[bytes]:
+        parts: list[bytes] = []
+        for chunk in stream_speech(text, language):
+            parts.append(chunk)
+            yield chunk
+        # Only a complete reading is kept; an interrupted one is made again if it is asked again.
+        with _lock:
+            _audio[key] = b"".join(parts)
+            while len(_audio) > AUDIO_CACHE_ITEMS:
+                _audio.popitem(last=False)
+
+    return made()
 
 
 def stream_speech(text: str, language: str = "nl") -> Iterator[bytes]:
