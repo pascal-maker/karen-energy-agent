@@ -235,3 +235,26 @@ def test_gas_prices_outside_flanders_get_the_regions_comparator(api, monkeypatch
     reply = client.post("/api/answer", json={"question": "Wat kost gas vandaag?",
                                              "history": [{"question": "Ik woon in Namen.", "answer": "Oké."}]}).json()
     assert reply["processing"] == "regional-tariff" and "CompaCWaPE" in reply["answer"]
+
+
+# --- Codex review of 36105bd ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("question", [
+    "How do Eneco and Luminus compare on price per kWh?",
+    "What does electricity cost at Eneco and how does switching work?",
+    "Hoe verhouden de prijzen van Eneco en Luminus zich, vergelijk ze even?",
+])
+def test_comparing_on_price_is_a_price_question(question):
+    assert price_route_allowed(question)
+
+
+@pytest.mark.parametrize("question, name", [
+    ("Waarom is de prijs per kWh bij Ecopower hoger?", None),
+    ("How does the price per kWh at Ecopower change over time?", None),
+    ("Wat kost stroom bij ecopower als ik zonnepanelen heb?", "Ecopower"),
+    ("What does electricity cost at ecopower if I have solar panels?", "Ecopower"),
+    ("Wat kost stroom bij Groenstroom Vlaanderen Plus als ik zonnepanelen heb?", "Groenstroom Vlaanderen Plus"),
+    ("Wat kost een thuisbatterij van Tesla met een vast contract?", None),
+])
+def test_unknown_supplier_only_for_a_supply_price_whatever_else_is_said(question, name):
+    assert unknown_supplier(question) == name

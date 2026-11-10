@@ -71,7 +71,11 @@ _EXPLAIN_ASK = re.compile(
 )
 _AMOUNT_ASK = re.compile(
     r"\b(?:wat|hoeveel)\s+(?:kost|kosten|betaal|betaalt|bedraagt)\b|\bwat\s+is\s+(?:de|het)\s+(?:\w+-?)?(?:prijs|bedrag)\b|"
-    r"\bcombien\s+(?:co[uû]te|ça\s+co[uû]te|coûtent|je\s+paie)|\bquel\s+est\s+le\s+prix\b|\bhow\s+much\b",
+    r"\bcombien\s+(?:co[uû]te|ça\s+co[uû]te|coûtent|je\s+paie)|\bquel\s+est\s+le\s+prix\b|\bhow\s+much\b|"
+    r"\bwhat\s+(?:does|do)\b[^?]{0,40}\bcost\b|\bwhat\s+is\s+the\s+price\b|"
+    # Comparing on price is asking for the prices: "How do Eneco and Luminus compare on price per kWh?"
+    r"\b(?:compar\w*|vergelijk\w*)\b[^?]{0,40}\b(?:price|prices|prijs\w*|prix|tarie\w*|tarif\w*)\b|"
+    r"\b(?:price|prices|prijs\w*|prix)\b[^?]{0,40}\b(?:compar\w*|vergelijk\w*)\b",
     re.IGNORECASE,
 )
 
@@ -175,13 +179,17 @@ _OTHER_SUPPLIER_PATTERN = re.compile(
 
 def unknown_supplier(question: str) -> str | None:
     """The supplier named in a question about the price of energy supply when Karen has no tariff card for it."""
-    if not asks_for_price(question) or not _SUPPLY.search(question) or _PRODUCT.search(question):
+    # Only a price question: "why is the price at Ecopower higher?" goes on to the sources.
+    if not asks_for_price(question) or not price_route_allowed(question) or not _SUPPLY.search(question):
         return None
     listed = _OTHER_SUPPLIER_PATTERN.search(question)
     if listed:
         return next(name for name in _OTHER_SUPPLIERS if name.casefold() == listed.group(1).casefold())
     known = _known_card_suppliers()
     for match in _NAME_AFTER.finditer(question):
+        # "een warmtepomp van Daikin": the brand of a product, not an energy supplier.
+        if _PRODUCT.search(question[max(0, match.start() - 40):match.start()]):
+            continue
         name = match.group(1).strip(" .,?!")
         if _NOT_A_SUPPLIER.match(name) or any(name.casefold().startswith(k) or k.startswith(name.casefold()) for k in known):
             continue
