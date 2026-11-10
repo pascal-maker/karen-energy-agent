@@ -95,8 +95,10 @@ _hangups: set[asyncio.Task] = set()
 unended_calls: list[str] = []
 HANGUP_RETRY_SECONDS = (2, 5, 15, 30, 60, 120, 300, 600)
 HANGUP_KEEP_TRYING_SECONDS = 600
-# Openings with an unknown outcome (a timeout): OpenAI may run a call we have no id for, so each
-# keeps a place until this moment.
+# Openings with an unknown outcome (a timeout): OpenAI may run a call we have no id for, so we can't
+# hang it up or ask whether it ended. Each keeps a place until OpenAI's own limit has passed:
+# OpenAI's Realtime guide gives 60 minutes as the maximum length of a session.
+PROVIDER_MAX_CALL_SECONDS = int(os.getenv("KAREN_REALTIME_PROVIDER_MAX_SECONDS", "3600")) + 60
 _uncertain_until: list[float] = []
 
 
@@ -124,7 +126,7 @@ def reserve_call(today: dt.date | None = None, now: float | None = None) -> str:
 def release_reservation(refused: bool, now: float | None = None) -> None:
     """The call was not opened, as far as we know. Only a confirmed refusal frees the place and the
     daily slot: after a timeout OpenAI may have opened a call anyway, so that one stays counted for
-    the day and keeps its place for the length of a call."""
+    the day and keeps its place until OpenAI's own session limit has passed."""
     global _pending, _sessions_today
     now = time.monotonic() if now is None else now
     with _lock:
@@ -132,7 +134,7 @@ def release_reservation(refused: bool, now: float | None = None) -> None:
         if refused:
             _sessions_today = max(0, _sessions_today - 1)
         else:
-            _uncertain_until.append(now + MAX_CONVERSATION_SECONDS)
+            _uncertain_until.append(now + PROVIDER_MAX_CALL_SECONDS)
 
 
 def register_call(call_id: str, now: float | None = None) -> str:

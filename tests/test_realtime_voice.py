@@ -261,16 +261,15 @@ def test_a_call_keeps_its_place_until_openai_confirms_also_after_the_retry_sched
     assert realtime_voice.unended_calls == [] and realtime_voice.reserve_call() == ""
 
 
-def test_an_opening_with_an_unknown_outcome_keeps_a_place_for_the_length_of_a_call(monkeypatch):
-    monkeypatch.setattr(realtime_voice, "_calls", {})
-    monkeypatch.setattr(realtime_voice, "_pending", 0)
-    monkeypatch.setattr(realtime_voice, "_uncertain_until", [])
-    monkeypatch.setattr(realtime_voice, "_sessions_today", 0)
+def test_an_opening_with_an_unknown_outcome_keeps_a_place_until_openais_own_limit(monkeypatch):
     monkeypatch.setattr(realtime_voice, "MAX_OPEN_CALLS", 1)
+    assert realtime_voice.PROVIDER_MAX_CALL_SECONDS >= 3600  # OpenAI: a session lasts at most 60 minutes
     assert realtime_voice.reserve_call(now=100.0) == ""
     realtime_voice.release_reservation(refused=False, now=100.0)  # a timeout: OpenAI may have opened it
-    assert realtime_voice.reserve_call(now=101.0) == "busy"
-    assert realtime_voice.reserve_call(now=101.0 + realtime_voice.MAX_CONVERSATION_SECONDS) == ""
+    # Our own five minutes say nothing about a call we can't hang up.
+    assert realtime_voice.reserve_call(now=101.0 + realtime_voice.MAX_CONVERSATION_SECONDS) == "busy"
+    assert realtime_voice.reserve_call(now=99.0 + realtime_voice.PROVIDER_MAX_CALL_SECONDS) == "busy"
+    assert realtime_voice.reserve_call(now=101.0 + realtime_voice.PROVIDER_MAX_CALL_SECONDS) == ""
     realtime_voice.release_reservation(refused=True)  # a refusal frees the place at once
     assert realtime_voice.reserve_call() == ""
 
