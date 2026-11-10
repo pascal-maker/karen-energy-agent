@@ -189,6 +189,8 @@
 
   function stop() {
     clearTimeout(stopTimer);
+    clearTimeout(listenTimer);
+    listening = false;
     generation += 1;
     voice.pause();
     try { dc && dc.close(); } catch (e) {}

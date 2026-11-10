@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict, deque
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from copy import deepcopy# used to create a deep copy of the state
 from pathlib import Path# used to handle file paths
 from typing import Any# used for type hints
@@ -1250,12 +1250,17 @@ async def api_realtime_speech(request: Request, token: str, language: str = "nl"
         raise HTTPException(status_code=503, detail="De stem is nu niet beschikbaar.") from error
 
     async def body_stream():
-        yield first
-        while True:
-            chunk = await asyncio.to_thread(next, chunks, b"")
-            if not chunk:
-                return
-            yield chunk
+        try:
+            yield first
+            while True:
+                chunk = await asyncio.to_thread(next, chunks, b"")
+                if not chunk:
+                    return
+                yield chunk
+        finally:
+            # The visitor interrupted Karen: stop pulling audio from the text-to-speech model.
+            with suppress(Exception):
+                chunks.close()
 
     return StreamingResponse(body_stream(), media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
 

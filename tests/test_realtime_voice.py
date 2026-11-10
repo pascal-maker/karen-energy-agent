@@ -95,3 +95,30 @@ def test_the_session_key_comes_with_spoken_greeting_and_wait_line(api, realtime_
     assert reply.status_code == 200 and body["client_secret"] == "ek_test" and seen["language"] == "fr"
     assert body["greeting_token"] and body["wait_token"]
     assert client.post("/api/realtime-session", json={"language": "de"}).status_code == 422
+
+
+def test_a_fourth_conversation_in_five_minutes_is_refused(api, realtime_on, monkeypatch):  # noqa: F811
+    import energy_voice_app
+
+    client, _, _ = api
+
+    async def fake_secret(language):
+        return {"client_secret": "ek_test", "expires_at": 0, "max_seconds": 300}
+
+    monkeypatch.setattr(realtime_voice, "create_client_secret", fake_secret)
+    monkeypatch.setattr(energy_voice_app, "_realtime_rate_limiter",
+                        energy_voice_app.SlidingWindowRateLimiter(requests=3, window_seconds=300, max_clients=10))
+    codes = [client.post("/api/realtime-session", json={"language": "nl"}).status_code for _ in range(4)]
+    assert codes == [200, 200, 200, 429]
+
+
+def test_a_signed_text_can_no_longer_be_spoken_after_five_minutes(api, realtime_on, monkeypatch):  # noqa: F811
+    import energy_voice_app
+
+    client, _, _ = api
+    monkeypatch.setattr(realtime_voice, "stream_speech", lambda text, language: iter([b"ID3fake-mp3"]))
+    token = energy_voice_app._sign_public_speech("Bel 0800 65 0 65.")
+    assert client.get("/api/realtime-speech", params={"token": token}).status_code == 200
+    now = energy_voice_app.time.time()
+    monkeypatch.setattr(energy_voice_app.time, "time", lambda: now + 301)
+    assert client.get("/api/realtime-speech", params={"token": token}).status_code == 404
