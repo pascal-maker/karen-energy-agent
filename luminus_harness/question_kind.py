@@ -149,11 +149,19 @@ _NOT_A_SUPPLIER = re.compile(
 )
 
 
-def _known_card_suppliers() -> set[str]:
+def _known_card_suppliers() -> set[str] | None:
+    """Suppliers with a checked tariff card; None when the list can't be read."""
     import json
+    import logging
     from pathlib import Path
 
-    data = json.loads((Path(__file__).resolve().parent.parent / "market" / "tariffs-phase2.json").read_text())
+    cards = Path(__file__).resolve().parent.parent / "market" / "tariffs-phase2.json"
+    try:
+        data = json.loads(cards.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # A missing file must never cost the visitor an answer: without the list, no name is called unknown.
+        logging.getLogger(__name__).error("Tariff cards not readable at %s; the unknown-supplier check is off.", cards)
+        return None
     return {entry["name"].casefold() for key in ("suppliers", "gas_suppliers") for entry in data.get(key, [])}
 
 
@@ -186,6 +194,8 @@ def unknown_supplier(question: str) -> str | None:
     if listed:
         return next(name for name in _OTHER_SUPPLIERS if name.casefold() == listed.group(1).casefold())
     known = _known_card_suppliers()
+    if known is None:
+        return None
     for match in _NAME_AFTER.finditer(question):
         # "een warmtepomp van Daikin": the brand of a product, not an energy supplier.
         if _PRODUCT.search(question[max(0, match.start() - 40):match.start()]):

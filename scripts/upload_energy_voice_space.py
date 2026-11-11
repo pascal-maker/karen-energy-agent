@@ -41,6 +41,8 @@ def main() -> None:
         "luminus_harness/contract_check.py": repo_root / "luminus_harness" / "contract_check.py",
         "luminus_harness/safety.py": repo_root / "luminus_harness" / "safety.py",
         "luminus_harness/question_kind.py": repo_root / "luminus_harness" / "question_kind.py",
+        # question_kind.py reads the suppliers with a checked tariff card from this file.
+        "market/tariffs-phase2.json": repo_root / "market" / "tariffs-phase2.json",
         "luminus_harness/feedback.py": repo_root / "luminus_harness" / "feedback.py",
         "luminus_harness/fuel_prices.py": repo_root / "luminus_harness" / "fuel_prices.py",
         "luminus_harness/conversation_log.py": repo_root / "luminus_harness" / "conversation_log.py",
