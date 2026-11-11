@@ -275,3 +275,29 @@ def test_flemish_advice_keeps_its_cards_and_decision(api_with_fixed_cards, earli
 def test_a_flemish_offer_still_gets_its_probability(api_with_fixed_cards):
     reply = ask_after(api_with_fixed_cards, "Is een vast contract aan 25 cent per kWh beter dan variabel?", "Ik woon in Leuven.")
     assert reply["decision"] == "variable" and "Tip: Energyvision" in reply["answer"]
+
+
+# --- leaving a contract is not fixed-or-variable (comparer-5/5 and 5/6, regression run of 7b94ce3) ----
+
+@pytest.mark.parametrize("question", [
+    "En als ik mijn vast contract nu al opzeg, 2 maanden voor het einde: moet ik dan een verbrekingsvergoeding "
+    "betalen, of verlies ik de vaste vergoeding?",
+    "Ik vroeg niet vast versus variabel. Simpele vraag: betaal ik een verbrekingsvergoeding als ik mijn vast "
+    "Eneco-contract vroegtijdig opzeg? Ja of nee?",
+    "Wat is de opzegtermijn van een vast contract, en moet ik die respecteren?",
+    "Dois-je payer une indemnité si je quitte mon contrat fixe avant la fin ? Il vaut mieux attendre ?",
+    "Should I expect a termination fee if I leave my fixed contract early?",
+])
+def test_a_termination_fee_question_gets_no_fixed_or_variable_sum(api_with_fixed_cards, question):
+    reply = ask(api_with_fixed_cards, question)
+    assert reply.get("processing") != "contract-advice" and "decision" not in reply
+    assert "OCTA+" not in reply["answer"]
+
+
+def test_jev_cannot_send_a_termination_fee_question_to_the_sum(api_with_fixed_cards, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    monkeypatch.setenv("KAREN_JEV_ROUTING", "1")
+    monkeypatch.setattr(jev, "_post_system_one", lambda _body: {"answers": {"answer": {
+        "type": "choice", "choice": "contract_advice", "confidence": 0.95, "probabilities": {}}}})
+    reply = ask(api_with_fixed_cards, "Betaal ik een verbrekingsvergoeding als ik mijn vast contract vroegtijdig opzeg?")
+    assert reply.get("processing") != "contract-advice" and "decision" not in reply
