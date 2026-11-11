@@ -133,6 +133,40 @@ def regional_tariff_answer(region: str, language: str) -> dict:
             "processing": "regional-tariff"}
 
 
+def regional_contract_advice_answer(region: str, language: str) -> dict:
+    """Fixed or variable, for Brussels or Wallonia: the general difference and the region's own comparator.
+
+    The fixed-or-variable sum uses Flemish tariff cards on both sides, so it is not made for these regions.
+    """
+    from .market_prices import _COMPARATORS
+
+    name, url = _COMPARATORS[region]
+    place = {"brussels": {"nl": "Brussel", "fr": "Bruxelles", "en": "Brussels"},
+             "wallonia": {"nl": "Wallonië", "fr": "la Wallonie", "en": "Wallonia"}}[region][language]
+    answer = {
+        "nl": "Bij een vast contract blijft de energieprijs per kWh gelijk zolang het contract loopt: je factuur is "
+              "voorspelbaar, ook als de markt stijgt. Bij een variabel contract volgt de prijs de markt: je betaalt "
+              "minder als de markt daalt en meer als die stijgt. "
+              f"Welke van de twee nu goedkoper is voor {place}, kan ik niet uitrekenen: mijn tariefkaarten gelden "
+              f"voor Vlaanderen. Vergelijk vaste en variabele contracten voor jouw verbruik met de officiële "
+              f"vergelijker {name}: {url}",
+        "fr": "Avec un contrat fixe, le prix de l'énergie par kWh reste le même pendant toute la durée du contrat : "
+              "la facture est prévisible, même si le marché monte. Avec un contrat variable, le prix suit le marché : "
+              "moins cher quand le marché baisse, plus cher quand il monte. "
+              f"Lequel des deux est le moins cher aujourd'hui pour {place}, je ne peux pas le calculer : mes cartes "
+              f"tarifaires valent pour la Flandre. Pour comparer les contrats fixes et variables selon la "
+              f"consommation, il y a le comparateur officiel {name} : {url}",
+        "en": "With a fixed contract the energy price per kWh stays the same for as long as the contract runs: your "
+              "bill is predictable, even when the market rises. With a variable contract the price follows the "
+              "market: you pay less when it falls and more when it rises. "
+              f"Which of the two is cheaper right now for {place}, I can't work out: my tariff cards are for "
+              f"Flanders. Compare fixed and variable contracts for your usage with the official comparator "
+              f"{name}: {url}",
+    }[language]
+    return {"answer": answer, "sources": [{"title": name, "url": url}], "live_source_status": "not-needed",
+            "processing": "contract-advice"}
+
+
 # --- A price at a supplier Karen has no card for ----------------------------------------------------
 
 # Real Belgian suppliers without a checked tariff card here (the cards: market/tariffs-phase2.json).
