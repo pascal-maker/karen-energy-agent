@@ -77,7 +77,7 @@ from luminus_harness.admin_page import conversations_csv, render_admin_page
 from luminus_harness import expert_judge
 from luminus_harness.safety import BRUSSELS, WALLONIA, answer_safety_question, visitor_region
 from luminus_harness.question_kind import (
-    asks_for_opinion, asks_for_tariff, price_route_allowed, regional_tariff_answer, unknown_supplier,
+    asks_for_opinion, asks_for_tariff, price_route_allowed, regional_contract_advice_answer, regional_tariff_answer, unknown_supplier,
     unknown_supplier_answer,
 )
 from luminus_harness import realtime_voice
@@ -1115,6 +1115,9 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
     if route in (None, "contract_advice"):
         advice = await answer_contract_advice(question, recognised=route == "contract_advice")
         if advice is not None:
+            # The sum compares Flemish tariff cards; outside Flanders: the general difference and the region's comparator.
+            if region in (BRUSSELS, WALLONIA):
+                advice = regional_contract_advice_answer(region, language)
             return _with_petra_speech(advice)
     # "What does Octa+ fixed cost?": that supplier's own verified tariff cards.
     supplier_prices = await answer_supplier_price_question(question) if prices_asked else None

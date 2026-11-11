@@ -203,3 +203,75 @@ def test_a_cheaper_multi_year_card_is_named_and_explained():
     answer = contract_advice.contract_advice_reply("vast of variabel?", data)["answer"]
     assert "OCTA+ Fixed aan 18,4 cent/kWh" in answer
     assert "goedkoper aan 13,6 cent/kWh, maar die prijs ligt 3 jaar vast" in answer
+
+
+# --- outside Flanders: the general difference and the region's comparator, never a Flemish card -------
+
+@pytest.fixture
+def api_with_fixed_cards(api, monkeypatch):
+    import energy_voice_app as app
+
+    async def as_asked(question, history):
+        return question
+
+    monkeypatch.setattr(app, "standalone_question", as_asked)
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_fixed_cards(market())))
+    return api
+
+
+def ask_after(api, question, earlier):
+    response = api[0].post("/api/answer", json={"question": question, "history": [{"question": earlier, "answer": "…"}]})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def assert_no_flemish_numbers(reply):
+    for flemish in ("OCTA+", "Energyvision", "Eneco", "c€/kWh", "cent/kWh", "%"):
+        assert flemish not in reply["answer"], flemish
+    assert "decision" not in reply and "probability_variable_cheaper" not in reply
+    assert all("octaplus" not in source.get("url", "") for source in reply["sources"])
+
+
+@pytest.mark.parametrize("question, comparator", [
+    # brussels-fr-1/1 and wallonia-fr-1/3 from the regression run of 7b94ce3
+    ("Salut Karen, j'habite à Ixelles et j'ai un contrat variable chez Engie depuis 3 ans, environ 2800 kWh par an "
+     "plus le gaz. Tu penses que je devrais passer à un contrat fixe ?", "BruSim"),
+    ("J'habite à Namur. Pour moi, qu'est-ce qui est le mieux : un contrat à prix fixe ou à prix variable ? "
+     "J'ai des panneaux solaires et un compteur communicant depuis peu.", "CompaCWaPE"),
+    ("Ik woon in Elsene. Is een vast contract aan 25 cent per kWh beter dan variabel?", "BruSim"),
+    ("I live in Liège. Should I take a fixed contract at 17 cents or variable?", "CompaCWaPE"),
+])
+def test_advice_outside_flanders_names_no_flemish_card(api_with_fixed_cards, question, comparator):
+    reply = ask(api_with_fixed_cards, question)
+    assert reply["processing"] == "contract-advice" and comparator in reply["answer"]
+    assert_no_flemish_numbers(reply)
+    api_with_fixed_cards[1].assert_not_awaited()
+
+
+@pytest.mark.parametrize("earlier, question, comparator, words", [
+    ("J'habite à Ixelles, chez Engie depuis 3 ans.", "Contrat fixe ou variable, qu'est-ce qui est le mieux ?",
+     "BruSim", "Avec un contrat fixe"),
+    ("Bonjour, j'habite en Wallonie, à Namur.", "D'accord. Pour moi, qu'est-ce qui est le mieux : un contrat à prix "
+     "fixe ou à prix variable ?", "CompaCWaPE", "Avec un contrat fixe"),
+    ("Ik woon in Elsene.", "Vast of variabel?", "BruSim", "Bij een vast contract"),
+    ("Ik woon in Namen.", "Is een vast contract aan 21 cent per kWh beter dan variabel?", "CompaCWaPE",
+     "Bij een vast contract"),
+])
+def test_the_region_from_an_earlier_turn_counts(api_with_fixed_cards, earlier, question, comparator, words):
+    reply = ask_after(api_with_fixed_cards, question, earlier)
+    assert reply["processing"] == "contract-advice" and comparator in reply["answer"]
+    assert reply["answer"].startswith(words)
+    assert_no_flemish_numbers(reply)
+
+
+@pytest.mark.parametrize("earlier", [None, "Ik woon in Gent."])
+def test_flemish_advice_keeps_its_cards_and_decision(api_with_fixed_cards, earlier):
+    question = "Vast of variabel?"
+    reply = ask(api_with_fixed_cards, question) if earlier is None else ask_after(api_with_fixed_cards, question, earlier)
+    assert "decision" in reply and "OCTA+ Fixed aan 18,4 cent/kWh" in reply["answer"]
+    assert "BruSim" not in reply["answer"] and "CompaCWaPE" not in reply["answer"]
+
+
+def test_a_flemish_offer_still_gets_its_probability(api_with_fixed_cards):
+    reply = ask_after(api_with_fixed_cards, "Is een vast contract aan 25 cent per kWh beter dan variabel?", "Ik woon in Leuven.")
+    assert reply["decision"] == "variable" and "Tip: Energyvision" in reply["answer"]
