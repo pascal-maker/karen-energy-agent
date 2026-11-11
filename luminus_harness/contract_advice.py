@@ -36,6 +36,13 @@ _CONTRACT = re.compile(r"\b(?:contract\w*|prijs|price|tarief|tariff|formule|offe
 _CENTS = re.compile(r"(\d{1,2}(?:[.,]\d{1,3})?)\s*(?:c€|ct|cent\w*|eurocent)", re.IGNORECASE)
 _EUROS = re.compile(r"(?:€\s*(0[.,]\d{2,5})|(0[.,]\d{2,5})\s*(?:€|eur\w*))", re.IGNORECASE)
 _GAS = re.compile(r"\b\w*gas\w*\b", re.IGNORECASE)
+# Leaving a contract (a termination fee, the notice period) is another question, even when it says "vast contract".
+_LEAVING = re.compile(
+    r"\b(?:verbrekingsvergoeding\w*|opzeg(?:gings)?(?:vergoeding|kost|termijn)\w*|boete\w*|"
+    r"indemnité\w*|frais\s+de\s+(?:résiliation|rupture)|préavis|"
+    r"(?:termination|cancellation|exit|break)\s+fees?|penalt\w+|notice\s+period)\b",
+    re.IGNORECASE,
+)
 _USAGE = re.compile(r"(\d{1,3}(?:[. ]\d{3})+|\d{3,6})\s*kwh", re.IGNORECASE)
 
 
@@ -276,6 +283,8 @@ async def answer_contract_advice(question: str, *, recognised: bool = False) -> 
 
     `recognised` skips the word-list check when Jev already routed the question here.
     """
+    if _LEAVING.search(question):
+        return None
     if _GAS.search(question) or (not recognised and not is_contract_advice_question(question)):
         # Only electricity forecasts and tariff cards are published, so gas contracts take the source path.
         return None
