@@ -86,7 +86,7 @@ from luminus_harness.steps import answer_steps
 from luminus_harness import langfuse_trace
 from luminus_harness.invoice_schema import FOLLOW_UP_SUGGESTIONS
 from luminus_harness.market_prices import answer_language, question_language, reply_language
-from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, today_summary
+from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, objection_to_period_answer, today_summary
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -1089,6 +1089,10 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
     safety = answer_safety_question(asked, history)
     if safety is not None:
         return _with_petra_speech(safety)
+    # "Dat is niet per kwartaal" right after a price compared with an earlier period: why, not a new search.
+    objection = objection_to_period_answer(asked, history)
+    if objection is not None:
+        return _with_petra_speech(objection)
     question = await standalone_question(asked, history)
     language = question_language(asked)
     if asks_for_opinion(asked) or asks_for_opinion(question):

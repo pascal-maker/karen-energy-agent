@@ -396,6 +396,63 @@ def gas_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | 
     }
 
 
+# "Hoeveel kost gas nu vergeleken met vorig kwartaal": Karen has today's cards and today's market price only.
+_EARLIER_PERIOD = re.compile(
+    r"\bvorige?\s+(?:kwartaal|maand|jaar|week|winter|zomer|keer)\b|\bvroeger\b|\bgestegen\b|\bgedaald\b"
+    r"|\b(?:duurder|goedkoper)\s+(?:dan|geworden)\b"
+    r"|\b(?:trimestre|mois|ann[ée]e|hiver)\s+(?:dernier|derni[eè]re|pr[ée]c[ée]dent\w*)\b|\bplus\s+cher\s+que\b|\b(?:augment|baiss)[ée]"
+    r"|\blast\s+(?:quarter|month|year|winter|week)\b|\b(?:more|less)\s+expensive\s+than\b|\b(?:gone|went)\s+(?:up|down)\b",
+    re.IGNORECASE,
+)
+_NAMED_PERIOD = re.compile(r"(?i)\bvorige?\s+(?:kwartaal|maand|jaar|week|winter|zomer)\b")
+NO_EARLIER_PRICES = {
+    "nl": "Ik heb alleen de prijzen van vandaag, geen prijzen van {period}. Daarom kan ik niet vergelijken; dit zijn de huidige prijzen.",
+    "en": "I only have today's prices, not those of an earlier period, so I can't compare. These are the current prices.",
+    "fr": "Je n'ai que les prix d'aujourd'hui, pas ceux d'une période précédente : je ne peux donc pas comparer. Voici les prix actuels.",
+}
+_OBJECTION_REPLY = {
+    "nl": "Klopt: ik heb alleen de prijzen van vandaag, geen prijzen van {period}. Daarom kon ik niet vergelijken met een eerdere periode. "
+          "De CREG publiceert wel per kwartaal het sociaal tarief, en op de V-test zie je de huidige contracten.",
+    "en": "Right: I only have today's prices, not those of an earlier period, so I could not compare. "
+          "The CREG does publish the social tariff per quarter, and the V-test shows today's contracts.",
+    "fr": "C'est exact : je n'ai que les prix d'aujourd'hui, pas ceux d'une période précédente, donc je n'ai pas pu comparer. "
+          "La CREG publie toutefois le tarif social par trimestre, et le V-test montre les contrats actuels.",
+}
+_OBJECTION = re.compile(
+    r"^\s*(?:nee|neen|no|non)?[\s,!.]*(?:(?:dat|dit|het|that|this|ce|c')\s*(?:is|zijn|klopt|geldt|was|waren|'s|est|n'est)\s+(?:niet|geen|not|pas|faux|wrong)\b"
+    r"|klopt\s+niet|dat\s+vroeg\s+ik\s+niet|that'?s\s+(?:not|wrong)|c'est\s+faux)",
+    re.IGNORECASE,
+)
+
+
+def earlier_period_asked(question: str) -> bool:
+    return bool(_EARLIER_PERIOD.search(question))
+
+
+def _period(question: str) -> str:
+    named = _NAMED_PERIOD.search(question)
+    return named.group(0).lower().replace("vorige kwartaal", "vorig kwartaal").replace("vorige jaar", "vorig jaar") if named else "een eerdere periode"
+
+
+def _with_no_earlier_prices(reply: dict[str, Any] | None, question: str) -> dict[str, Any] | None:
+    if reply is None or not earlier_period_asked(question):
+        return reply
+    lead = NO_EARLIER_PRICES.get(question_language(question), NO_EARLIER_PRICES["nl"]).format(period=_period(question))
+    return {**reply, "answer": f"{lead}\n{reply['answer']}"}
+
+
+def objection_to_period_answer(asked: str, history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """"Dat is niet per kwartaal" after a price compared with an earlier period: the reason, in code, not a new search."""
+    if not history or len(asked.split()) > 8 or not _OBJECTION.search(asked):
+        return None
+    previous = str(history[-1].get("question", ""))
+    if not earlier_period_asked(previous):
+        return None
+    lang = question_language(asked) if question_language(asked) != "nl" else question_language(previous)
+    answer = _OBJECTION_REPLY.get(lang, _OBJECTION_REPLY["nl"]).format(period=_period(previous))
+    return {"answer": answer, "sources": [], "live_source_status": "checked", "processing": "market-data"}
+
+
 async def answer_market_price_question(question: str, *, recognised: bool = False, region: str = "flanders") -> dict[str, Any] | None:
     """None when this isn't a general price question or market.json is unavailable.
 
@@ -409,7 +466,7 @@ async def answer_market_price_question(question: str, *, recognised: bool = Fals
 
             return regional_tariff_answer(region, question_language(question))
         data = await load_market_data()
-        return gas_price_reply(data, question_language(question)) if data is not None else None
+        return _with_no_earlier_prices(gas_price_reply(data, question_language(question)), question) if data is not None else None
     if recognised:
         if _OTHER_SUBJECT.search(question) or _HOUSEHOLD_INPUT.search(question):
             return None
@@ -418,7 +475,7 @@ async def answer_market_price_question(question: str, *, recognised: bool = Fals
     data = await load_market_data()
     if data is None:
         return None
-    return market_price_reply(data, question_language(question), region or "flanders")
+    return _with_no_earlier_prices(market_price_reply(data, question_language(question), region or "flanders"), question)
 
 
 _COMPARATORS = {
