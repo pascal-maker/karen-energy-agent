@@ -397,11 +397,15 @@ def gas_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | 
 
 
 # "Hoeveel kost gas nu vergeleken met vorig kwartaal": Karen has today's cards and today's market price only.
+# A comparison counts only with a time in it: "goedkoper dan elektriciteit" compares two things today.
+_THEN_NL = r"(?:vorige?\b|vroeger|voorheen|toen|eerst|eerder|(?:een\s+|\d+\s+)?(?:jaar|maand|maanden|week|weken|kwartaal)\s+geleden|in\s+(?:19|20)\d{2})"
 _EARLIER_PERIOD = re.compile(
     r"\bvorige?\s+(?:kwartaal|maand|jaar|week|winter|zomer|keer)\b|\bvroeger\b|\bgestegen\b|\bgedaald\b"
-    r"|\b(?:duurder|goedkoper)\s+(?:dan|geworden)\b"
-    r"|\b(?:trimestre|mois|ann[ée]e|hiver)\s+(?:dernier|derni[eè]re|pr[ée]c[ée]dent\w*)\b|\bplus\s+cher\s+que\b|\b(?:augment|baiss)[ée]"
-    r"|\blast\s+(?:quarter|month|year|winter|week)\b|\b(?:more|less)\s+expensive\s+than\b|\b(?:gone|went)\s+(?:up|down)\b",
+    r"|\b(?:jaar|maand|maanden|week|weken|kwartaal)\s+geleden\b"
+    r"|\b(?:duurder|goedkoper)\s+(?:geworden\b|dan\s+" + _THEN_NL + r")"
+    r"|\b(?:trimestre|mois|ann[ée]e|an|hiver)\s+(?:dernier|derni[eè]re|pr[ée]c[ée]dent\w*)\b|\b(?:plus|moins)\s+cher\s+qu['’]\s*(?:avant|auparavant)\b|\b(?:augment|baiss)[ée]"
+    r"|\blast\s+(?:quarter|month|year|winter|week)\b|\b(?:more\s+expensive|less\s+expensive|cheaper)\s+than\s+(?:before|last|a\s+year\s+ago)\b"
+    r"|\b(?:gone|went)\s+(?:up|down)\b",
     re.IGNORECASE,
 )
 _NAMED_PERIOD = re.compile(r"(?i)\bvorige?\s+(?:kwartaal|maand|jaar|week|winter|zomer)\b")
@@ -434,19 +438,32 @@ def _period(question: str) -> str:
     return named.group(0).lower().replace("vorige kwartaal", "vorig kwartaal").replace("vorige jaar", "vorig jaar") if named else "een eerdere periode"
 
 
-def _with_no_earlier_prices(reply: dict[str, Any] | None, question: str) -> dict[str, Any] | None:
-    if reply is None or not earlier_period_asked(question):
+# The price routes whose answer is today's cards or today's market price.
+_TODAY_PRICE_ROUTES = {"market-data", "supplier-tariff-card", "offer-comparison"}
+_NO_EARLIER_PRICES_START = tuple(text.split("{period}")[0].split(",")[0] for text in NO_EARLIER_PRICES.values())
+
+
+def with_no_earlier_prices(reply: dict[str, Any] | None, *questions: str) -> dict[str, Any] | None:
+    """A price answer to a question that compares with an earlier period starts by saying Karen has today's prices only.
+    Every price route goes through here: the market price, a named supplier's card and the offer comparison."""
+    asked = next((question for question in questions if earlier_period_asked(question)), None)
+    if reply is None or asked is None or reply.get("processing") not in _TODAY_PRICE_ROUTES:
         return reply
-    lead = NO_EARLIER_PRICES.get(question_language(question), NO_EARLIER_PRICES["nl"]).format(period=_period(question))
+    lead = NO_EARLIER_PRICES.get(question_language(questions[0]), NO_EARLIER_PRICES["nl"]).format(period=_period(asked))
     return {**reply, "answer": f"{lead}\n{reply['answer']}"}
 
 
+def said_no_earlier_prices(answer: str) -> bool:
+    return answer.lstrip().startswith(_NO_EARLIER_PRICES_START)
+
+
 def objection_to_period_answer(asked: str, history: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """"Dat is niet per kwartaal" after a price compared with an earlier period: the reason, in code, not a new search."""
+    """"Dat is niet per kwartaal" right after Karen's own "I only have today's prices" answer: the reason, in code,
+    not a new search. What the previous question was about does not count: only that answer does."""
     if not history or len(asked.split()) > 8 or not _OBJECTION.search(asked):
         return None
     previous = str(history[-1].get("question", ""))
-    if not earlier_period_asked(previous):
+    if not said_no_earlier_prices(str(history[-1].get("answer", ""))):
         return None
     lang = question_language(asked) if question_language(asked) != "nl" else question_language(previous)
     answer = _OBJECTION_REPLY.get(lang, _OBJECTION_REPLY["nl"]).format(period=_period(previous))
@@ -466,7 +483,7 @@ async def answer_market_price_question(question: str, *, recognised: bool = Fals
 
             return regional_tariff_answer(region, question_language(question))
         data = await load_market_data()
-        return _with_no_earlier_prices(gas_price_reply(data, question_language(question)), question) if data is not None else None
+        return gas_price_reply(data, question_language(question)) if data is not None else None
     if recognised:
         if _OTHER_SUBJECT.search(question) or _HOUSEHOLD_INPUT.search(question):
             return None
@@ -475,7 +492,7 @@ async def answer_market_price_question(question: str, *, recognised: bool = Fals
     data = await load_market_data()
     if data is None:
         return None
-    return _with_no_earlier_prices(market_price_reply(data, question_language(question), region or "flanders"), question)
+    return market_price_reply(data, question_language(question), region or "flanders")
 
 
 _COMPARATORS = {

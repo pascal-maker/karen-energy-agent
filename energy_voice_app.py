@@ -86,7 +86,7 @@ from luminus_harness.steps import answer_steps
 from luminus_harness import langfuse_trace
 from luminus_harness.invoice_schema import FOLLOW_UP_SUGGESTIONS
 from luminus_harness.market_prices import answer_language, question_language, reply_language
-from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, objection_to_period_answer, today_summary
+from luminus_harness.market_prices import answer_market_price_question, answer_offer_comparison, answer_specific_price_question, answer_supplier_price_question, is_gas_price_question, load_market_data, objection_to_period_answer, today_summary, with_no_earlier_prices
 from luminus_harness.transcribe import MAX_AUDIO_BYTES, audio_extension, transcribe_dutch
 from luminus_harness.perplexity_agent import (
     PublicWebAgentError,
@@ -1108,7 +1108,8 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
     def for_region(reply: dict[str, Any]) -> dict[str, Any]:
         if region in (BRUSSELS, WALLONIA) and reply.get("processing") in _FLEMISH_CARD_ROUTES:
             return regional_tariff_answer(region, language)
-        return reply
+        # "… vergeleken met vorig kwartaal": every price route says first that Karen has today's prices only.
+        return with_no_earlier_prices(reply, asked, question)
 
     # "Wanneer is stroom het goedkoopst?", "is 3500 kWh veel?", "Luminus of Engie?": a direct answer, never the price list.
     specific = await answer_specific_price_question(question) if prices_asked else None
@@ -1145,7 +1146,7 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
     if prices_asked and (route in (None, "price") or (route != "compare" and is_gas_price_question(question))):
         prices = await answer_market_price_question(question, recognised=route == "price", region=region or "flanders")
         if prices is not None:
-            return _with_petra_speech(prices)
+            return _with_petra_speech(with_no_earlier_prices(prices, asked, question))
     if route in ("small_talk", "off_topic") and mentions_energy(question):
         # Jev sometimes files English or French bill questions as small talk; energy words win.
         route = "energy_other"

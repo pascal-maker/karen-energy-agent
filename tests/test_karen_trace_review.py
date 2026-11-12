@@ -79,7 +79,8 @@ def test_earlier_period_lead_in_french_and_english():
 # --- 3. "Dat is niet per kwartaal" after that answer got nothing -------------------------------------------
 
 GAS_TURN = ("Hoeveel kost aardgas nu vergeleken met vorig kwartaal",
-            "Gasprijzen op de huidige tariefkaarten van leveranciers in Vlaanderen: ...")
+            "Ik heb alleen de prijzen van vandaag, geen prijzen van vorig kwartaal. Daarom kan ik niet vergelijken; "
+            "dit zijn de huidige prijzen.\nGasprijzen op de huidige tariefkaarten van leveranciers in Vlaanderen: ...")
 
 
 @pytest.mark.parametrize("objection", ["Dat is niet per kwartaal", "dat klopt niet", "Nee, dat vroeg ik niet", "Dat zijn geen kwartaalprijzen"])
@@ -94,3 +95,76 @@ def test_an_objection_without_a_period_question_keeps_the_source_path(api, monke
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
     reply = ask(api, "Dat klopt niet", history=[("Hoe zeg ik mijn contract op?", "Via je leverancier ...")])
     assert reply["answer"] == "Bestaand antwoord"
+
+
+# --- review of a9fabbb -------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("question", [
+    "Hoeveel kost aardgas bij Eneco vergeleken met vorig kwartaal?",
+    "Wat kost gas bij Eneco nu tegenover vorig jaar?",
+])
+def test_review_a9fabbb_supplier_price_against_an_earlier_period_says_so_too(api, monkeypatch, question):  # noqa: F811
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
+    reply = ask(api, question)
+    assert reply["processing"] == "supplier-tariff-card", reply
+    lead = reply["answer"].split("\n")[0]
+    assert "alleen de prijzen van vandaag" in lead and "niet vergelijken" in lead, reply["answer"]
+    assert "tariefkaart van Eneco" in reply["answer"] and "Eneco Aardgas Flex (variabel): 9,1 cent/kWh" in reply["answer"], "Today's Eneco card still follows"
+
+
+def test_review_a9fabbb_plain_supplier_price_has_no_lead(api, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
+    reply = ask(api, "Hoeveel kost aardgas bij Eneco?")
+    assert reply["processing"] == "supplier-tariff-card" and "niet vergelijken" not in reply["answer"]
+
+
+@pytest.mark.parametrize("question", [
+    "Hoeveel kost gas per kWh, is dat goedkoper dan elektriciteit?",
+    "Is gas duurder dan stroom?",
+    "Is Eneco goedkoper dan Luminus?",
+    "le gaz est-il plus cher que l'électricité ?",
+    "is gas more expensive than electricity?",
+])
+def test_review_a9fabbb_comparing_two_things_today_is_no_earlier_period(question):
+    assert not market_prices.earlier_period_asked(question), question
+
+
+@pytest.mark.parametrize("question", [
+    "Is gas duurder dan vorig jaar?", "Is stroom goedkoper dan vroeger?", "Is gas duurder geworden?",
+    "Is gas duurder dan een jaar geleden?", "le gaz est-il plus cher que l'an dernier ?", "is gas more expensive than last year?",
+    "is gas more expensive than before?",
+])
+def test_review_a9fabbb_a_comparison_with_a_time_is_an_earlier_period(question):
+    assert market_prices.earlier_period_asked(question), question
+
+
+def test_review_a9fabbb_gas_against_electricity_gets_no_period_lead(api, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
+    answer = ask(api, "Hoeveel kost gas per kWh, is dat goedkoper dan elektriciteit?")["answer"]
+    assert "eerdere periode" not in answer and "niet vergelijken" not in answer, answer
+
+
+@pytest.mark.parametrize("previous", [
+    ("Hoe check ik mijn energiecontract van vorig jaar?", "Begin bij je eigen contract en beslis niet overhaast. Doe de CREG-scan en de V-test."),
+    ("Is mijn voorschot gestegen tegenover vorig jaar?", "Bestaand antwoord"),
+    ("Hoeveel kost aardgas nu vergeleken met vorig kwartaal", "Gasprijzen op de huidige tariefkaarten van leveranciers in Vlaanderen: ..."),
+])
+@pytest.mark.parametrize("objection", ["Dat klopt niet", "Dat is niet per kwartaal"])
+def test_review_a9fabbb_an_objection_counts_only_after_the_no_earlier_prices_answer(api, monkeypatch, previous, objection):  # noqa: F811
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
+    reply = ask(api, objection, history=[previous])
+    assert "prijzen van vandaag" not in reply["answer"] and "sociaal tarief" not in reply["answer"], reply["answer"]
+
+
+def test_review_a9fabbb_objection_after_the_supplier_period_answer(api, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
+    first = ask(api, "Hoeveel kost aardgas bij Eneco vergeleken met vorig kwartaal?")
+    reply = ask(api, "Dat is niet per kwartaal", history=[("Hoeveel kost aardgas bij Eneco vergeleken met vorig kwartaal?", first["answer"])])
+    assert "vorig kwartaal" in reply["answer"] and "niet vergelijken" in reply["answer"], reply["answer"]
+    api[2].assert_not_awaited()
+
+
+def test_review_a9fabbb_outside_flanders_keeps_the_regional_answer(api, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=with_gas()))
+    reply = ask(api, "Hoeveel kost aardgas bij Eneco in Brussel vergeleken met vorig kwartaal?")
+    assert "prijzen van vandaag" not in reply["answer"], "Karen has no Brussels cards, so she does not claim today's prices"
