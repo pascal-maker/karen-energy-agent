@@ -396,6 +396,80 @@ def gas_price_reply(data: dict[str, Any], lang: str = "nl") -> dict[str, Any] | 
     }
 
 
+# "Hoeveel kost gas nu vergeleken met vorig kwartaal": Karen has today's cards and today's market price only.
+# A comparison counts only with a time in it: "goedkoper dan elektriciteit" compares two things today.
+_THEN_NL = r"(?:vorige?\b|vroeger|voorheen|toen|eerst|eerder|(?:een\s+|\d+\s+)?(?:jaar|maand|maanden|week|weken|kwartaal)\s+geleden|in\s+(?:19|20)\d{2})"
+_EARLIER_PERIOD = re.compile(
+    r"\bvorige?\s+(?:kwartaal|maand|jaar|week|winter|zomer|keer)\b|\bvroeger\b|\bgestegen\b|\bgedaald\b"
+    r"|\b(?:jaar|maand|maanden|week|weken|kwartaal)\s+geleden\b"
+    r"|\b(?:duurder|goedkoper)\s+(?:geworden\b|dan\s+" + _THEN_NL + r")"
+    r"|\b(?:trimestre|mois|ann[ée]e|an|hiver)\s+(?:dernier|derni[eè]re|pr[ée]c[ée]dent\w*)\b|\b(?:plus|moins)\s+cher\s+qu['’]\s*(?:avant|auparavant)\b|\b(?:augment|baiss)[ée]"
+    r"|\blast\s+(?:quarter|month|year|winter|week)\b|\b(?:more\s+expensive|less\s+expensive|cheaper)\s+than\s+(?:before|last|a\s+year\s+ago)\b"
+    r"|\b(?:gone|went)\s+(?:up|down)\b",
+    re.IGNORECASE,
+)
+_NAMED_PERIOD = re.compile(r"(?i)\bvorige?\s+(?:kwartaal|maand|jaar|week|winter|zomer)\b")
+NO_EARLIER_PRICES = {
+    "nl": "Ik heb alleen de prijzen van vandaag, geen prijzen van {period}. Daarom kan ik niet vergelijken; dit zijn de huidige prijzen.",
+    "en": "I only have today's prices, not those of an earlier period, so I can't compare. These are the current prices.",
+    "fr": "Je n'ai que les prix d'aujourd'hui, pas ceux d'une période précédente : je ne peux donc pas comparer. Voici les prix actuels.",
+}
+_OBJECTION_REPLY = {
+    "nl": "Klopt: ik heb alleen de prijzen van vandaag, geen prijzen van {period}. Daarom kon ik niet vergelijken met een eerdere periode. "
+          "De CREG publiceert wel per kwartaal het sociaal tarief, en op de V-test zie je de huidige contracten.",
+    "en": "Right: I only have today's prices, not those of an earlier period, so I could not compare. "
+          "The CREG does publish the social tariff per quarter, and the V-test shows today's contracts.",
+    "fr": "C'est exact : je n'ai que les prix d'aujourd'hui, pas ceux d'une période précédente, donc je n'ai pas pu comparer. "
+          "La CREG publie toutefois le tarif social par trimestre, et le V-test montre les contrats actuels.",
+}
+_OBJECTION = re.compile(
+    r"^\s*(?:nee|neen|no|non)?[\s,!.]*(?:(?:dat|dit|het|that|this|ce|c')\s*(?:is|zijn|klopt|geldt|was|waren|'s|est|n'est)\s+(?:niet|geen|not|pas|faux|wrong)\b"
+    r"|klopt\s+niet|dat\s+vroeg\s+ik\s+niet|that'?s\s+(?:not|wrong)|c'est\s+faux)",
+    re.IGNORECASE,
+)
+
+
+def earlier_period_asked(question: str) -> bool:
+    return bool(_EARLIER_PERIOD.search(question))
+
+
+def _period(question: str) -> str:
+    named = _NAMED_PERIOD.search(question)
+    return named.group(0).lower().replace("vorige kwartaal", "vorig kwartaal").replace("vorige jaar", "vorig jaar") if named else "een eerdere periode"
+
+
+# The price routes whose answer is today's cards or today's market price.
+_TODAY_PRICE_ROUTES = {"market-data", "supplier-tariff-card", "offer-comparison"}
+_NO_EARLIER_PRICES_START = tuple(text.split("{period}")[0].split(",")[0] for text in NO_EARLIER_PRICES.values())
+
+
+def with_no_earlier_prices(reply: dict[str, Any] | None, *questions: str) -> dict[str, Any] | None:
+    """A price answer to a question that compares with an earlier period starts by saying Karen has today's prices only.
+    Every price route goes through here: the market price, a named supplier's card and the offer comparison."""
+    asked = next((question for question in questions if earlier_period_asked(question)), None)
+    if reply is None or asked is None or reply.get("processing") not in _TODAY_PRICE_ROUTES:
+        return reply
+    lead = NO_EARLIER_PRICES.get(question_language(questions[0]), NO_EARLIER_PRICES["nl"]).format(period=_period(asked))
+    return {**reply, "answer": f"{lead}\n{reply['answer']}"}
+
+
+def said_no_earlier_prices(answer: str) -> bool:
+    return answer.lstrip().startswith(_NO_EARLIER_PRICES_START)
+
+
+def objection_to_period_answer(asked: str, history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """"Dat is niet per kwartaal" right after Karen's own "I only have today's prices" answer: the reason, in code,
+    not a new search. What the previous question was about does not count: only that answer does."""
+    if not history or len(asked.split()) > 8 or not _OBJECTION.search(asked):
+        return None
+    previous = str(history[-1].get("question", ""))
+    if not said_no_earlier_prices(str(history[-1].get("answer", ""))):
+        return None
+    lang = question_language(asked) if question_language(asked) != "nl" else question_language(previous)
+    answer = _OBJECTION_REPLY.get(lang, _OBJECTION_REPLY["nl"]).format(period=_period(previous))
+    return {"answer": answer, "sources": [], "live_source_status": "checked", "processing": "market-data"}
+
+
 async def answer_market_price_question(question: str, *, recognised: bool = False, region: str = "flanders") -> dict[str, Any] | None:
     """None when this isn't a general price question or market.json is unavailable.
 

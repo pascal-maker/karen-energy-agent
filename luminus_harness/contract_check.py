@@ -77,9 +77,22 @@ _DISPUTE = re.compile(
 )
 
 
+# A condition the four online steps cannot meet ("zonder internet", "telefonisch", "hoe check ik het NIET"): the
+# fixed text would ignore it, so these questions take the search path (Langfuse trace review, 12 Nov 2026).
+_BEYOND_STEPS = re.compile(
+    r"zonder\s+(?:internet|computer|pc|laptop|smartphone|gsm|online)\b|geen\s+(?:internet|computer|pc|laptop|smartphone)\b"
+    r"|\boffline\b|telefonisch|(?:per|via\s+de|aan\s+de)\s+telefoon|op\s+papier|per\s+(?:post|brief)"
+    r"|\b(?:check|controleer|kijk|bekijk|vergelijk)\w*\s+(?:ik|je|u|we)\s+niet\b|(?:energie)?contract\s+niet\s*[?!.]*\s*$",
+    re.IGNORECASE,
+)
+_SHOUTED_NOT = re.compile(r"\bNIET\b")
+
+
 def contract_check_topic(question: str) -> str | None:
     """Which contract-check answer fits, or None. A named supplier keeps its own opzeg-route."""
     if question_language(question) != "nl" or _DISPUTE.search(question):
+        return None
+    if _BEYOND_STEPS.search(question) or _SHOUTED_NOT.search(question):
         return None
     for topic, pattern in _TOPICS:
         if pattern.search(question):
