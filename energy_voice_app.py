@@ -70,6 +70,7 @@ from luminus_harness.comparison_session import is_offer_comparison_question, pdf
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
 from luminus_harness.contract_check import answer_contract_check
+from luminus_harness.fixed_facts import affirmed_offer, answer_fixed_fact, convert, is_fixed_fact_question, needs_a_source, re_explain
 from luminus_harness.fuel_prices import answer_fuel_price_question
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.conversation_log import build_log_record, load_recent, store_log_record
@@ -1093,8 +1094,23 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
     objection = objection_to_period_answer(asked, history)
     if objection is not None:
         return _with_petra_speech(objection)
-    question = await standalone_question(asked, history)
     language = question_language(asked)
+    # "Hoeveel kJ is een kWh?": computed in code, no search and no model.
+    conversion = convert(asked, language)
+    if conversion is not None:
+        return _with_petra_speech(conversion)
+    # "Dat klopt niet" or "ik snap het niet" after an answer: that answer again, in simpler words.
+    explained = await re_explain(asked, history, language)
+    if explained is not None:
+        return _with_petra_speech(explained)
+    question = await standalone_question(asked, history)
+    # "Ja" to Karen's own "Wil je weten hoeveel kJ een kWh is?": the offered question, when the rewrite left the yes as it was.
+    offered = affirmed_offer(asked, history)
+    if offered and question.strip().lower() == asked.strip().lower():
+        question = offered
+        conversion = convert(question, language)
+        if conversion is not None:
+            return _with_petra_speech(conversion)
     if asks_for_opinion(asked) or asks_for_opinion(question):
         return _with_petra_speech(await answer_small_talk(question, "off_topic"))
     # A price at a supplier without a tariff card: say so, never today's market price instead.
@@ -1147,6 +1163,12 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
         prices = await answer_market_price_question(question, recognised=route == "price", region=region or "flanders")
         if prices is not None:
             return _with_petra_speech(with_no_earlier_prices(prices, asked, question))
+    # What a term means or how something works: general knowledge, marked as such, never for a price, rule,
+    # supplier, region or the visitor's own situation. No usable answer: the source path below, as before.
+    if is_fixed_fact_question(question) and not needs_a_source(asked) and not asks_for_tariff(question):
+        fact = await answer_fixed_fact(question, language)
+        if fact is not None:
+            return _with_petra_speech(fact)
     if route in ("small_talk", "off_topic") and mentions_energy(question):
         # Jev sometimes files English or French bill questions as small talk; energy words win.
         route = "energy_other"
