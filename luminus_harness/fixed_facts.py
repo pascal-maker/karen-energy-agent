@@ -22,6 +22,8 @@ from typing import Any
 from . import gemma_answer
 from .browserbase_sources import named_supplier
 from .market_prices import language_mismatch
+from .question_kind import _OTHER_SUPPLIER_PATTERN
+from .safety import _mentions as _place_mentions
 
 # --- unit conversions, in code ---------------------------------------------------------------------------
 
@@ -60,6 +62,7 @@ _CONVERSION_FILLER = frozenset(
     "combien d y il dans un une font fait vaut égal egal en convertir que ça ca a t".split()
 )
 _ARITHMETIC = re.compile(rf"^\s*({_NUMBER})\s*([+\-])\s*({_NUMBER})\s*([A-Za-zÀ-ÿ\s-]+?)\s*[?=]*\s*$")
+_LEFT_OVER = re.compile(r"[^a-zà-ÿ\s?!.,'’\"()=]")
 _FIXED_CONVERSION = {"nl": "Dat is een vaste omrekening.", "en": "That is a fixed conversion.", "fr": "C'est une conversion fixe."}
 
 
@@ -68,15 +71,44 @@ def _symbol(text: str) -> str | None:
     return next((symbol for name, symbol in _UNIT_NAMES if re.fullmatch(name, lowered)), None)
 
 
-def _number(text: str, lang: str) -> Decimal:
+_GROUPED = r"\d{1,3}(?:%s\d{3})+"
+_MAX_DIGITS = 15
+
+
+def _number(text: str, lang: str) -> Decimal | None:
+    """The number as written, or None when the notation is invalid or can be read two ways: never a guess.
+
+    Two or more groups of three ("1,000,000", "1.000.000", "1 000 000") are thousands in any language. One group
+    is thousands only with the language's own separator: "3.500" in Dutch and French, "3,500" in English; the
+    other way round ("3,500" in Dutch) could be 3500 or 3.5, so it is not computed."""
     digits = re.sub(r"\s", "", text)
-    if "." in digits and "," in digits:
-        decimal_mark = max(".", ",", key=digits.rfind)
-        digits = digits.replace("," if decimal_mark == "." else ".", "").replace(decimal_mark, ".")
-    elif re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", digits) and ("." in digits) != (lang == "en"):
-        digits = re.sub(r"[.,]", "", digits)  # "3.600" in Dutch and French, "3,600" in English: thousands
+    spaced = digits != text.strip()
+    if spaced and not re.fullmatch(_GROUPED % r"\s" + r"(?:[.,]\d+)?", text.strip()):
+        return None
+    marks = [char for char in digits if char in ".,"]
+    if spaced:
+        if len(marks) > 1:
+            return None
+        digits = digits.replace(",", ".")  # the spaces were the thousands; a mark left is the decimal mark
+    elif len(set(marks)) == 2:
+        decimal_mark = marks[-1]
+        thousands = "," if decimal_mark == "." else "."
+        whole, _, fraction = digits.rpartition(decimal_mark)
+        if decimal_mark in whole or not re.fullmatch(_GROUPED % re.escape(thousands), whole) or not fraction.isdigit():
+            return None
+        digits = whole.replace(thousands, "") + "." + fraction
+    elif len(marks) > 1:
+        if not re.fullmatch(_GROUPED % re.escape(marks[0]), digits):
+            return None
+        digits = digits.replace(marks[0], "")
+    elif marks and re.fullmatch(r"[1-9]\d{0,2}[.,]\d{3}", digits):
+        if (marks[0] == ",") != (lang == "en"):
+            return None  # "3,500" in Dutch, "3.500" in English: three thousand five hundred or three and a half
+        digits = digits.replace(marks[0], "")
     else:
         digits = digits.replace(",", ".")
+    if not re.fullmatch(r"\d+(?:\.\d+)?", digits) or len(digits.replace(".", "")) > _MAX_DIGITS:
+        return None
     return Decimal(digits)
 
 
@@ -103,6 +135,8 @@ def convert(question: str, lang: str = "nl") -> dict[str, Any] | None:
     if sum_asked and _symbol(sum_asked.group(4)):
         unit = _symbol(sum_asked.group(4))
         first, second = _number(sum_asked.group(1), lang), _number(sum_asked.group(3), lang)
+        if first is None or second is None:
+            return None
         total = first + second if sum_asked.group(2) == "+" else first - second
         return _reply(f"{_shown(first, lang)[0]} {sum_asked.group(2)} {_shown(second, lang)[0]} {unit} = {_shown(total, lang)[0]} {unit}.", lang)
     tokens = [(match.group("number"), _symbol(match.group("unit")), match.span()) for match in _UNIT_TOKEN.finditer(question)]
@@ -116,11 +150,20 @@ def convert(question: str, lang: str = "nl") -> dict[str, Any] | None:
         rest = rest[:start] + " " + rest[end:]
     if set(re.findall(r"[a-zà-ÿ]+", rest.lower())) - _CONVERSION_FILLER:
         return None  # "hoeveel kWh verbruikt een gezin": another question that happens to hold units
+    # A digit or an operator outside the one number read ("-2 kWh", "2/3 kWh", "2+2 kWh in MJ", "10% van 2 kWh"):
+    # a sum this code does not do. Never dropped silently; the existing route answers.
+    if _LEFT_OVER.search(re.sub(r"(?<=[a-zà-ÿ])-(?=[a-zà-ÿ])", " ", rest.lower())):
+        return None
+    # ".5 kWh" or "2,.5 kWh": a mark right before the number read belongs to a number this code did not read.
+    if any(number and question[:start].rstrip().endswith((".", ",")) for number, _, (start, _) in tokens):
+        return None
     numbered = [(number, symbol) for number, symbol, _ in tokens if number]
     if len(numbered) > 1:
         return None
     if numbered:
         amount, source = _number(numbered[0][0], lang), numbered[0][1]
+        if amount is None:
+            return None
     else:
         # "hoeveel kJ is een kWh": the unit asked for comes first; "kWh naar kJ": the unit given comes first.
         amount, source = Decimal(1), units[1] if _QUANTITY_WORD.search(question) else units[0]
@@ -157,7 +200,7 @@ _TOPIC = re.compile(
     r"|pompes?\s+[àa]\s+chaleur|zonnepane\w*|zonneboiler\w*|solar\s+panels?|panneaux?\s+solaires?|\w*meters?|compteurs?|\w*vermogen"
     r"|capaciteitstarief|prosument\w*|injectie\w*|netbeheerder\w*|thuisbatterij\w*|batterij\w*|batter(?:y|ies)|batteries?|omvormer\w*"
     r"|inverters?|onduleurs?|\w*ketels?|boilers?|chaudi[èe]res?|isolatie\w*|insulation|spanning|piek\w*|daltarief|dynamisch\w*"
-    r"|teruglever\w*|terugdraai\w*|stroomnet|elektriciteitsnet|grid|r[ée]seau|verwarming\w*|heating|chauffage|thermosta\w*|laadpa\w*"
+    r"|ean(?:-\w+)?|teruglever\w*|terugdraai\w*|stroomnet|elektriciteitsnet|grid|r[ée]seau|verwarming\w*|heating|chauffage|thermosta\w*|laadpa\w*"
     r"|groene\s+stroom|kernenergie|windmolen\w*|windturbine\w*|[ée]olienne\w*)\b",
     re.IGNORECASE,
 )
@@ -182,9 +225,28 @@ _FACT_MAX_WORDS = 14
 _IN_LANGUAGE = gemma_answer._WRITE_IN
 
 
+# Network operators and the country: what they do or what applies there comes from a source.
+_OPERATOR_OR_COUNTRY = re.compile(
+    r"\b(?:fluvius|sibelga|ores|resa|aieg|aiesh|rew|elia|fluxys|belgi\w*|belge\w*|belgique|belgium|nederland\w*|pays-bas|netherlands|france|frankrijk)\b",
+    re.IGNORECASE,
+)
+_POSTCODE = re.compile(r"\b[1-9]\d{3}\b")
+# A capitalised word that does not open a sentence is a name: a town ("Zottegem"), a company, a product.
+_NAME = re.compile(r"(?<![.!?]\s)(?<!^)(?<![A-Za-zÀ-ÿ'’-])[A-ZÀ-Ý][a-zà-ÿ]{2,}")
+
+
+def _names_something(question: str) -> bool:
+    text = question.strip()
+    return any(_symbol(match.group(0)) is None for match in _NAME.finditer(text))
+
+
 def needs_a_source(question: str) -> bool:
-    """The question names money, a rule, a supplier, a region, a moment or the visitor's own situation."""
-    return bool(_BOUNDARY.search(question) or named_supplier(question))
+    """The question names money, a rule, a supplier, an operator, a place, a moment or the visitor's own situation."""
+    return bool(
+        _BOUNDARY.search(question) or named_supplier(question) or _OTHER_SUPPLIER_PATTERN.search(question)
+        or _OPERATOR_OR_COUNTRY.search(question) or _POSTCODE.search(question) or _place_mentions(question)
+        or _names_something(question)
+    )
 
 
 def is_fixed_fact_question(question: str) -> bool:

@@ -293,3 +293,90 @@ def test_the_new_module_is_uploaded_to_the_space():
     from pathlib import Path
 
     assert "luminus_harness/fixed_facts.py" in Path("scripts/upload_energy_voice_space.py").read_text()
+
+
+# --- review of 7a0c33b: signs, loose numbers, number notation, and the source boundary ----------------------
+
+@pytest.mark.parametrize("question", [
+    "-2 kWh in MJ", "−2 kWh in MJ", "2/3 kWh in kJ", "2+2 kWh in MJ", "2 * 3 kWh in MJ", "2 x 3 kWh in kJ", "2^3 kWh in MJ",
+    "3 5 kWh in MJ", "2 kWh in 3 MJ", "kWh in MJ 5", "1.2.3 kWh in MJ", "1,2,3 kWh in MJ", "2 kWh + 3 MJ in kJ",
+    "2 kWh in MJ en 3", "10% van 2 kWh in MJ", "2e3 kWh in MJ", "-2+2 kJ", "2+-2 kJ", "2++2 kJ",
+    "½ kWh in MJ", "1½ kWh in MJ", "√4 kWh in MJ", "2² kWh in MJ", "#2 kWh in MJ", "~2 kWh in MJ", "twee kWh in MJ",
+    "minus 2 kWh in MJ", "een halve kWh in kJ", "2 duizend kWh in MJ", "2k kWh in MJ", ".5 kWh in MJ", ",5 kWh in MJ",
+    "2,.5 kWh in MJ", "2. 5 kWh in MJ",
+])
+def test_signs_operators_and_loose_numbers_are_never_dropped_silently(question):
+    from luminus_harness.fixed_facts import convert
+
+    for lang in ("nl", "en", "fr"):
+        assert convert(question, lang) is None, f"{question} ({lang}): not only a conversion, the existing route answers"
+
+
+@pytest.mark.parametrize("question, lang, expected", [
+    ("1,000,000 kWh in MJ", "nl", "1.000.000 kWh = 3.600.000 MJ"),   # two groups: thousands in any language
+    ("1.000.000 kWh in MJ", "en", "1,000,000 kWh = 3,600,000 MJ"),
+    ("1 000 000 kWh en MJ", "fr", "1 000 000 kWh = 3 600 000 MJ"),
+    ("1.000,5 kWh in MJ", "nl", "1.000,5 kWh = 3.601,8 MJ"),
+    ("1,000.5 kWh in MJ", "en", "1,000.5 kWh = 3,601.8 MJ"),
+    ("2,5 kWh in MJ", "nl", "2,5 kWh = 9 MJ"),
+    ("2.5 kWh in MJ", "nl", "2,5 kWh = 9 MJ"),
+    ("3.500 kWh in MWh", "nl", "3.500 kWh = 3,5 MWh"),
+    ("3,500 kWh in MWh", "en", "3,500 kWh = 3.5 MWh"),
+])
+def test_number_notation_is_read_as_written(question, lang, expected):
+    from luminus_harness.fixed_facts import convert
+
+    assert expected in convert(question, lang)["answer"]
+
+
+@pytest.mark.parametrize("question, lang", [
+    ("3,500 kWh in MWh", "nl"),    # three thousand five hundred or three and a half: not guessed
+    ("3.500 kWh in MWh", "en"),
+    ("1,000 kWh in MJ", "fr"),
+    ("12345678901234567890 kWh in MJ", "nl"),   # more digits than a meter ever shows
+    ("1.000.00 kWh in MJ", "nl"),
+    ("1,,5 kWh in MJ", "nl"),
+])
+def test_ambiguous_or_invalid_notation_is_not_computed_and_never_crashes(question, lang):
+    from luminus_harness.fixed_facts import convert
+
+    assert convert(question, lang) is None
+
+
+@pytest.mark.parametrize("question", [
+    "1,000,000 kWh in MJ", "3,500 kWh in MWh", "1.2.3 kWh in MJ", "-2 kWh in MJ", "2/3 kWh in kJ", "1,,5 kWh in MJ",
+    "99999999999999999999999999 GWh in J", "0 kWh in kJ", "0,0000000001 kWh in GJ",
+])
+def test_api_never_crashes_on_a_number(api, model, question):  # noqa: F811
+    assert ask(api, question)["answer"]
+
+
+SOURCE_BOUND = [
+    "Hoe werkt de digitale meter in Gent?", "hoe werkt de digitale meter in gent", "Hoe werkt de meter bij Ecopower?",
+    "hoe werkt de meter bij ecopower", "Hoe werkt de meter van Fluvius?", "Comment fonctionne le compteur à Liège ?",
+    "Comment fonctionne le compteur chez Cociter ?", "How does the meter work in Antwerp?", "Hoe werkt de meter bij Sibelga?",
+    "Hoe werkt een budgetmeter in 9000?", "Hoe werkt de digitale meter in Zottegem?", "Wat is het capaciteitstarief bij Trevion?",
+    "Hoe werkt de meter bij Wase Wind?", "Hoe werkt de teller bij ORES?", "Wat is een budgetmeter in België?",
+    "Hoe werkt de meter bij Zonnestroomwinkel?",
+]
+
+
+@pytest.mark.parametrize("question", SOURCE_BOUND)
+def test_a_place_a_supplier_or_an_operator_keeps_the_source_path(api, model, question):  # noqa: F811
+    from luminus_harness import fixed_facts
+
+    assert not fixed_facts.is_fixed_fact_question(question), question
+    model[1].extend(["Zo werkt het.", "Zo werkt het."])
+    reply = ask(api, question)
+    assert reply.get("processing") != "general-knowledge", reply
+    assert not any(instruction == fixed_facts.FIXED_FACT_INSTRUCTION for _, instruction in model[0])
+
+
+@pytest.mark.parametrize("question", [
+    "Hoe werkt een digitale meter?", "Wat is het verschil tussen kW en kWh?", "Wat is een MWh?", "What is a kWh?",
+    "Hoe werkt een warmtepomp in de winter?", "Wat is een EAN-code?", "Qu'est-ce qu'un kWh ?",
+])
+def test_generic_questions_still_take_the_fixed_fact_route(question):
+    from luminus_harness.fixed_facts import is_fixed_fact_question
+
+    assert is_fixed_fact_question(question), question
