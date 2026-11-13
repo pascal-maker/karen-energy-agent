@@ -17,7 +17,7 @@ from . import langfuse_trace
 from .jev import search_topic
 from .browserbase_sources import ENERGY_SOURCE_SCOPES, ENERGY_SOURCES, SUPPLIER_SOURCES, fetch_energy_page, named_supplier, search_energy_pages
 from .knowledge import KnowledgeChunk, STOP_WORDS, TOKEN_RE, retrieve
-from .market_prices import question_language
+from .market_prices import language_mismatch, question_language
 from .steps import report_step as _report_step
 from .voice_agent import is_electricity_price_question
 
@@ -1235,6 +1235,13 @@ async def _general_or_no_source(original_question: str, question: str, lang: str
     return {"answer": answer, "sources": [], "live_source_status": "not-needed", "processing": "general-knowledge"}
 
 
+_WRITE_IN = {
+    "nl": "Schrijf het hele antwoord in het Nederlands.",
+    "en": "Write the whole answer in English, every word of it.",
+    "fr": "Écris toute la réponse en français, chaque mot.",
+}
+
+
 async def _grounded_answer(question: str, selected: list[KnowledgeChunk], web_pages: list[dict[str, str]], lang: str) -> str:
     prompt = _prompt(question, selected, web_pages) + f"\nANTWOORDTAAL: {_REPLY_LANGUAGE[lang]}" + _form_hint(question)
     # Only answers from web pages stream: a knowledge-base answer is quick, and may still be
@@ -1244,6 +1251,12 @@ async def _grounded_answer(question: str, selected: list[KnowledgeChunk], web_pa
         answer = await asyncio.to_thread(_generate, prompt, _SYSTEM_INSTRUCTION, stream)
     else:
         answer = await asyncio.to_thread(_generate, prompt)
+    if lang in _WRITE_IN and language_mismatch(answer, lang):
+        # An English question answered in Dutch (Langfuse, 12 Nov 2026): asked once more, naming the language in
+        # that language; kept only when it now reads right.
+        again = await asyncio.to_thread(_generate, f"{prompt}\n{_WRITE_IN[lang]}")
+        if not language_mismatch(again, lang):
+            answer = again
     if _unsupported_free_claim(answer, selected, web_pages, question):
         # "Free" that no source says is invented; like any unsupported answer, search on.
         return "Ik weet het niet zeker."

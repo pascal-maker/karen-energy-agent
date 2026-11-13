@@ -157,6 +157,26 @@ def _detect_language(question: str) -> str:
     return "en" if english > dutch else "nl"
 
 
+# Common words of a written answer, on top of the question words above: an answer has no "wat" or "how" in it.
+_ANSWER_WORDS = {
+    "nl": re.compile(r"\b(?:van|dat|die|niet|met|ook|naar|uit|dus|bij|wordt|worden|uur|als|om|er|nog|maar|omdat|gedurende|kort|uitleg|geen|zo)\b", re.IGNORECASE),
+    "en": re.compile(r"\b(?:to|from|that|this|with|your|a|an|by|so|not|as|be|when|into|during|of|there|no|because|means)\b", re.IGNORECASE),
+    "fr": re.compile(r"\b(?:par|donc|pendant|votre|ne|plus|ou|à|car|parce|cela|pendant|sans|très|être|ont)\b", re.IGNORECASE),
+}
+
+
+def language_mismatch(text: str, lang: str) -> bool:
+    """The text clearly reads as another language than `lang`: that language has at least two more of its
+    common words in it. Numbers, units and a single borrowed word say nothing."""
+    counts = {
+        code: len(words.findall(text)) + len(_ANSWER_WORDS[code].findall(text))
+        for code, words in (("nl", _DUTCH), ("en", _ENGLISH), ("fr", _FRENCH))
+    }
+    if lang not in counts:
+        return False
+    return max(count for code, count in counts.items() if code != lang) >= counts[lang] + 2
+
+
 def _download(url: str) -> dict[str, Any]:
     request = Request(url, headers={"User-Agent": "karen-energy-agent"})
     with urlopen(request, timeout=8) as response:
