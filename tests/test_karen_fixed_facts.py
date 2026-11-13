@@ -380,3 +380,58 @@ def test_generic_questions_still_take_the_fixed_fact_route(question):
     from luminus_harness.fixed_facts import is_fixed_fact_question
 
     assert is_fixed_fact_question(question), question
+
+
+# --- live test set of 13 November 2026, after the merge of PR #98 ------------------------------------------
+
+@pytest.mark.parametrize("rewritten", ["Ja", "Yes.", "ja graag"])
+def test_api_yes_to_the_offer_when_the_rewriter_translates_the_yes(api, model, rewritten):  # noqa: F811
+    """Live: the rewriter turned "Yes" into "Ja", the offer was dropped and Karen searched for 27 s."""
+    model[1].append(rewritten)
+    reply = ask(api, "Yes", history=[("2+2kJ", "Daar kan ik niet bij helpen. Wil je weten hoeveel kJ een kWh is?")])
+    assert "1 kWh = 3.600 kJ" in reply["answer"], reply
+    api[2].assert_not_awaited()
+
+
+def test_api_a_rewritten_follow_up_that_is_a_conversion_is_computed(api, model):  # noqa: F811
+    model[1].append("Hoeveel kJ is een kWh?")
+    reply = ask(api, "en in kJ?", history=[("Wat is een kWh?", "Een kWh is een eenheid van energie.")])
+    assert "1 kWh = 3.600 kJ" in reply["answer"] and reply["processing"] == "unit-conversion", reply
+
+
+ENGLISH_TURN = ("What is a kWh?", "A kWh is the energy a 1,000 watt appliance uses in 1 hour.")
+SIMPLER_EN = "A kWh is how much power a 1,000 watt appliance uses in 1 hour. What is still unclear to you?"
+
+
+@pytest.mark.parametrize("objection", ["that makes no sense", "that is wrong", "this is unclear"])
+def test_an_objection_is_answered_in_the_language_of_the_conversation(api, model, objection):  # noqa: F811
+    """Live: "that makes no sense" after an English answer was explained again in Dutch."""
+    model[1].append(SIMPLER_EN)
+    reply = ask(api, objection, history=[ENGLISH_TURN])
+    assert reply["answer"] == SIMPLER_EN and reply["processing"] == "re-explained", reply
+    assert "ANTWOORDTAAL: Engels" in model[0][0][0] or "English" in model[0][0][0], model[0][0][0]
+
+
+def test_a_dutch_objection_after_a_dutch_answer_stays_dutch(api, model):  # noqa: F811
+    model[1].append(SIMPLER)
+    assert ask(api, "dat maakt geen sense", history=[PREVIOUS])["answer"] == SIMPLER
+    assert len(model[0]) == 1
+
+
+@pytest.mark.parametrize("opening", [
+    "Je vorige uitleg bedoelde te zeggen dat een kWh de energie is van 1.000 watt in 1 uur. Wat is nog onduidelijk?",
+    "Je vorige antwoord betekent dat een toestel van 1.000 watt in 1 uur een kWh gebruikt. Wat is nog onduidelijk?",
+    "Mijn vorige antwoord betekent dat een toestel van 1.000 watt in 1 uur een kWh gebruikt. Wat is nog onduidelijk?",
+    "Your previous answer means that a 1.000 watt appliance uses a kWh in 1 uur. Wat is nog onduidelijk?",
+])
+def test_a_re_explanation_that_talks_about_the_previous_answer_is_not_used(api, model, opening):  # noqa: F811
+    """Live: "Je vorige antwoord betekent dat …": Karen calling her own answer the visitor's."""
+    model[1].append(opening)
+    reply = ask(api, "dat klopt niet", history=[PREVIOUS])
+    assert opening not in reply["answer"], reply
+
+
+def test_the_re_explain_instruction_asks_for_the_explanation_itself():
+    from luminus_harness import fixed_facts
+
+    assert "Begin meteen met de uitleg" in fixed_facts.RE_EXPLAIN_INSTRUCTION

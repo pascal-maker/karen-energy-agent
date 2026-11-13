@@ -177,6 +177,20 @@ def language_mismatch(text: str, lang: str) -> bool:
     return max(count for code, count in counts.items() if code != lang) >= counts[lang] + 2
 
 
+def has_dutch_words(text: str) -> bool:
+    return bool(_DUTCH.search(text))
+
+
+def text_language(text: str) -> str:
+    """The language a written answer reads as; Dutch unless English or French clearly has more common words."""
+    counts = {
+        code: len(words.findall(text)) + len(_ANSWER_WORDS[code].findall(text))
+        for code, words in (("nl", _DUTCH), ("en", _ENGLISH), ("fr", _FRENCH))
+    }
+    best = max(counts, key=counts.get)
+    return best if counts[best] > counts["nl"] else "nl"
+
+
 def _download(url: str) -> dict[str, Any]:
     request = Request(url, headers={"User-Agent": "karen-energy-agent"})
     with urlopen(request, timeout=8) as response:

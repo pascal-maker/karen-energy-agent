@@ -70,7 +70,7 @@ from luminus_harness.comparison_session import is_offer_comparison_question, pdf
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
 from luminus_harness.contract_check import answer_contract_check
-from luminus_harness.fixed_facts import affirmed_offer, answer_fixed_fact, convert, is_fixed_fact_question, needs_a_source, re_explain
+from luminus_harness.fixed_facts import affirmed_offer, answer_fixed_fact, convert, is_bare_yes, is_fixed_fact_question, needs_a_source, re_explain
 from luminus_harness.fuel_prices import answer_fuel_price_question
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
 from luminus_harness.conversation_log import build_log_record, load_recent, store_log_record
@@ -1106,8 +1106,10 @@ async def _routed_answer(asked: str, history: list[dict[str, Any]], earlier: lis
     question = await standalone_question(asked, history)
     # "Ja" to Karen's own "Wil je weten hoeveel kJ een kWh is?": the offered question, when the rewrite left the yes as it was.
     offered = affirmed_offer(asked, history)
-    if offered and question.strip().lower() == asked.strip().lower():
-        question = offered
+    if offered and (question.strip().lower() == asked.strip().lower() or is_bare_yes(question)):
+        question = offered  # also when the rewrite only translated the yes ("Yes" -> "Ja")
+    # A follow-up that the rewrite completed into a conversion ("en in kJ?" -> "Hoeveel kJ is een kWh?").
+    if question != asked:
         conversion = convert(question, language)
         if conversion is not None:
             return _with_petra_speech(conversion)
