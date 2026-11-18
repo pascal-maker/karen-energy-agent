@@ -44,6 +44,7 @@ WARNINGS = {
     "standing_assumed_yearly": "Bij de vaste vergoeding staat geen periode; ik ging uit van een jaarbedrag.",
     "price_from_tariff_card": "Je prijs per kWh staat niet op de factuur; ik nam die van de tariefkaart van je product.",
     "fee_not_found": "Ik vond geen vaste vergoeding op de factuur; je huidige kost kan dus hoger liggen dan hier staat.",
+    "meter_unknown": "Dit geldt voor een enkelvoudige meter: de tariefkaarten zijn daarvoor. Heb je een dag/nachtmeter, dan klopt deze besparing niet.",
     "price_from_chosen_product": "Je prijs komt van de huidige tariefkaart van het product dat je koos.",
 }
 
@@ -178,6 +179,9 @@ def _compare_energy(
         return _finish(result, warnings)
     if region is None:
         warnings.append("region_unknown")
+    if energy == "electricity" and not meter:
+        # Nothing on the bill or in the answers says which meter: the cards are for a single meter only.
+        warnings.append("meter_unknown")
 
     if usage_override is not None:
         kwh, reason = usage_override, None
@@ -322,7 +326,12 @@ def check_invoice_contract(
     """Read the bill and compare its contract: the whole contract check in one call. `facts` are the bill's
     invoice_analysis facts when they were read already (an upload session keeps them)."""
     facts = facts if facts is not None else analyze_invoice_chunks(chunks)["facts"]
-    energies = tuple(energy for energy, key in (("electricity", "electricity_kwh"), ("gas", "gas_kwh")) if facts.get(key))
+    # Energies with usage on the bill, or typed by the visitor for a bill without it: a gas price on a bill
+    # without gas usage is read once the visitor adds the kWh.
+    typed = set(usage_kwh or {})
+    energies = tuple(
+        energy for energy, key in (("electricity", "electricity_kwh"), ("gas", "gas_kwh")) if facts.get(key) or energy in typed
+    )
     terms = read_contract_terms(chunks, energies or ("electricity", "gas"))
     result = compare_contract(facts, terms, contracts if contracts is not None else local_contracts(), usage_kwh=usage_kwh)
     result["based_on"] = "invoice"

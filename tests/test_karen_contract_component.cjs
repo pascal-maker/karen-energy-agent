@@ -142,6 +142,43 @@ async function main() {
     await act(async () => button("Opnieuw beginnen").click())
     assert.ok(requests.some(request => request.method === "DELETE" && request.url.endsWith("/api/session/session-1234567890abcdef")))
 
+    // Review of 9480de0: a combined bill with electricity read and gas missing. The form still holds 3200 kWh
+    // from the first check; only the gas kWh typed for this bill may be sent, never that old answer.
+    assert.ok(inputs()[1].value, "An earlier answer is still in the form")
+    const gasMissing = { ...COMPARED, based_on: "invoice", energies: {
+        electricity: { ...COMPARED.energies.electricity, usage_kwh: "3500", warnings: [] },
+        gas: { ...COMPARED.energies.electricity, status: "not_comparable", reason: "no_usage", message: "Geen gasverbruik op deze factuur.",
+            usage_kwh: null, current: null, offers: [], best: null, best_by_type: { variable: null, fixed: null },
+            saving_eur_per_year: null, saving_eur_per_month: null, warnings: [] },
+    } }
+    responses.push({ session_id: "session-combined-0000000000", filename: "gecombineerd.pdf" })
+    responses.push(gasMissing)
+    const freshFile = $('input[type="file"]')  // the start screen was drawn again
+    Object.defineProperty(freshFile, "files", { configurable: true, value: [new window.File(["%PDF"], "gecombineerd.pdf", { type: "application/pdf" })] })
+    await act(async () => freshFile.dispatchEvent(new window.Event("change", { bubbles: true })))
+    await act(async () => {})
+    assert.equal(document.querySelectorAll(".cc-inline input").length, 1, "Only the gas card asks for kWh")
+    await type($(".cc-inline input"), "10.000")
+    responses.push(gasMissing)
+    await act(async () => $(".cc-inline button").click())
+    await act(async () => {})
+    assert.deepEqual(requests.at(-1).body, { session_id: "session-combined-0000000000", gas: { usage_kwh: 10000 } })
+    await act(async () => button("Opnieuw beginnen").click())
+
+    // Meter unknown: the saving holds for a single meter only, and the screen says so with the number.
+    await type(document.querySelectorAll(".cc-form select")[0], "")
+    responses.push({ ...COMPARED, energies: { electricity: { ...COMPARED.energies.electricity, warnings: [
+        { code: "meter_unknown", message: "Dit geldt voor een enkelvoudige meter." },
+        { code: "price_from_chosen_product", message: "Je prijs komt van de tariefkaart." },
+    ] } } })
+    await act(async () => $(".cc-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })))
+    await act(async () => {})
+    assert.equal(requests.at(-1).body.meter, undefined, "'Weet ik niet' sends no meter")
+    assert.match($(".cc-headline").textContent, /bij een enkelvoudige meter/)
+    assert.match($(".cc-caveat").textContent, /enkelvoudige meter/)
+    assert.ok(![...document.querySelectorAll(".cc-warnings li")].some(li => /enkelvoudige meter/.test(li.textContent)), "Said once, next to the saving")
+    await act(async () => button("Opnieuw beginnen").click())
+
     // Backend errors are shown as they come.
     await type(inputs()[0], "1050")
     await type(inputs()[1], "2600")

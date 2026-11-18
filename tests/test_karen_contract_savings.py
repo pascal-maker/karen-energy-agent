@@ -185,7 +185,7 @@ def test_unknown_vat_is_taken_as_incl_and_said():
     )
     electricity = result["energies"]["electricity"]
     assert electricity["current"]["yearly_eur"] == "550.00"  # 2.000 × 0,25 + 50, no btw added
-    assert electricity["warnings"][0]["code"] == "vat_assumed_incl"
+    assert "vat_assumed_incl" in [warning["code"] for warning in electricity["warnings"]]
     assert electricity["saving_eur_per_year"] == "195.00"  # 550 − Beta 2.000 × 0,14 + 75 = 355 (Gamma 408, Alfa 405)
 
 
@@ -281,3 +281,27 @@ def test_no_v_check_outside_flanders():
     assert _text(
         "Leveringsadres: Teststraat 1, 1050 Teststad V-check-code: AB12CD34 5678 9012 Elektriciteitsverbruik: 3.000 kWh"
     )["v_check"] is None
+
+
+# --- review of 9480de0 ------------------------------------------------------------------------------
+
+def test_a_gas_price_is_read_once_the_visitor_adds_the_missing_gas_usage():
+    text = ("Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 "
+            "Elektriciteit Energieprijs 3.000 kWh x 0,2000 €/kWh (incl. btw) Vaste vergoeding € 40,00 per jaar "
+            "Elektriciteitsverbruik: 3.000 kWh Aardgas Energieprijs 0,1200 €/kWh (incl. btw) Vaste vergoeding € 50,00 per jaar")
+    assert "gas" not in _text(text)["energies"]  # no gas usage on the bill: nothing to compare yet
+    gas = _text(text, usage_kwh={"gas": 10000})["energies"]["gas"]
+    assert gas["current"]["price_source"] == "invoice"
+    assert gas["current"]["yearly_eur"] == "1250.00"  # 10.000 × 0,12 + 50
+    assert gas["status"] == "compared"
+
+
+def test_an_unknown_meter_is_said_with_the_saving():
+    unknown = _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 "
+        "Energieprijs 2.000 kWh x 0,2500 €/kWh (incl. btw) Elektriciteitsverbruik: 2.000 kWh"
+    )["energies"]["electricity"]
+    assert unknown["status"] == "compared"
+    assert "meter_unknown" in [warning["code"] for warning in unknown["warnings"]]
+    single = _bill("27-nl-contract-enkelvoudige-meter.pdf")["energies"]["electricity"]  # "Metertype: enkelvoudige meter"
+    assert "meter_unknown" not in [warning["code"] for warning in single["warnings"]]

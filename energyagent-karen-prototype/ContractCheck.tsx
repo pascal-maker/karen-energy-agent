@@ -79,6 +79,9 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
     const [meter, setMeter] = useState("single")
     const [form, setForm] = useState<Record<Energy, EnergyForm>>({ electricity: { usage: "", product: UNKNOWN }, gas: { usage: "", product: UNKNOWN } })
     const [withGas, setWithGas] = useState(false)
+    // kWh typed for a bill that lacks them, kept apart from the form: answers from an earlier check never
+    // replace what Karen read from the bill.
+    const [billUsage, setBillUsage] = useState<Record<Energy, string>>({ electricity: "", gas: "" })
     const [sessionId, setSessionId] = useState("")
     const [filename, setFilename] = useState("")
     const [busy, setBusy] = useState("")
@@ -143,6 +146,7 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
         if (!file) return
         setBusy("Karen leest je factuur…")
         setError("")
+        setBillUsage({ electricity: "", gas: "" })
         try {
             const data = new FormData()
             data.append("file", file)
@@ -158,21 +162,22 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
         }
     }
 
-    // A bill without yearly kWh (an advance bill, gas in m³): ask for the number and check again.
+    // A bill without yearly kWh (an advance bill, gas in m³): ask for the number and check again. Only kWh
+    // typed for this bill are sent, so the usage Karen read from the bill stays as it was.
     function recheckWithUsage(energy: Energy) {
-        const usage = Number(form[energy].usage.replace(/[.\s]/g, ""))
-        if (!(usage > 0)) return setError("Vul je jaarverbruik in kWh in.")
-        const usageFor = (name: Energy) => {
-            const value = Number(form[name].usage.replace(/[.\s]/g, ""))
-            return value > 0 ? { usage_kwh: Math.round(value) } : undefined
-        }
-        void check({ session_id: sessionId, electricity: usageFor("electricity"), gas: usageFor("gas") })
+        const kwh = (name: Energy) => Number(billUsage[name].replace(/[.\s]/g, ""))
+        if (!(kwh(energy) > 0)) return setError("Vul je jaarverbruik in kWh in.")
+        const typed = Object.fromEntries((["electricity", "gas"] as Energy[])
+            .filter(name => kwh(name) > 0)
+            .map(name => [name, { usage_kwh: Math.round(kwh(name)) }]))
+        void check({ session_id: sessionId, ...typed })
     }
 
     function restart() {
         if (sessionId) void fetch(contractEndpoint(apiEndpoint, "session") + `/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => {})
         setSessionId("")
         setFilename("")
+        setBillUsage({ electricity: "", gas: "" })
         setResult(null)
         setError("")
     }
@@ -199,6 +204,9 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
 
     function energyCard(energy: Energy, entry: EnergyResult) {
         const best = entry.best
+        // The cards are for a single meter: when the meter isn't known, say so with the saving, not below it.
+        const meterCaveat = entry.warnings.find(warning => warning.code === "meter_unknown")
+        const otherWarnings = entry.warnings.filter(warning => warning !== meterCaveat)
         const other = entry.best_by_type && best
             ? entry.best_by_type[best.contract_type === "fixed" ? "variable" : "fixed"]
             : null
@@ -221,6 +229,7 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                         <p className="cc-saving">Je bespaart <strong>{euro(entry.saving_eur_per_year!)}</strong> per jaar ({euro(entry.saving_eur_per_month!, 2)} per maand).</p>
                     </div>
                 )}
+                {meterCaveat && entry.status !== "not_comparable" && <p className="cc-caveat" role="note">{meterCaveat.message}</p>}
                 {entry.status !== "compared" && <p className="cc-message">{entry.message}</p>}
                 {entry.status === "offers_only" && best && (
                     <p className="cc-message">Goedkoopste bij jouw verbruik: <strong>{best.label}</strong> ({contractKind(best)}), {euro(best.yearly_eur)} per jaar.</p>
@@ -231,7 +240,7 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                 {needsUsage && (
                     <div className="cc-inline">
                         <input inputMode="numeric" placeholder="kWh per jaar" aria-label={`${ENERGY_NAME[energy]}verbruik in kWh per jaar`}
-                            value={form[energy].usage} onChange={event => setEnergy(energy, "usage", event.target.value)} />
+                            value={billUsage[energy]} onChange={event => setBillUsage(current => ({ ...current, [energy]: event.target.value }))} />
                         <button type="button" onClick={() => recheckWithUsage(energy)}>Opnieuw berekenen</button>
                     </div>
                 )}
@@ -257,7 +266,7 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                         ))}</ul>
                     </details>
                 ) : null}
-                {entry.warnings.length > 0 && <ul className="cc-warnings">{entry.warnings.map(warning => <li key={warning.code}>{warning.message}</li>)}</ul>}
+                {otherWarnings.length > 0 && <ul className="cc-warnings">{otherWarnings.map(warning => <li key={warning.code}>{warning.message}</li>)}</ul>}
             </section>
         )
     }
@@ -326,7 +335,8 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
             {result && (
                 <div className="cc-result">
                     {result.total ? (
-                        <p className="cc-headline">Je kan ongeveer <strong>{euro(result.total.saving_eur_per_year)}</strong> per jaar besparen, dat is {euro(result.total.saving_eur_per_month, 2)} per maand.</p>
+                        <p className="cc-headline">Je kan ongeveer <strong>{euro(result.total.saving_eur_per_year)}</strong> per jaar besparen, dat is {euro(result.total.saving_eur_per_month, 2)} per maand{
+                            Object.values(result.energies).some(entry => entry?.warnings.some(warning => warning.code === "meter_unknown")) ? ", bij een enkelvoudige meter" : ""}.</p>
                     ) : (
                         <p className="cc-headline">Dit is wat Karen kon vergelijken.</p>
                     )}
@@ -400,6 +410,7 @@ const css = `
   .cc-saving { grid-column:1 / -1; margin:4px 0 0; }
   .cc-saving strong { color:#1f7a45; }
   .cc-message, .cc-alt { margin:8px 0 0; color:#4f6156; }
+  .cc-caveat { margin:10px 0 0; padding:8px 10px; border-radius:10px; color:#6b4a12; background:#fdf4e3; font-size:13px; }
   .cc-inline { display:flex; gap:8px; margin-top:10px; }
   .cc-inline input { flex:1; min-width:0; }
   .cc details { margin-top:12px; }

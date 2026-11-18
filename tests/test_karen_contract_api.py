@@ -119,3 +119,12 @@ def test_uploaded_bill_with_a_v_check_code(client):
 def test_answers_have_no_v_check(client):
     body = client.post("/api/contract-check", json={"postcode": "9000", "electricity": {"usage_kwh": 3200}}).json()
     assert body["v_check"] is None
+
+
+def test_answers_without_a_meter_warn_that_the_saving_is_for_a_single_meter(client):
+    body = client.post("/api/contract-check", json={
+        "postcode": "9000", "electricity": {"usage_kwh": 3200, "supplier": "Alfa", "product": "Alfa Flex"},
+    }).json()
+    electricity = body["energies"]["electricity"]
+    assert electricity["saving_eur_per_year"] == "110.00"
+    assert "meter_unknown" in [warning["code"] for warning in electricity["warnings"]]
