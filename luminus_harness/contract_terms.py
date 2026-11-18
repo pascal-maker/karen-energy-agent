@@ -66,8 +66,9 @@ _DATE_RANGE_RE = re.compile(r"(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\s*(?:-|–|t
 SINGLE_METER_RE = re.compile(r"(?i)\b(?:enkelvoudige?\s+meter|enkelvoudig\s+tarief|normale\s+meter|monohoraire|compteur\s+simple)\b")
 DAY_NIGHT_RE = re.compile(r"(?i)\b(?:tweevoudige?\s+meter|dag[\s/-]*(?:en\s+)?nacht\w*|dubbel\s+tarief|bihoraire|jour\s*/\s*nuit)\b")
 # Consumption printed per register ("Elektriciteit dag 1.850 kWh", "Elektriciteit nacht 1.200 kWh") is a day/night meter.
-DAY_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:dag|jour)\s+\d")
-NIGHT_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:nacht|nuit)\s+\d")
+_REGISTER_KWH = r"\s+(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*kwh\b"
+DAY_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:dag|jour)" + _REGISTER_KWH)
+NIGHT_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:nacht|nuit)" + _REGISTER_KWH)
 EXCLUSIVE_NIGHT_RE = re.compile(r"(?i)\b(?:exclusie(?:f|ve)\s+nacht\w*|uitsluitend\s+nacht|exclusif\s+nuit)\b")
 
 # Since 1 July 2025 every Flemish advance and settlement bill of a household prints the Vlaamse Nutsregulator's
@@ -302,6 +303,19 @@ def _meter(chunks: list[KnowledgeChunk], prices: list[dict[str, Any]]) -> dict[s
     return None
 
 
+def _registers(chunks: list[KnowledgeChunk]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Day and night consumption as the bill prints them per register ("Elektriciteit dag 1.850 kWh")."""
+    found: dict[str, dict[str, Any] | None] = {"day": None, "night": None}
+    for chunk in chunks:
+        for period, pattern in (("day", DAY_REGISTER_RE), ("night", NIGHT_REGISTER_RE)):
+            match = pattern.search(chunk.text)
+            if match and found[period] is None:
+                value = _decimal_value(match.group(1).replace(" ", "."))
+                if value is not None and value > 0:
+                    found[period] = _fact(value, chunk, chunk.text[max(0, match.start() - 30):match.end() + 30], match.group(0))
+    return found["day"], found["night"]
+
+
 def _postcode(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     for label_re in (_DELIVERY_LABEL, _EAN_LABEL, _ADDRESS_LABEL):
         for chunk in chunks:
@@ -396,6 +410,8 @@ def read_contract_terms(chunks: list[KnowledgeChunk], energies: tuple[Energy, ..
             "night_price": next((price for price in ranked if price["period"] == "night"), None),
             "standing_charge": fees[0] if fees else None,
         }
+        if energy == "electricity":
+            entry["day_kwh"], entry["night_kwh"] = _registers(unique)
         if entry["price"] is None and energy == "gas":
             entry["price"] = entry["day_price"]  # gas has no day/night; a "dag" word nearby is noise
         terms[energy] = entry

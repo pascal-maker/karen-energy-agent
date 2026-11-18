@@ -10,11 +10,13 @@ type Evidence = { page: number; source: string; excerpt: string; field: string }
 type Offer = {
     supplier: string; product: string | null; label: string; contract_type: string; duration_months: number | null
     price_per_kwh_eur: string; fixed_fee_eur_per_year: string; yearly_eur: string; source_url: string | null; is_current: boolean
+    price_day_eur?: string; price_night_eur?: string
 }
 type Warning = { code: string; message: string }
 type EnergyResult = {
     status: "compared" | "already_cheapest" | "offers_only" | "not_comparable"; reason: string | null; message: string
     usage_kwh: string | null
+    day_share?: string
     current: { supplier: string | null; product: string | null; yearly_eur: string; price_per_kwh_eur: string; fixed_fee_eur_per_year: string; price_source: string; evidence: Evidence[] } | null
     offers: Offer[]; best: Offer | null; best_by_type: { variable: Offer | null; fixed: Offer | null }
     saving_eur_per_year: string | null; saving_eur_per_month: string | null; warnings: Warning[]
@@ -213,7 +215,8 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
         const needsUsage = sessionId && (entry.reason === "no_usage" || entry.reason === "gas_in_m3")
         return (
             <section className="cc-card" key={energy} aria-label={ENERGY_NAME[energy]}>
-                <h3>{ENERGY_NAME[energy]}{entry.usage_kwh && <small> · {Number(entry.usage_kwh).toLocaleString("nl-BE")} kWh per jaar</small>}</h3>
+                <h3>{ENERGY_NAME[energy]}{entry.usage_kwh && <small> · {Number(entry.usage_kwh).toLocaleString("nl-BE")} kWh per jaar{
+                    entry.day_share ? `, ${Math.round(Number(entry.day_share) * 100)}% overdag` : ""}</small>}</h3>
                 {entry.status === "compared" && entry.current && best && (
                     <div className="cc-compare">
                         <div className="cc-now">
@@ -251,7 +254,9 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                             {entry.offers.map(offer => (
                                 <li key={offer.label} data-current={offer.is_current || undefined}>
                                     <span>{offer.source_url ? <a href={offer.source_url} target="_blank" rel="noreferrer">{offer.label} ↗</a> : offer.label}
-                                        <small>{contractKind(offer)} · {cents(offer.price_per_kwh_eur)} + {euro(offer.fixed_fee_eur_per_year)} vast{offer.is_current ? " · jouw contract" : ""}</small></span>
+                                        <small>{contractKind(offer)} · {offer.price_day_eur && offer.price_night_eur
+                                            ? `dag ${cents(offer.price_day_eur)}, nacht ${cents(offer.price_night_eur)}`
+                                            : cents(offer.price_per_kwh_eur)} + {euro(offer.fixed_fee_eur_per_year)} vast{offer.is_current ? " · jouw contract" : ""}</small></span>
                                     <strong>{euro(offer.yearly_eur)}</strong>
                                 </li>
                             ))}

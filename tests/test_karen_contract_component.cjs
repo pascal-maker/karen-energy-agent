@@ -108,6 +108,8 @@ async function main() {
     assert.match($(".cc-saving").textContent, /10,75/)
     assert.equal($(".cc-switch strong").textContent, "Kosten:", "Switching steps keep their bold labels")
     assert.ok($('.cc-offers li[data-current]').textContent.includes("jouw contract"))
+    assert.match($(".cc-offers li").textContent, /· 19 c€\/kWh/, "A single-meter offer shows one price")
+    assert.ok(!/dag .*nacht/.test($(".cc-offers li").textContent), "No day/night split for a single meter")
     assert.match(text(), /Je prijs komt van de tariefkaart/)
     assert.equal($(".cc-vcheck"), null, "No V-check block without a code")
 

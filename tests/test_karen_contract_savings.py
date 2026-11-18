@@ -19,8 +19,10 @@ CARDS = {
     "as_of": "2026-10-19",
     "suppliers": [
         {"name": "Alfa", "status": "verified", "product_name": "Alfa Flex", "price_per_kwh_eur": 0.19,
+         "price_day_eur": 0.21, "price_night_eur": 0.17,
          "standing_charge_amount": 25.0, "standing_charge_unit": "per_year", "source_url": "https://example.test/alfa"},
         {"name": "Beta", "status": "verified", "product_name": "Beta Vast", "contract_type": "fixed", "duration_months": 36,
+         "price_day_eur": 0.16, "price_night_eur": 0.12,
          "price_per_kwh_eur": 0.14, "standing_charge_amount": 75.0, "standing_charge_unit": "per_year"},
         {"name": "Gamma", "status": "verified", "product_name": "Gamma Variabel", "price_per_kwh_eur": 0.18,
          "standing_charge_amount": 4.0, "standing_charge_unit": "per_month"},
@@ -122,17 +124,56 @@ def test_saving_on_a_single_meter_bill():
     assert electricity["warnings"] == []
 
 
-def test_day_night_meter_is_not_compared_but_gas_is():
+def test_day_night_meter_weighs_day_and_night_by_the_bills_registers():
     result = _bill("28-nl-contract-dag-nacht-en-gas.pdf")
-    assert result["energies"]["electricity"]["status"] == "not_comparable"
-    assert result["energies"]["electricity"]["reason"] == "day_night_meter"
-    assert result["energies"]["electricity"]["saving_eur_per_year"] is None
+    electricity = result["energies"]["electricity"]
+    # Day 1.800 kWh, night 1.400 kWh: 56,25% by day. Now: 0,5625 × 0,231 + 0,4375 × 0,174 = 0,2060625 €/kWh,
+    # × 3.200 + 50 = 709,40. Beta: 0,5625 × 0,16 + 0,4375 × 0,12 = 0,1425, × 3.200 + 75 = 531,00.
+    assert electricity["status"] == "compared"
+    assert electricity["day_share"] == "0.5625"
+    assert electricity["current"]["yearly_eur"] == "709.40"
+    assert electricity["best"]["supplier"] == "Beta" and electricity["best"]["yearly_eur"] == "531.00"
+    assert electricity["best"]["price_day_eur"] == "0.16" and electricity["best"]["price_night_eur"] == "0.12"
+    assert electricity["saving_eur_per_year"] == "178.40"
+    # Gamma publishes no day/night prices: it is left out rather than compared on its single price.
+    assert [offer["supplier"] for offer in electricity["offers"]] == ["Beta", "Alfa"]
+    assert "day_night_split_assumed" not in [warning["code"] for warning in electricity["warnings"]]
     gas = result["energies"]["gas"]
     # 12.000 × 0,095 + 5,00 × 12 = 1.200,00 against Beta Gas 12.000 × 0,078 + 35 = 971,00
     assert gas["current"]["yearly_eur"] == "1200.00"
     assert gas["best"]["product"] == "Beta Gas Vast"
     assert gas["saving_eur_per_year"] == "229.00"
-    assert result["total"]["saving_eur_per_year"] == "229.00"
+    assert result["total"]["saving_eur_per_year"] == "407.40"  # 178,40 + 229,00
+
+
+def test_day_night_without_a_split_is_half_and_half_and_says_so():
+    from luminus_harness.contract_savings import compare_answers
+
+    result = compare_answers(CARDS, postcode="9000", meter="day_night",
+                             energies={"electricity": {"usage_kwh": 3000, "supplier": "Alfa", "product": "Alfa Flex"}})
+    electricity = result["energies"]["electricity"]
+    assert electricity["day_share"] == "0.5000"
+    assert "day_night_split_assumed" in [warning["code"] for warning in electricity["warnings"]]
+    # Alfa: (0,21 + 0,17) / 2 = 0,19, × 3.000 + 25 = 595,00; Beta: 0,14 × 3.000 + 75 = 495,00
+    assert electricity["current"]["yearly_eur"] == "595.00"
+    assert electricity["saving_eur_per_year"] == "100.00"
+
+
+def test_day_night_without_any_verified_day_night_card_shows_no_saving():
+    single_only = {**CARDS, "suppliers": [{k: v for k, v in card.items() if not k.startswith("price_day") and not k.startswith("price_night")}
+                                          for card in CARDS["suppliers"]]}
+    result = check_invoice_contract(load_pdf_chunks(FIXTURES / "28-nl-contract-dag-nacht-en-gas.pdf", source="28.pdf"), single_only)
+    assert result["energies"]["electricity"]["reason"] == "day_night_meter"
+    assert result["energies"]["electricity"]["saving_eur_per_year"] is None
+
+
+def test_day_night_bill_with_one_price_has_no_current_cost():
+    result = _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 Metertype: tweevoudige meter "
+        "Energieprijs 3.000 kWh x 0,2000 €/kWh (incl. btw) Elektriciteit dag 1.500 kWh Elektriciteit nacht 1.500 kWh"
+    )["energies"]["electricity"]
+    assert result["current"] is None and result["status"] == "offers_only"
+    assert "day_night_price_not_found" in [warning["code"] for warning in result["warnings"]]
 
 
 def test_region_without_verified_cards_shows_no_saving():
@@ -146,7 +187,11 @@ def test_region_without_verified_cards_shows_no_saving():
 
 def test_day_night_consumption_rows_mean_a_day_night_meter():
     result = _bill("13-nl-jaarafrekening-nieuw-voorschot-tabel.pdf")
-    assert result["energies"]["electricity"]["reason"] == "day_night_meter"
+    electricity = result["energies"]["electricity"]
+    # Day 1.850 and night 1.200 kWh, no price on the bill: day/night offers, no saving.
+    assert electricity["day_share"] == "0.6066"
+    assert electricity["status"] == "offers_only" and electricity["reason"] == "no_current_price"
+    assert all("price_day_eur" in offer for offer in electricity["offers"])
     gas = result["energies"]["gas"]
     assert gas["status"] == "offers_only" and gas["reason"] == "no_current_price"
     assert gas["offers"] and gas["saving_eur_per_year"] is None

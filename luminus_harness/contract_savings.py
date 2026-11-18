@@ -34,7 +34,7 @@ MESSAGES = {
     "no_usage": "Deze factuur vermeldt geen jaarverbruik. Geef je verbruik in kWh op om te vergelijken.",
     "gas_in_m3": "Je gasverbruik staat in m³. Geef het in kWh op (dat staat op je jaarafrekening) om te vergelijken.",
     "region_not_covered": "Mijn geverifieerde tariefkaarten gelden voor Vlaanderen. Voor Brussel en Wallonië vergelijk je best via BruSim of CompaCWaPE.",
-    "day_night_meter": "Je hebt een dag/nachtmeter. Mijn geverifieerde tariefkaarten gelden voor een enkelvoudige meter, dus ik toon nog geen besparing.",
+    "day_night_meter": "Je hebt een dag/nachtmeter. Daarvoor vond ik geen geverifieerde dag- en nachtprijzen, dus ik toon nog geen besparing.",
     "exclusive_night": "Je hebt een exclusief-nachtmeter. Daarvoor heb ik nog geen geverifieerde tariefkaarten.",
 }
 WARNINGS = {
@@ -44,6 +44,8 @@ WARNINGS = {
     "standing_assumed_yearly": "Bij de vaste vergoeding staat geen periode; ik ging uit van een jaarbedrag.",
     "price_from_tariff_card": "Je prijs per kWh staat niet op de factuur; ik nam die van de tariefkaart van je product.",
     "fee_not_found": "Ik vond geen vaste vergoeding op de factuur; je huidige kost kan dus hoger liggen dan hier staat.",
+    "day_night_split_assumed": "Ik weet niet hoeveel je overdag en 's nachts verbruikt en rekende met de helft overdag, de helft 's nachts. Je echte verdeling staat op je jaarafrekening.",
+    "day_night_price_not_found": "Ik vond je dag- en nachtprijs niet op de factuur, dus ik kan je huidige kost niet berekenen.",
     "meter_unknown": "Dit geldt voor een enkelvoudige meter: de tariefkaarten zijn daarvoor. Heb je een dag/nachtmeter, dan klopt deze besparing niet.",
     "price_from_chosen_product": "Je prijs komt van de huidige tariefkaart van het product dat je koos.",
 }
@@ -137,8 +139,18 @@ def _matching_card(cards: list[dict[str, Any]], supplier: str, product: str) -> 
     return None
 
 
-def _offer(card: dict[str, Any], kwh: Decimal) -> dict[str, Any]:
-    price = Decimal(str(card["price_per_kwh_eur"]))
+def _card_price(card: dict[str, Any], day_share: Decimal | None) -> Decimal | None:
+    """The card's price per kWh at this meter: the single-meter price, or for a day/night meter the day and
+    night prices weighted by the household's split; None when the card has no verified day/night prices."""
+    if day_share is None:
+        return Decimal(str(card["price_per_kwh_eur"]))
+    if not isinstance(card.get("price_day_eur"), (int, float)) or not isinstance(card.get("price_night_eur"), (int, float)):
+        return None
+    return day_share * Decimal(str(card["price_day_eur"])) + (1 - day_share) * Decimal(str(card["price_night_eur"]))
+
+
+def _offer(card: dict[str, Any], kwh: Decimal, day_share: Decimal | None = None) -> dict[str, Any]:
+    price = _card_price(card, day_share)
     yearly = kwh * price + _card_fee(card)
     return {
         "supplier": card["name"],
@@ -146,7 +158,8 @@ def _offer(card: dict[str, Any], kwh: Decimal) -> dict[str, Any]:
         "label": card_label(card),
         "contract_type": card.get("contract_type", "variable"),
         "duration_months": card.get("duration_months"),
-        "price_per_kwh_eur": str(price),
+        "price_per_kwh_eur": str(price.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP).normalize()) if day_share is not None else str(price),
+        **({"price_day_eur": str(card["price_day_eur"]), "price_night_eur": str(card["price_night_eur"])} if day_share is not None else {}),
         "fixed_fee_eur_per_year": _money(_card_fee(card)),
         "yearly_eur": _money(yearly),
         "source_url": card.get("source_url"),
@@ -171,8 +184,9 @@ def _compare_energy(
                               "best": None, "best_by_type": {"variable": None, "fixed": None},
                               "saving_eur_per_year": None, "saving_eur_per_month": None}
     meter = terms.get("meter")
-    if energy == "electricity" and meter and meter["value"] in ("day_night", "exclusive_night"):
-        result["reason"] = "day_night_meter" if meter["value"] == "day_night" else "exclusive_night"
+    day_night = energy == "electricity" and bool(meter) and meter["value"] == "day_night"
+    if energy == "electricity" and meter and meter["value"] == "exclusive_night":
+        result["reason"] = "exclusive_night"
     elif region and region not in COVERED_REGIONS:
         result["reason"] = "region_not_covered"
     if result["reason"]:
@@ -195,11 +209,34 @@ def _compare_energy(
     data = {"contracts": contracts}
     cards = verified_cards(data, "variable", energy) + verified_cards(data, "fixed", energy)
     entry = terms.get(energy) or {}
+    day_share = None
+    if day_night:
+        # Weighted by the bill's own registers when it prints them, else half and half, said as an assumption.
+        day, night = (entry.get("day_kwh") or {}).get("value"), (entry.get("night_kwh") or {}).get("value")
+        if day and night:
+            day_share = day / (day + night)
+        else:
+            day_share = Decimal("0.5")
+            warnings.append("day_night_split_assumed")
+        cards = [card for card in cards if _card_price(card, day_share) is not None]
+        if not cards:
+            result["reason"] = "day_night_meter"
+            return _finish(result, warnings)
+        result["day_share"] = str(day_share.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
     product = (entry.get("product") or {}).get("value") or ""
     current_card = _matching_card(cards, supplier, product)
 
     current = None
-    if entry.get("price"):
+    if day_night and entry.get("day_price") and entry.get("night_price"):
+        price = day_share * _incl_vat(entry["day_price"], warnings) + (1 - day_share) * _incl_vat(entry["night_price"], warnings)
+        fee = _yearly_fee(entry.get("standing_charge"), billing_days, warnings)
+        if not entry.get("standing_charge"):
+            warnings.append("fee_not_found")
+        current = {"price_source": "invoice", "price_per_kwh_eur": price, "fee": fee,
+                   "evidence": _evidence(entry.get("product"), entry["day_price"], entry["night_price"], entry.get("standing_charge"))}
+    elif day_night and (entry.get("day_price") or entry.get("night_price") or entry.get("price")):
+        warnings.append("day_night_price_not_found")  # one price only: no weighted current cost
+    elif entry.get("price"):
         price = _incl_vat(entry["price"], warnings)
         fee = _yearly_fee(entry.get("standing_charge"), billing_days, warnings)
         if not entry.get("standing_charge"):
@@ -209,10 +246,10 @@ def _compare_energy(
     elif current_card:
         chosen = (entry.get("product") or {}).get("source") == _ANSWERS_SOURCE
         warnings.append("price_from_chosen_product" if chosen else "price_from_tariff_card")
-        current = {"price_source": "tariff_card", "price_per_kwh_eur": Decimal(str(current_card["price_per_kwh_eur"])),
+        current = {"price_source": "tariff_card", "price_per_kwh_eur": _card_price(current_card, day_share),
                    "fee": _card_fee(current_card), "evidence": _evidence(entry.get("product"))}
 
-    offers = sorted((_offer(card, kwh) for card in cards), key=lambda offer: offer["_yearly"])
+    offers = sorted((_offer(card, kwh, day_share) for card in cards), key=lambda offer: offer["_yearly"])
     for offer in offers:
         offer["is_current"] = current_card is not None and offer["label"] == card_label(current_card)
     others = [offer for offer in offers if not offer["is_current"]]
