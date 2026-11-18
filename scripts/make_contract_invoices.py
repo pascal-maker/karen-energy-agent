@@ -88,3 +88,57 @@ make("29-nl-contract-brussel", "Uw jaarafrekening", head("029", "Proefplein 3, 1
     "Voorschotten betaald € 900,00",
     "**Totaal te betalen € 80,00",
 ])
+
+# 30 and 31 follow the layout of the sample bills a large Belgian supplier publishes ("voorbeeldfactuur"): a
+# contract box, a line-item table "Product | BTW | Hoeveelheid | Eenheidsprijs (excl. btw) | Bedrag" with the
+# product name in the row and network costs and levies in the same table, a fixed fee as a yearly rate counted
+# in days, and a product change during the period. Supplier, products and numbers are made up.
+
+# 30: annual bill, single meter, product changed on 01.04.2025; the current product is the one "vanaf".
+make("30-nl-contract-tabel-productwissel", "Uw jaarafrekening", [
+    f"Leverancier: {SUPPLIER}", "Klant: Jane Doe", "Leveradres: Teststraat 0, 3500 Teststad",
+    "Uw huidig contract Kanaal Groen Plus Elektriciteit", "Elektriciteit (EAN 540000000000000030)",
+    "Factuurnummer: TEST-2026-030", "Facturatieperiode: 01.01.2025 - 31.12.2025", "",
+    "**Elektriciteit: Samenstelling van uw bedrag",
+    "Product                                  BTW   Hoeveelheid   Eenheidsprijs (excl. btw)   Bedrag",
+    "**Dit betaalt u voor Kanaal Energie (Energiekosten)",
+    "Kanaal Basis                             6%    800 kWh       0,1890000 €/kWh             151,20 €",
+    "Kanaal Groen Plus (vanaf 01.04.2025)     6%    2.600 kWh     0,1750000 €/kWh             455,00 €",
+    "Kosten groene stroom                     6%    3.400 kWh     0,0150000 €/kWh              51,00 €",
+    "Kosten WKK                               6%    3.400 kWh     0,0040000 €/kWh              13,60 €",
+    "Vaste vergoeding Kanaal Basis            6%    90 dagen      30,00 €/jaar                  7,40 €",
+    "Vaste vergoeding Kanaal Groen Plus (vanaf 01.04.2025)  6%  275 dagen  60,00 €/jaar        45,21 €",
+    "**Dit betaalt u voor de netbeheerder (Nettarieven)",
+    "Transportkosten                          6%    3.400 kWh     0,0280000 €/kWh              95,20 €",
+    "Distributiekosten                        6%    3.400 kWh     0,0910000 €/kWh             309,40 €",
+    "Meet- en telactiviteit                   6%    365 dagen     15,00 €/jaar                 15,00 €",
+    "**Dit betaalt u voor de overheid (Heffingen en toeslagen)",
+    "Bijzondere accijns                       6%    3.400 kWh     0,0503000 €/kWh             171,02 €",
+    "Bijdrage Energiefonds                    0%    365 dagen     5,07 €/maand                 60,84 €",
+    "",
+    "Verbruik in kWh: 3.400 kWh",
+    "Totale energiekosten € 1.453,87",
+    "Aangerekende voorschotten - € 1.380,00",
+    "**Totaal te betalen € 73,87",
+])
+
+# 31: the short format: contract in "Essentiële contractinformatie", unit price per product, no fixed-fee line.
+make("31-nl-contract-kort-formaat", "Uw jaarafrekening", [
+    f"Leverancier: {SUPPLIER}", "Klant: Jane Doe", "Factuurnummer: TEST-2026-031", "",
+    "**Essentiële contractinformatie",
+    "Elektriciteit - EAN 540000000000000031 / Teststraat 0, 2800 Teststad - Variabel tarief Kanaal Actief elektriciteit, contract van 1 jaar",
+    "Facturatieperiode: 01.01.2025 - 31.12.2025",
+    "",
+    "**Overzicht van uw verbruik",
+    "Product                          Verbruik      Eenheidsprijs (excl. btw)",
+    "Kanaal Actief elektriciteit      3.100 kWh     0,1450000 €/kWh",
+    "Elektriciteitsverbruik: 3.100 kWh",
+    "",
+    "**Samenstelling van uw factuurbedrag",
+    "Dit betaalt u aan Kanaal Energie (energiekosten) € 476,47",
+    "Dit betaalt u aan de netbeheerder (nettarieven) € 402,10",
+    "Dit betaalt u aan de overheid (heffingen en toeslagen) € 165,30",
+    "Totale energiekosten € 1.043,87",
+    "Aangerekende voorschotten - € 960,00",
+    "**Totaal te betalen € 83,87",
+])

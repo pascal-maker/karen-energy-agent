@@ -16,7 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-from .contract_terms import read_contract_terms
+from .contract_terms import read_contract_terms, region_for_postcode
 from .invoice_analysis import analyze_invoice_chunks
 from .knowledge import KnowledgeChunk
 from .market_prices import card_label, verified_cards
@@ -25,6 +25,7 @@ VAT = Decimal("1.06")  # residential electricity and gas in Belgium; the tariff 
 CENT = Decimal("0.01")
 TARIFFS_FILE = Path(__file__).resolve().parent.parent / "market" / "tariffs-phase2.json"
 COVERED_REGIONS = {"flanders"}  # the verified tariff cards are for residential Flanders, single meter
+_ANSWERS_SOURCE = "jouw antwoorden"  # the evidence source of values typed or picked by the visitor
 
 MESSAGES = {
     "compared": "Je huidige contract vergeleken met de geverifieerde tariefkaarten van vandaag.",
@@ -39,9 +40,11 @@ MESSAGES = {
 WARNINGS = {
     "vat_assumed_incl": "De factuur zegt niet of de prijs per kWh inclusief btw is; ik ging uit van inclusief, dus de besparing is eerder te laag dan te hoog.",
     "usage_annualised": "Je factuur dekt geen volledig jaar; het verbruik is omgerekend naar een jaar.",
-    "region_unknown": "Ik vond geen postcode op de factuur en ging uit van Vlaanderen.",
+    "region_unknown": "Zonder postcode ging ik uit van Vlaanderen.",
     "standing_assumed_yearly": "Bij de vaste vergoeding staat geen periode; ik ging uit van een jaarbedrag.",
     "price_from_tariff_card": "Je prijs per kWh staat niet op de factuur; ik nam die van de tariefkaart van je product.",
+    "fee_not_found": "Ik vond geen vaste vergoeding op de factuur; je huidige kost kan dus hoger liggen dan hier staat.",
+    "price_from_chosen_product": "Je prijs komt van de huidige tariefkaart van het product dat je koos.",
 }
 
 
@@ -195,10 +198,13 @@ def _compare_energy(
     if entry.get("price"):
         price = _incl_vat(entry["price"], warnings)
         fee = _yearly_fee(entry.get("standing_charge"), billing_days, warnings)
+        if not entry.get("standing_charge"):
+            warnings.append("fee_not_found")
         current = {"price_source": "invoice", "price_per_kwh_eur": price, "fee": fee,
                    "evidence": _evidence(entry.get("product"), entry["price"], entry.get("standing_charge"))}
     elif current_card:
-        warnings.append("price_from_tariff_card")
+        chosen = (entry.get("product") or {}).get("source") == _ANSWERS_SOURCE
+        warnings.append("price_from_chosen_product" if chosen else "price_from_tariff_card")
         current = {"price_source": "tariff_card", "price_per_kwh_eur": Decimal(str(current_card["price_per_kwh_eur"])),
                    "fee": _card_fee(current_card), "evidence": _evidence(entry.get("product"))}
 
@@ -226,8 +232,8 @@ def _compare_energy(
         "price_source": current["price_source"],
         "evidence": current["evidence"],
     }
-    if result["best"] is None:
-        result["status"] = "offers_only"
+    if result["best"] is None:  # the visitor's own card is the only one: nothing cheaper to show
+        result["status"] = "already_cheapest"
         return _finish(result, warnings)
     saving = yearly - result["best"]["_yearly"]
     if saving <= 0:
@@ -293,10 +299,71 @@ def compare_contract(
 
 def check_invoice_contract(
     chunks: list[KnowledgeChunk], contracts: dict[str, Any] | None = None, *,
-    usage_kwh: dict[str, int | str | Decimal] | None = None,
+    usage_kwh: dict[str, int | str | Decimal] | None = None, facts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Read the bill and compare its contract: the whole contract check in one call."""
-    facts = analyze_invoice_chunks(chunks)["facts"]
+    """Read the bill and compare its contract: the whole contract check in one call. `facts` are the bill's
+    invoice_analysis facts when they were read already (an upload session keeps them)."""
+    facts = facts if facts is not None else analyze_invoice_chunks(chunks)["facts"]
     energies = tuple(energy for energy, key in (("electricity", "electricity_kwh"), ("gas", "gas_kwh")) if facts.get(key))
     terms = read_contract_terms(chunks, energies or ("electricity", "gas"))
-    return compare_contract(facts, terms, contracts if contracts is not None else local_contracts(), usage_kwh=usage_kwh)
+    result = compare_contract(facts, terms, contracts if contracts is not None else local_contracts(), usage_kwh=usage_kwh)
+    result["based_on"] = "invoice"
+    return result
+
+
+# --- without a bill: three questions ----------------------------------------------------------------
+
+
+def _answer_fact(value: Any, field: str, **extra: Any) -> dict[str, Any]:
+    return {"value": value, "page": 0, "source": _ANSWERS_SOURCE, "excerpt": field, "field": field, **extra}
+
+
+def contract_options(contracts: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """The verified products a visitor can pick as "my contract", per energy, by supplier."""
+    data = {"contracts": contracts}
+    options = {}
+    for energy in ("electricity", "gas"):
+        cards = verified_cards(data, "variable", energy) + verified_cards(data, "fixed", energy)
+        options[energy] = sorted(
+            ({"supplier": card["name"], "product": str(card.get("product_name") or ""), "label": card_label(card),
+              "contract_type": card.get("contract_type", "variable")} for card in cards),
+            key=lambda option: (option["supplier"].casefold(), option["label"].casefold()),
+        )
+    return options
+
+
+def compare_answers(
+    contracts: dict[str, Any], *, postcode: str | None, meter: str | None,
+    energies: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """The contract check from answers instead of a bill: postcode, meter, and per energy the yearly kWh and the
+    product the visitor has now ("supplier" and "product" as contract_options lists them; both empty when unknown).
+    The current price is the product's tariff card; without one the offers are shown without a saving."""
+    region = region_for_postcode(postcode) if postcode else None
+    terms: dict[str, Any] = {
+        "postcode": _answer_fact(postcode, f"Postcode: {postcode}", region=region, delivery=True) if postcode else None,
+        "meter": _answer_fact(meter, f"Meter: {meter}") if meter in ("single", "day_night", "exclusive_night") else None,
+    }
+    facts: dict[str, Any] = {"supplier": None}
+    usage_kwh: dict[str, int | str | Decimal] = {}
+    supplier_names = []
+    for energy in ("electricity", "gas"):
+        answer = energies.get(energy)
+        if not answer:
+            terms[energy] = None
+            continue
+        product = str(answer.get("product") or "").strip()
+        supplier = str(answer.get("supplier") or "").strip()
+        if supplier:
+            supplier_names.append(supplier)
+        terms[energy] = {
+            "product": _answer_fact(product, f"Product: {supplier} {product}".strip()) if product else None,
+            "price": None, "day_price": None, "night_price": None, "standing_charge": None,
+        }
+        if answer.get("usage_kwh") not in (None, ""):
+            usage_kwh[energy] = answer["usage_kwh"]
+    if supplier_names:
+        facts["supplier"] = {"value": " / ".join(dict.fromkeys(supplier_names))}
+    result = compare_contract(facts, terms, contracts, usage_kwh=usage_kwh)
+    result["based_on"] = "answers"
+    return result

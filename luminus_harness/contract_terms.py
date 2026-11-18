@@ -43,6 +43,10 @@ _EXCL_VAT = re.compile(r"(?i)(?:excl(?:\.|usief)?\s*(?:btw|tva)|zonder\s+btw|hor
 _INCL_VAT = re.compile(r"(?i)(?:incl(?:\.|usief)?\s*(?:btw|tva)|met\s+btw|\btvac\b|\bttc\b|tva\s+comprise)")
 
 PRODUCT_LABEL_RE = re.compile(r"(?i)\b(?:productnaam|uw\s+product|product|tariefformule|formule|votre\s+produit|produit)\s*:\s*")
+# Suppliers' own layouts: a contract box ("Uw huidig contract Comfy Green Elektriciteit") and the short format
+# ("… - Variabel tarief Actief+ elektriciteit, contract van 1 jaar").
+CONTRACT_BOX_RE = re.compile(r"(?i)\buw\s+huidige?\s+(?:contract|tarief|product)\s*:?\s*")
+TARIFF_PRODUCT_RE = re.compile(r"(?i)\b(vast|variabel|dynamisch)\s+tarief\s+(?=[A-ZÀ-Ý])")
 # A product name ends where the next "Label:" starts or at one of these words.
 _PRODUCT_STOP = {
     "metertype", "meter", "energieprijs", "vaste", "leveringsadres", "factuurperiode", "periode", "klant", "adres",
@@ -67,8 +71,9 @@ NIGHT_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électri
 EXCLUSIVE_NIGHT_RE = re.compile(r"(?i)\b(?:exclusie(?:f|ve)\s+nacht\w*|uitsluitend\s+nacht|exclusif\s+nuit)\b")
 
 _DELIVERY_LABEL = re.compile(
-    r"(?i)\b(?:leveringsadres|verbruiksadres|afnameadres|afnamepunt|adres\s+van\s+levering|adresse\s+de\s+(?:fourniture|consommation)|point\s+de\s+fourniture)\b"
+    r"(?i)\b(?:leveringsadres|leveradres|verbruiksadres|afnameadres|afnamepunt|adres\s+van\s+levering|adresse\s+de\s+(?:fourniture|consommation)|point\s+de\s+fourniture)\b"
 )
+_EAN_LABEL = re.compile(r"\bEAN\s*:?\s*54\d{16}\b")  # "EAN 541… / Kerkstraat 1, 3500 Hasselt"
 _ADDRESS_LABEL = re.compile(r"(?i)\b(?:adres|adresse)\s*:")
 POSTCODE_RE = re.compile(r"\b([1-9]\d{3})\s+[A-ZÀ-Ý]")
 
@@ -98,14 +103,26 @@ def _energy_near(text: str, start: int, end: int, lookback: int = 260) -> Energy
     return "gas" if _GAS.fullmatch(last.group(0)) else "electricity"
 
 
+# A table's column header: "Eenheidsprijs (excl. BTW)", "Prix unitaire (hors TVA)".
+_PRICE_COLUMN_VAT = re.compile(
+    r"(?i)\b(?:eenheidsprijs|prijs\s+per\s+eenheid|prix\s+unitaire)\s*\(?\s*(?:(excl(?:\.|usief)?|hors)|(incl(?:\.|usief)?|tvac))"
+)
+
+
 def _vat_near(text: str, start: int, end: int) -> str | None:
-    """incl or excl when the price's own label, the words after it or a heading shortly before say so."""
+    """incl or excl when the price's own label, the words after it or a heading shortly before say so, else
+    the nearest price column header above it on the page."""
     after = text[end:end + 40]
     for window in (text[max(0, start - 70):start] + after, text[max(0, start - 320):start]):
         excl = [m.start() for m in _EXCL_VAT.finditer(window)]
         incl = [m.start() for m in _INCL_VAT.finditer(window)]
         if excl or incl:
             return "excl" if max(excl, default=-1) > max(incl, default=-1) else "incl"
+    header = None
+    for header in _PRICE_COLUMN_VAT.finditer(text[:start]):
+        pass
+    if header is not None:
+        return "excl" if header.group(1) else "incl"
     return None
 
 
@@ -165,7 +182,9 @@ def _product_name(text: str, start: int) -> str:
     for match in re.finditer(r"[^\s:]+:?", text[start:start + 120]):
         word = match.group(0)
         bare = word.rstrip(":").rstrip(".,;·")
-        if word.endswith(":") or bare.casefold() in _PRODUCT_STOP or len(words) == 6:
+        if word.endswith(":") or word.startswith("(") or bare.casefold() in _PRODUCT_STOP or len(words) == 6:
+            break
+        if words and bare.casefold() == words[-1].casefold():  # "Comfy Green Elektriciteit Elektriciteit (EAN …"
             break
         if not bare:
             break
@@ -177,17 +196,39 @@ def _product_name(text: str, start: int) -> str:
 
 def _products(chunk: KnowledgeChunk) -> list[dict[str, Any]]:
     found = []
-    for match in PRODUCT_LABEL_RE.finditer(chunk.text):
-        name = _product_name(chunk.text, match.end())
-        if len(name) < 3:
-            continue
-        energy = "gas" if _GAS.search(name) else "electricity" if _ELECTRICITY.search(name) else None
-        fact = _fact(name, chunk, chunk.text[max(0, match.start() - 60):match.end() + 80], match.group(0) + name)
-        fact["energy"] = energy or _energy_near(chunk.text, match.start(), match.start(), lookback=60)
-        kind = CONTRACT_TYPE_RE.search(name)
-        fact["contract_type"] = None if kind is None else "fixed" if kind.group(1) else "variable"
-        found.append(fact)
+    for label_re in (PRODUCT_LABEL_RE, CONTRACT_BOX_RE, TARIFF_PRODUCT_RE):
+        for match in label_re.finditer(chunk.text):
+            name = _product_name(chunk.text, match.end())
+            if len(name) < 3:
+                continue
+            energy = "gas" if _GAS.search(name) else "electricity" if _ELECTRICITY.search(name) else None
+            fact = _fact(name, chunk, chunk.text[max(0, match.start() - 60):match.end() + 80], match.group(0) + name)
+            fact["energy"] = energy or _energy_near(chunk.text, match.start(), match.start(), lookback=60)
+            kind = CONTRACT_TYPE_RE.search(match.group(0) + " " + name)
+            fact["contract_type"] = None if kind is None else "fixed" if kind.group(1) else "variable"
+            found.append(fact)
     return found
+
+
+def product_core(product: str) -> str:
+    """The product's own words, without the energy: "Comfy Green Elektriciteit" -> "comfy green"."""
+    return " ".join(_ENERGY_WORD.sub(" ", product.casefold()).split())
+
+
+_SINCE = re.compile(r"(?i)\b(?:vanaf|à partir du)\s+\d")
+
+
+def _current_first(facts: list[dict[str, Any]], product: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """When the period holds two products, the current one first: the line naming the contract's product, else
+    the line "vanaf <date>" (the product since a change), else the later line in the table."""
+    core = product_core(str(product["value"])) if product else ""
+
+    def rank(item: tuple[int, dict[str, Any]]) -> tuple[bool, bool, bool, int]:
+        index, fact = item
+        label = " ".join(str(fact.get("field", "")).casefold().split())
+        return (not (core and core in label), not _SINCE.search(label), not fact.get("labelled", False), -index)
+
+    return [fact for _, fact in sorted(enumerate(facts), key=rank)]
 
 
 def _days(day: str, month: str, year: str) -> int:
@@ -249,7 +290,7 @@ def _meter(chunks: list[KnowledgeChunk], prices: list[dict[str, Any]]) -> dict[s
 
 
 def _postcode(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
-    for label_re in (_DELIVERY_LABEL, _ADDRESS_LABEL):
+    for label_re in (_DELIVERY_LABEL, _EAN_LABEL, _ADDRESS_LABEL):
         for chunk in chunks:
             for label in label_re.finditer(chunk.text):
                 match = POSTCODE_RE.search(chunk.text[label.end():label.end() + 90])
@@ -258,7 +299,7 @@ def _postcode(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
                     fact = _fact(match.group(1), chunk, chunk.text[max(0, label.start() - 10):start + 40],
                                  chunk.text[label.start():start + len(match.group(0)) + 20])
                     fact["region"] = region_for_postcode(match.group(1))
-                    fact["delivery"] = label_re is _DELIVERY_LABEL
+                    fact["delivery"] = label_re is not _ADDRESS_LABEL
                     return fact
     return None
 
@@ -294,14 +335,16 @@ def read_contract_terms(chunks: list[KnowledgeChunk], energies: tuple[Energy, ..
             continue
         alone = single_energy and energy in energies
         energy_prices = [price for price in prices if price["energy"] == energy or (price["energy"] is None and alone)]
-        # A labelled energy price wins over an unlabelled one; day and night are kept apart.
-        ranked = sorted(energy_prices, key=lambda price: not price["labelled"])
+        product = _first(products, energy, single_energy=alone)
+        # The current product's line wins over an earlier product's; day and night are kept apart.
+        ranked = _current_first(energy_prices, product)
+        fees = _current_first([fee for fee in standing if fee["energy"] == energy or (fee["energy"] is None and alone)], product)
         entry = {
-            "product": _first(products, energy, single_energy=alone),
+            "product": product,
             "price": next((price for price in ranked if price["period"] is None), None),
             "day_price": next((price for price in ranked if price["period"] == "day"), None),
             "night_price": next((price for price in ranked if price["period"] == "night"), None),
-            "standing_charge": _first(standing, energy, single_energy=alone),
+            "standing_charge": fees[0] if fees else None,
         }
         if entry["price"] is None and energy == "gas":
             entry["price"] = entry["day_price"]  # gas has no day/night; a "dag" word nearby is noise

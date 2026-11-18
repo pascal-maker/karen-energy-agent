@@ -208,3 +208,35 @@ def test_the_real_tariff_cards_load_and_compare():
     assert electricity["status"] == "compared" and electricity["offers"]
     assert all(offer["source_url"] for offer in electricity["offers"])
     assert Decimal(electricity["saving_eur_per_year"]) > 0
+
+
+# --- the layout suppliers publish as their sample bill ---------------------------------------------
+
+def test_supplier_table_layout_takes_the_current_product_after_a_change():
+    chunks = load_pdf_chunks(FIXTURES / "30-nl-contract-tabel-productwissel.pdf", source="30.pdf")
+    terms = read_contract_terms(chunks, ("electricity",))
+    electricity = terms["electricity"]
+    assert electricity["product"]["value"] == "Kanaal Groen Plus Elektriciteit"  # from "Uw huidig contract"
+    # The "(vanaf 01.04.2025)" product, not the earlier Kanaal Basis line or green-power, WKK or network rows.
+    assert electricity["price"]["value"] == Decimal("0.1750000")
+    assert electricity["price"]["vat"] == "excl"  # from the column header "Eenheidsprijs (excl. btw)"
+    assert electricity["standing_charge"]["value"] == Decimal("60.00")
+    assert electricity["standing_charge"]["unit"] == "per_year" and electricity["standing_charge"]["vat"] == "excl"
+    assert terms["postcode"]["value"] == "3500" and terms["postcode"]["delivery"] is True  # "Leveradres:"
+
+    result = _bill("30-nl-contract-tabel-productwissel.pdf")["energies"]["electricity"]
+    # 3.400 × 0,1750 × 1,06 + 60,00 × 1,06 = 630,70 + 63,60; Beta 3.400 × 0,14 + 75 = 551,00
+    assert result["current"]["yearly_eur"] == "694.30"
+    assert result["saving_eur_per_year"] == "143.30"
+
+
+def test_short_format_reads_the_tariff_line_and_says_the_fee_is_missing():
+    chunks = load_pdf_chunks(FIXTURES / "31-nl-contract-kort-formaat.pdf", source="31.pdf")
+    terms = read_contract_terms(chunks, ("electricity",))
+    assert terms["electricity"]["product"]["value"] == "Kanaal Actief elektriciteit"
+    assert terms["electricity"]["product"]["contract_type"] == "variable"  # "Variabel tarief …"
+    assert terms["postcode"]["value"] == "2800"  # the address after the EAN
+    result = _bill("31-nl-contract-kort-formaat.pdf")["energies"]["electricity"]
+    assert result["current"]["yearly_eur"] == "476.47"  # 3.100 × 0,1450 × 1,06, no fee on the bill
+    assert result["status"] == "already_cheapest"  # Beta 3.100 × 0,14 + 75 = 509,00
+    assert "fee_not_found" in [warning["code"] for warning in result["warnings"]]

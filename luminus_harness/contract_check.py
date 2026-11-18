@@ -182,6 +182,11 @@ def _switching() -> tuple[str, list[dict[str, str]]]:
     return answer, sources
 
 
+def switching_steps() -> tuple[str, list[dict[str, str]]]:
+    """How switching works, with its sources: shown under a contract check's result."""
+    return _switching()
+
+
 _ANSWERS = {
     "check": _check, "creg_scan": _creg_scan, "sjoemelkorting": _sjoemelkorting,
     "vaste_vergoeding": _vaste_vergoeding, "switching": _switching,
