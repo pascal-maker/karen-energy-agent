@@ -106,6 +106,7 @@ async function main() {
     assert.equal($(".cc-switch strong").textContent, "Kosten:", "Switching steps keep their bold labels")
     assert.ok($('.cc-offers li[data-current]').textContent.includes("jouw contract"))
     assert.match(text(), /Je prijs komt van de tariefkaart/)
+    assert.equal($(".cc-vcheck"), null, "No V-check block without a code")
 
     // An uploaded bill without yearly usage: Karen asks for the kWh and checks the same session again.
     await act(async () => button("Opnieuw beginnen").click())
@@ -125,11 +126,17 @@ async function main() {
     assert.match(text(), /geen jaarverbruik/)
     assert.match($(".cc-based").textContent, /factuur\.pdf/)
     await type($(".cc-inline input"), "3.500")
-    responses.push(COMPARED)
+    responses.push({ ...COMPARED, based_on: "invoice", v_check: {
+        url: "https://www.vtest.be/v-check", codes: [{ code: "KNGP250400030125", energy: "electricity", page: 1, usage_kwh: "3500" }],
+    } })
     await act(async () => $(".cc-inline button").click())
     await act(async () => {})
     assert.deepEqual(requests.at(-1).body, { session_id: "session-1234567890abcdef", electricity: { usage_kwh: 3500 } })
     assert.match($(".cc-headline").textContent, /129/)
+    // The official check next to Karen's: the code from the bill and the kWh to type in the V-test.
+    assert.equal($(".cc-vcheck code").textContent, "KNGP 2504 0003 0125")
+    assert.match($(".cc-vcheck li").textContent, /Elektriciteit · vul 3\.500 kWh in/)
+    assert.equal($(".cc-vcheck-link").href, "https://www.vtest.be/v-check")
 
     // Starting over deletes the bill's session on the backend.
     await act(async () => button("Opnieuw beginnen").click())

@@ -15,7 +15,7 @@ import re
 from decimal import Decimal
 from typing import Any
 
-from .invoice_analysis import _decimal_value, _fact
+from .invoice_analysis import _decimal_value, _fact, _overlap_length
 from .knowledge import KnowledgeChunk
 
 Energy = str  # "electricity" or "gas"
@@ -69,6 +69,16 @@ DAY_NIGHT_RE = re.compile(r"(?i)\b(?:tweevoudige?\s+meter|dag[\s/-]*(?:en\s+)?na
 DAY_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:dag|jour)\s+\d")
 NIGHT_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:nacht|nuit)\s+\d")
 EXCLUSIVE_NIGHT_RE = re.compile(r"(?i)\b(?:exclusie(?:f|ve)\s+nacht\w*|uitsluitend\s+nacht|exclusif\s+nuit)\b")
+
+# Since 1 July 2025 every Flemish advance and settlement bill of a household prints the Vlaamse Nutsregulator's
+# unique identification code of the product version, with a link and QR code to its V-check (Energiebesluit
+# art. 3.2.18, first paragraph, 20°). The code names the contract, not the household: 16 characters, of which
+# vtest.be's form takes the last 8 as digits. Read only right after one of these labels, so an EAN, customer
+# or invoice number is never taken for it.
+VCHECK_LABEL_RE = re.compile(r"(?i)\b(?:unieke\s+identificatiecode|identificatiecode|v-?check(?:-?code)?|code\s+productversie)\b")
+VCHECK_CODE_RE = re.compile(r"(?<![\w-])([A-Z0-9]{4}[ -]?[A-Z0-9]{4}[ -]?\d{4}[ -]?\d{4})(?![\w-])")
+VTEST_LINK_RE = re.compile(r"(?i)(?<![\w/.])(?:https?://)?(?:www\.)?vtest(?:\.vreg)?\.be(?:/[^\s,;()]*)?")
+VCHECK_URL = "https://www.vtest.be/v-check"
 
 _DELIVERY_LABEL = re.compile(
     r"(?i)\b(?:leveringsadres|leveradres|verbruiksadres|afnameadres|afnamepunt|adres\s+van\s+levering|adresse\s+de\s+(?:fourniture|consommation)|point\s+de\s+fourniture)\b"
@@ -201,6 +211,9 @@ def _products(chunk: KnowledgeChunk) -> list[dict[str, Any]]:
             name = _product_name(chunk.text, match.end())
             if len(name) < 3:
                 continue
+            # "Unieke identificatiecode van uw product: KNGP2504 00030125" is the V-check code, not a product name.
+            if VCHECK_CODE_RE.fullmatch(name) or VCHECK_LABEL_RE.search(chunk.text[max(0, match.start() - 40):match.start()]):
+                continue
             energy = "gas" if _GAS.search(name) else "electricity" if _ELECTRICITY.search(name) else None
             fact = _fact(name, chunk, chunk.text[max(0, match.start() - 60):match.end() + 80], match.group(0) + name)
             fact["energy"] = energy or _energy_near(chunk.text, match.start(), match.start(), lookback=60)
@@ -304,6 +317,33 @@ def _postcode(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     return None
 
 
+def _v_check(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
+    """The V-check codes on the bill (one per contract, at most three) and any link to the V-test."""
+    codes: dict[str, dict[str, Any]] = {}
+    links: list[str] = []
+    for chunk in chunks:
+        for label in VCHECK_LABEL_RE.finditer(chunk.text):
+            window = chunk.text[label.end():label.end() + 120]
+            match = VCHECK_CODE_RE.search(window)
+            if not match or "EAN" in window[:match.start()]:
+                continue
+            code = re.sub(r"[ -]", "", match.group(1))
+            if code in codes or len(codes) == 3:
+                continue
+            start = label.end() + match.start()
+            fact = _fact(code, chunk, chunk.text[max(0, label.start() - 40):start + 40], chunk.text[label.start():start + len(match.group(1))])
+            fact["energy"] = _energy_near(chunk.text, label.start(), label.start(), lookback=120)
+            codes[code] = fact
+        for found in [*VTEST_LINK_RE.findall(chunk.text), *(url for url in chunk.urls if "vtest" in url.lower())]:
+            link = found.rstrip(".,;:")
+            link = link if link.lower().startswith("http") else f"https://{link}"
+            if link not in links:
+                links.append(link)
+    if not codes and not links:
+        return None
+    return {"codes": list(codes.values()), "links": links}
+
+
 def _first(facts: list[dict[str, Any]], energy: Energy, *, single_energy: bool, **wanted: Any) -> dict[str, Any] | None:
     for fact in facts:
         if any(fact.get(key) != value for key, value in wanted.items()):
@@ -313,22 +353,32 @@ def _first(facts: list[dict[str, Any]], energy: Energy, *, single_energy: bool, 
     return None
 
 
+def _pages(chunks: list[KnowledgeChunk]) -> list[KnowledgeChunk]:
+    """One chunk per page, the chunker's overlap removed: a table's column header ("Eenheidsprijs (excl. btw)")
+    and a label then stay in reach of rows that the chunker put in the next chunk."""
+    pages: list[KnowledgeChunk] = []
+    for chunk in chunks:
+        previous = pages[-1] if pages else None
+        if previous and previous.page == chunk.page and previous.source == chunk.source:
+            if chunk.text in previous.text:
+                continue
+            joined = previous.text + " " + chunk.text[_overlap_length(previous, chunk):].lstrip()
+            pages[-1] = KnowledgeChunk(previous.page, joined, tuple(dict.fromkeys(previous.urls + chunk.urls)), previous.source)
+        else:
+            pages.append(chunk)
+    return pages
+
+
 def read_contract_terms(chunks: list[KnowledgeChunk], energies: tuple[Energy, ...] = ("electricity", "gas")) -> dict[str, Any]:
     """The contract terms on the bill, per energy. `energies` are the energies the bill has consumption for;
     a value without an energy word belongs to the bill's only energy, and to none when there are two."""
     ordered = sorted(chunks, key=lambda chunk: chunk.page)
-    seen: set[str] = set()
-    unique = []
-    for chunk in ordered:  # overlapping chunks repeat text; read every passage once
-        key = chunk.text[:200]
-        if key not in seen:
-            seen.add(key)
-            unique.append(chunk)
+    unique = _pages(ordered)
     prices = [price for chunk in unique for price in _prices(chunk)]
     products = [product for chunk in unique for product in _products(chunk)]
     standing = [charge for chunk in unique for charge in _standing_charges(chunk)]
     single_energy = len(energies) == 1
-    terms: dict[str, Any] = {"postcode": _postcode(unique), "meter": _meter(unique, prices)}
+    terms: dict[str, Any] = {"postcode": _postcode(unique), "meter": _meter(unique, prices), "v_check": _v_check(unique)}
     for energy in ("electricity", "gas"):
         if energy not in energies:
             terms[energy] = None

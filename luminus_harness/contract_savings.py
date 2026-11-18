@@ -16,7 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-from .contract_terms import read_contract_terms, region_for_postcode
+from .contract_terms import VCHECK_URL, read_contract_terms, region_for_postcode
 from .invoice_analysis import analyze_invoice_chunks
 from .knowledge import KnowledgeChunk
 from .market_prices import card_label, verified_cards
@@ -254,6 +254,23 @@ def _finish(result: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     return result
 
 
+def _v_check(terms: dict[str, Any], energies: dict[str, Any], region: str | None) -> dict[str, Any] | None:
+    """The official check next to Karen's: the V-check code from the bill and the yearly kWh to type in the
+    V-test, which otherwise compares on an average household. Flanders only."""
+    found = terms.get("v_check")
+    if not found or region not in (None, "flanders"):
+        return None
+    only = next(iter(energies)) if len(energies) == 1 else None  # a code on a one-energy bill is that energy's
+    return {
+        "url": next((link for link in found["links"] if "v-check" in link.lower()), VCHECK_URL),
+        "codes": [
+            {"code": code["value"], "energy": code.get("energy") or only, "page": code["page"],
+             "usage_kwh": (energies.get(code.get("energy") or only or "") or {}).get("usage_kwh")}
+            for code in found["codes"]
+        ],
+    }
+
+
 def compare_contract(
     facts: dict[str, Any], terms: dict[str, Any], contracts: dict[str, Any], *,
     usage_kwh: dict[str, int | str | Decimal] | None = None,
@@ -288,6 +305,7 @@ def compare_contract(
             if offer:
                 offer.pop("_yearly", None)
     return {
+        "v_check": _v_check(terms, energies, region),
         "tariffs_as_of": contracts.get("as_of"),
         "postcode": postcode["value"] if postcode else None,
         "region": region,

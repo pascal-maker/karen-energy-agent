@@ -95,10 +95,13 @@ make("29-nl-contract-brussel", "Uw jaarafrekening", head("029", "Proefplein 3, 1
 # in days, and a product change during the period. Supplier, products and numbers are made up.
 
 # 30: annual bill, single meter, product changed on 01.04.2025; the current product is the one "vanaf".
+# Like every Flemish bill since July 2025 it prints the V-check code of the product version (a made-up one).
 make("30-nl-contract-tabel-productwissel", "Uw jaarafrekening", [
     f"Leverancier: {SUPPLIER}", "Klant: Jane Doe", "Leveradres: Teststraat 0, 3500 Teststad",
     "Uw huidig contract Kanaal Groen Plus Elektriciteit", "Elektriciteit (EAN 540000000000000030)",
-    "Factuurnummer: TEST-2026-030", "Facturatieperiode: 01.01.2025 - 31.12.2025", "",
+    "Factuurnummer: TEST-2026-030", "Facturatieperiode: 01.01.2025 - 31.12.2025",
+    "V-check: vergelijk dit contract met het marktaanbod op www.vtest.be/v-check",
+    "Unieke identificatiecode van uw product: KNGP2504 00030125", "",
     "**Elektriciteit: Samenstelling van uw bedrag",
     "Product                                  BTW   Hoeveelheid   Eenheidsprijs (excl. btw)   Bedrag",
     "**Dit betaalt u voor Kanaal Energie (Energiekosten)",

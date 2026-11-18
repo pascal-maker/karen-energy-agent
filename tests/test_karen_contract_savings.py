@@ -240,3 +240,44 @@ def test_short_format_reads_the_tariff_line_and_says_the_fee_is_missing():
     assert result["current"]["yearly_eur"] == "476.47"  # 3.100 × 0,1450 × 1,06, no fee on the bill
     assert result["status"] == "already_cheapest"  # Beta 3.100 × 0,14 + 75 = 509,00
     assert "fee_not_found" in [warning["code"] for warning in result["warnings"]]
+
+
+# --- the V-check code (Energiebesluit art. 3.2.18, 20°: on Flemish bills since 1 July 2025) ----------
+
+def test_v_check_code_and_link_come_with_the_yearly_usage_to_type_in():
+    result = _bill("30-nl-contract-tabel-productwissel.pdf")
+    assert result["v_check"] == {
+        "url": "https://www.vtest.be/v-check",
+        "codes": [{"code": "KNGP250400030125", "energy": "electricity", "page": 1, "usage_kwh": "3400"}],
+    }
+    # "Unieke identificatiecode van uw product: …" names the code, not the product.
+    assert result["energies"]["electricity"]["current"]["product"] == "Kanaal Groen Plus Elektriciteit"
+
+
+def test_no_v_check_without_a_labelled_code_or_link():
+    assert _bill("27-nl-contract-enkelvoudige-meter.pdf")["v_check"] is None
+    # A 16-character number without its label (here a customer number) is never taken for the code.
+    assert _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Klantnummer: ABCD1234 56789012 Energieprijs 2.000 kWh x "
+        "0,2500 €/kWh (incl. btw) Elektriciteitsverbruik: 2.000 kWh"
+    )["v_check"] is None
+
+
+def test_v_check_per_energy_and_a_link_without_scheme():
+    result = _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 "
+        "Elektriciteit V-check-code: AB12CD34-5678-9012 Elektriciteitsverbruik: 3.000 kWh "
+        "Aardgas Unieke identificatiecode AB12EF56 1111 2222 Gasverbruik: 10.000 kWh "
+        "Vergelijk op vtest.be/v-check of scan de QR-code."
+    )
+    assert result["v_check"]["codes"] == [
+        {"code": "AB12CD3456789012", "energy": "electricity", "page": 1, "usage_kwh": "3000"},
+        {"code": "AB12EF5611112222", "energy": "gas", "page": 1, "usage_kwh": "10000"},
+    ]
+    assert result["v_check"]["url"] == "https://vtest.be/v-check"
+
+
+def test_no_v_check_outside_flanders():
+    assert _text(
+        "Leveringsadres: Teststraat 1, 1050 Teststad V-check-code: AB12CD34 5678 9012 Elektriciteitsverbruik: 3.000 kWh"
+    )["v_check"] is None

@@ -11,6 +11,13 @@ type, all offers with their tariff card, where on the bill each value was read, 
 Where a fair comparison isn't possible (Brussels or Wallonia, a day/night meter, gas in m³, no yearly usage)
 it says so instead of showing a number; a bill without yearly usage gets a kWh field to check again.
 
+**V-check.** Since 1 July 2025 every Flemish advance and settlement bill of a household prints the Vlaamse
+Nutsregulator's identification code of the product version, with a link and QR code to its V-check
+(Energiebesluit art. 3.2.18, 20°). The code names the contract, not the household, and the V-check itself
+compares on an average household. When Karen finds the code on an uploaded Flemish bill, the result shows it
+with the yearly kWh to type in the V-test, and a button to vtest.be/v-check: the official comparison, on the
+visitor's own usage.
+
 **In Framer:** add a code file `ContractCheck.tsx` with the contents of this file, place it on a page (for
 example above Karen on `/live-demo`, or on its own page), set **Backend URL** to the same URL as Karen's
 (`…hf.space/api/answer` or just the Space origin) and Width to Fill. It uses `GET /api/contract-options`,

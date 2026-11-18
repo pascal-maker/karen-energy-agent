@@ -83,6 +83,7 @@ def test_uploaded_bill_is_checked_with_its_evidence_and_a_typed_usage_is_used(cl
     assert electricity["current"]["yearly_eur"] == "821.50" and electricity["current"]["price_source"] == "invoice"
     assert "Jane Doe" not in str(electricity["current"]["evidence"])  # the customer's name never comes back
     assert electricity["saving_eur_per_year"] == "256.50"  # 821,50 − Beta 3.500 × 0,14 + 75 = 565,00
+    assert body["v_check"] is None  # bill 27 prints no V-check code
     typed = client.post("/api/contract-check", json={"session_id": session, "electricity": {"usage_kwh": 2000}}).json()
     assert typed["energies"]["electricity"]["usage_kwh"] == "2000"
 
@@ -105,3 +106,16 @@ def test_options_and_answers_without_the_api():
     gas = result["energies"]["gas"]
     assert gas["status"] == "already_cheapest"  # the only gas card is the one picked
     assert "region_unknown" in [warning["code"] for warning in gas["warnings"]]
+
+
+def test_uploaded_bill_with_a_v_check_code(client):
+    pdf = (FIXTURES / "30-nl-contract-tabel-productwissel.pdf").read_bytes()
+    session = client.post("/api/upload", files={"file": ("30.pdf", pdf, "application/pdf")}).json()["session_id"]
+    body = client.post("/api/contract-check", json={"session_id": session}).json()
+    assert body["v_check"]["codes"][0]["code"] == "KNGP250400030125"
+    assert body["v_check"]["codes"][0]["usage_kwh"] == "3400"
+
+
+def test_answers_have_no_v_check(client):
+    body = client.post("/api/contract-check", json={"postcode": "9000", "electricity": {"usage_kwh": 3200}}).json()
+    assert body["v_check"] is None

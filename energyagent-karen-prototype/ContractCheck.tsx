@@ -25,6 +25,8 @@ type CheckResult = {
     energies: Partial<Record<Energy, EnergyResult>>
     total: { saving_eur_per_year: string; saving_eur_per_month: string } | null
     excluded: string; switching: { text: string; sources: Source[] }
+    // The official check next to Karen's: the V-check code printed on Flemish bills since July 2025.
+    v_check?: { url: string; codes: { code: string; energy: Energy | null; page: number; usage_kwh: string | null }[] } | null
 }
 type Energy = "electricity" | "gas"
 type EnergyForm = { usage: string; product: string }
@@ -332,6 +334,20 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                     <div className="cc-cards">
                         {(["electricity", "gas"] as Energy[]).map(energy => result.energies[energy] && energyCard(energy, result.energies[energy]!))}
                     </div>
+                    {result.v_check && result.v_check.codes.length > 0 && (
+                        <section className="cc-vcheck">
+                            <h3>Controleer het ook officieel</h3>
+                            <p>De V-check van de Vlaamse Nutsregulator vergelijkt je contract met het marktaanbod. Vul de code van je factuur in en geef daarna in de V-test je eigen verbruik in: dan vergelijkt hij op jouw verbruik in plaats van op een gemiddeld gezin.</p>
+                            <ul>{result.v_check.codes.map(item => (
+                                <li key={item.code}>
+                                    <code>{item.code.replace(/(.{4})(?=.)/g, "$1 ")}</code>
+                                    {item.energy && <span> · {ENERGY_NAME[item.energy]}</span>}
+                                    {item.usage_kwh && <span> · vul {Number(item.usage_kwh).toLocaleString("nl-BE")} kWh in</span>}
+                                </li>
+                            ))}</ul>
+                            <a className="cc-vcheck-link" href={result.v_check.url} target="_blank" rel="noreferrer">Open de V-check ↗</a>
+                        </section>
+                    )}
                     <section className="cc-switch">
                         <h3>Zo stap je over</h3>
                         {richText(result.switching.text)}
@@ -399,6 +415,12 @@ const css = `
   .cc-sources { display:flex; flex-wrap:wrap; gap:6px; }
   .cc-sources a { padding:3px 9px; border:1px solid #d6e3d4; border-radius:999px; color:#234f38; font-size:11px; text-decoration:none; }
   .cc-note { color:#7d8b82; font-size:12px; }
+  .cc-vcheck { margin:0 0 14px; padding:18px; border:1px solid #cfe0f0; border-radius:18px; background:#f3f8fc; }
+  .cc-vcheck h3 { margin:0 0 8px; font-size:16px; }
+  .cc-vcheck p { margin:0 0 8px; color:#4f6156; }
+  .cc-vcheck ul { margin:0 0 10px; padding-left:18px; }
+  .cc-vcheck code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:15px; letter-spacing:.04em; }
+  .cc-vcheck-link { display:inline-block; padding:8px 14px; border-radius:10px; color:#fff; background:#235a8a; text-decoration:none; font-weight:600; }
   @media (max-width:720px) {
     .cc { padding:16px 12px; }
     .cc header h2 { font-size:22px; }
