@@ -84,6 +84,9 @@ async function main() {
     await act(async () => {})
     assert.match(requests[0].url, /\/api\/contract-options$/)
     assert.ok([...document.querySelectorAll("optgroup")].map(group => group.label).includes("Beta"), "Products are grouped by supplier")
+    // Retention is said as it is: kept up to 60 minutes in memory for the check, never "not kept".
+    assert.ok(!/niet bewaard/.test(text()), "No blanket 'niet bewaard'")
+    assert.match($(".cc-privacy").textContent, /maximaal 60 minuten/)
 
     // Missing answers are asked for before anything is sent.
     await act(async () => $(".cc-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })))

@@ -128,3 +128,12 @@ def test_answers_without_a_meter_warn_that_the_saving_is_for_a_single_meter(clie
     electricity = body["energies"]["electricity"]
     assert electricity["saving_eur_per_year"] == "110.00"
     assert "meter_unknown" in [warning["code"] for warning in electricity["warnings"]]
+
+
+def test_the_screen_states_the_real_retention_and_size_limit():
+    import energy_voice_app
+
+    screen = (Path(__file__).parent.parent / "energyagent-karen-prototype" / "ContractCheck.tsx").read_text(encoding="utf-8")
+    assert f"maximaal {energy_voice_app.UPLOAD_SESSION_TTL_SECONDS // 60} minuten" in screen
+    assert f"max. {energy_voice_app.MAX_PDF_BYTES // (1024 * 1024)} MB" in screen
+    assert "niet bewaard" not in screen

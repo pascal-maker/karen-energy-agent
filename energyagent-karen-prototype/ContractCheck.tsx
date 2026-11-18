@@ -288,7 +288,7 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                     <label className="cc-upload" data-busy={busy ? "true" : undefined}>
                         <input type="file" accept="application/pdf,image/jpeg,image/png" onChange={upload} disabled={Boolean(busy)} aria-label="Factuur opladen" />
                         <strong>Laad je jaarafrekening op</strong>
-                        <span>PDF of foto · gelezen op Karen’s backend, niet bewaard</span>
+                        <span>PDF of foto, max. 15 MB · Karen leest hem op haar eigen server</span>
                     </label>
                     <p className="cc-or">of</p>
                     <form className="cc-form" onSubmit={submitAnswers}>
@@ -326,6 +326,8 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                         )}
                         <button className="cc-submit" type="submit" disabled={Boolean(busy)}>Bereken mijn besparing</button>
                     </form>
+                    {/* What really happens with a bill: matches the upload session's 60-minute expiry in energy_voice_app.py. */}
+                    <p className="cc-privacy">Je factuur wordt niet als bestand opgeslagen en niet gelogd. De gelezen tekst blijft maximaal 60 minuten in het geheugen van Karen’s server voor deze berekening; met “Opnieuw beginnen” wis je hem meteen. Alleen als de beheerder de taalmodelhulp aanzet en Karen niet alles vindt, gaan passages rond bedragen en datums naar een OpenAI-model, met namen, adressen en nummers vervangen door [X].</p>
                 </div>
             )}
 
@@ -383,6 +385,7 @@ const css = `
   .cc-upload input { position:absolute; inset:0; opacity:0; cursor:pointer; }
   .cc-upload span { color:#56705f; font-size:12px; }
   .cc-or { align-self:center; margin:0; color:#7d8b82; }
+  .cc-privacy { grid-column:1 / -1; margin:0; color:#7d8b82; font-size:12px; }
   .cc-form { display:grid; gap:12px; padding:18px; border:1px solid #e3ebe2; border-radius:18px; background:#fff; }
   .cc-field { display:grid; gap:4px; }
   .cc-field span { color:#4f6156; font-size:12px; font-weight:600; }
