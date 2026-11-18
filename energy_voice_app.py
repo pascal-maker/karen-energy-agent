@@ -69,7 +69,8 @@ from luminus_harness.rate_limit import SlidingWindowRateLimiter
 from luminus_harness.comparison_session import is_offer_comparison_question, pdf_comparison_reply
 from luminus_harness.petra_tts import MAX_SPEECH_CHARS, synthesize_petra
 from luminus_harness.contract_advice import answer_contract_advice
-from luminus_harness.contract_check import answer_contract_check
+from luminus_harness.contract_check import answer_contract_check, switching_steps
+from luminus_harness.contract_savings import check_invoice_contract, compare_answers, contract_options, local_contracts
 from luminus_harness.fixed_facts import affirmed_offer, answer_fixed_fact, convert, is_bare_yes, is_fixed_fact_question, needs_a_source, re_explain
 from luminus_harness.fuel_prices import answer_fuel_price_question
 from luminus_harness.feedback import FeedbackError, build_record, sign_feedback, store_feedback
@@ -700,6 +701,23 @@ class AnswerRequest(BaseModel):
     history: list[HistoryTurn] = Field(default_factory=list, max_length=6)
 
 
+class ContractEnergyAnswer(BaseModel):
+    model_config = {"extra": "forbid"}
+    usage_kwh: int | None = Field(default=None, ge=1, le=200_000)
+    supplier: str | None = Field(default=None, max_length=80)
+    product: str | None = Field(default=None, max_length=120)
+
+
+class ContractCheckRequest(BaseModel):
+    """Either an uploaded bill (session_id, optionally with corrected kWh) or the three questions."""
+    model_config = {"extra": "forbid"}
+    session_id: str | None = Field(default=None, min_length=16, max_length=128)
+    postcode: str | None = Field(default=None, pattern=r"^\d{4}$")
+    meter: str | None = Field(default=None, pattern="^(single|day_night|exclusive_night)$")
+    electricity: ContractEnergyAnswer | None = None
+    gas: ContractEnergyAnswer | None = None
+
+
 class PublicWebAnswerRequest(BaseModel):
     model_config = {"extra": "forbid"}
     question: str = Field(min_length=2, max_length=300)
@@ -943,6 +961,58 @@ async def _photo_chunks(image_data: bytes, filename: str) -> tuple[list[Knowledg
     if sum(len(chunk.text) for chunk in chunks) < 40:
         raise HTTPException(status_code=422, detail="Ik kon geen tekst op deze foto lezen. Probeer een scherpe foto, recht van boven, met goed licht.")
     return chunks, text
+
+
+async def _tariff_contracts() -> dict[str, Any]:
+    """Today's tariff cards from market.json, or the ones shipped with the backend when it can't be read."""
+    data = await load_market_data()
+    contracts = (data or {}).get("contracts")
+    return contracts if isinstance(contracts, dict) and contracts.get("suppliers") else local_contracts()
+
+
+def _masked_contract_check(result: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
+    """Passages from the visitor's own bill keep amounts and prices; account numbers and their name become [X]."""
+    from luminus_harness.invoice_model import mask_identifiers
+
+    for entry in result["energies"].values():
+        for evidence in (entry.get("current") or {}).get("evidence", []):
+            evidence["excerpt"] = mask_identifiers(evidence["excerpt"], names)
+            evidence["field"] = mask_identifiers(evidence["field"], names)
+    return result
+
+
+@api_app.get("/api/contract-options")
+async def api_contract_options(request: Request) -> dict[str, Any]:
+    """The verified products a visitor can pick as their current contract, per energy."""
+    _allow_api_request(request)
+    contracts = await _tariff_contracts()
+    return {"tariffs_as_of": contracts.get("as_of"), "options": contract_options(contracts)}
+
+
+@api_app.post("/api/contract-check")
+async def api_contract_check(body: ContractCheckRequest, request: Request) -> dict[str, Any]:
+    """Yearly cost of the visitor's contract against today's verified tariff cards, and the saving.
+    Computed on Karen's backend without a model, from an uploaded bill or from the three questions."""
+    _allow_api_request(request)
+    contracts = await _tariff_contracts()
+    usage = {energy: answer.usage_kwh for energy, answer in (("electricity", body.electricity), ("gas", body.gas))
+             if answer is not None and answer.usage_kwh is not None}
+    if body.session_id:
+        session = _get_upload_session(body.session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Deze factuursessie is verlopen. Laad je factuur opnieuw op.")
+        facts = session["analysis"]["facts"]
+        result = await asyncio.to_thread(check_invoice_contract, session["chunks"], contracts, usage_kwh=usage, facts=facts)
+        customer = (facts.get("customer") or {}).get("value") or ""
+        result = _masked_contract_check(result, (customer,) if customer else ())
+    else:
+        if body.electricity is None and body.gas is None:
+            raise HTTPException(status_code=422, detail="Vul je verbruik in of laad je factuur op.")
+        answers = {energy: answer.model_dump() for energy, answer in (("electricity", body.electricity), ("gas", body.gas)) if answer}
+        result = compare_answers(contracts, postcode=body.postcode, meter=body.meter, energies=answers)
+    switching, sources = switching_steps()
+    result["switching"] = {"text": switching, "sources": sources}
+    return result
 
 
 @api_app.delete("/api/session/{session_id}")

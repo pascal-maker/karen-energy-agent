@@ -1,5 +1,29 @@
 # Framer Code Component
 
+## Contract check screen — November 2026
+
+`ContractCheck.tsx` is a second code component: "Betaal je te veel voor je energie?". The visitor uploads
+a bill (PDF or photo) or answers three questions (postcode, yearly kWh with VREG household averages as
+shortcuts, meter, and the current product from today's verified tariff cards; gas optional). Karen's backend
+computes the yearly cost of the current contract and of every verified tariff card, without a model, and the
+screen shows the saving per year and per month, the cheapest offer and the cheapest of the other contract
+type, all offers with their tariff card, where on the bill each value was read, and how switching works.
+Where a fair comparison isn't possible (Brussels or Wallonia, a day/night meter, gas in m³, no yearly usage)
+it says so instead of showing a number; a bill without yearly usage gets a kWh field to check again.
+
+**V-check.** Since 1 July 2025 every Flemish advance and settlement bill of a household prints the Vlaamse
+Nutsregulator's identification code of the product version, with a link and QR code to its V-check
+(Energiebesluit art. 3.2.18, 20°). The code names the contract, not the household, and the V-check itself
+compares on an average household. When Karen finds the code on an uploaded Flemish bill, the result shows it
+with the yearly kWh to type in the V-test, and a button to vtest.be/v-check: the official comparison, on the
+visitor's own usage.
+
+**In Framer:** add a code file `ContractCheck.tsx` with the contents of this file, place it on a page (for
+example above Karen on `/live-demo`, or on its own page), set **Backend URL** to the same URL as Karen's
+(`…hf.space/api/answer` or just the Space origin) and Width to Fill. It uses `GET /api/contract-options`,
+`POST /api/contract-check`, and `POST /api/upload` / `DELETE /api/session/{id}` for a bill; the backend needs
+this branch deployed first.
+
 ## No comparison form — 21 October 2026
 
 "Vergelijk leveranciers" and similar questions no longer start a form (region, postcode, usage, meter). Karen answers right away with today's cheapest variable and fixed contracts as bars, and points to the official comparator for a price on the person's own usage: V-test, or BruSim / CompaCWaPE when Brussels or Wallonia is named. `/api/comparison-session` is gone and `comparison_session_id` in a request is ignored.

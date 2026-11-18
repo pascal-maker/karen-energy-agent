@@ -40,6 +40,8 @@ def main() -> None:
         "luminus_harness/comparison_session.py": repo_root / "luminus_harness" / "comparison_session.py",
         "luminus_harness/contract_advice.py": repo_root / "luminus_harness" / "contract_advice.py",
         "luminus_harness/contract_check.py": repo_root / "luminus_harness" / "contract_check.py",
+        "luminus_harness/contract_savings.py": repo_root / "luminus_harness" / "contract_savings.py",
+        "luminus_harness/contract_terms.py": repo_root / "luminus_harness" / "contract_terms.py",
         "luminus_harness/safety.py": repo_root / "luminus_harness" / "safety.py",
         "luminus_harness/question_kind.py": repo_root / "luminus_harness" / "question_kind.py",
         # question_kind.py reads the suppliers with a checked tariff card from this file.
