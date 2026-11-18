@@ -375,7 +375,7 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                     <p className="cc-note">{result.excluded} Tariefkaarten {(["electricity", "gas"] as Energy[])
                         .filter(energy => result.energies[energy]?.tariffs_as_of)
                         .map(energy => `${ENERGY_NAME[energy].toLowerCase()}: ${new Date(result.energies[energy]!.tariffs_as_of!).toLocaleDateString("nl-BE", { day: "numeric", month: "long", year: "numeric" })}`)
-                        .join(", ") || `van ${result.tariffs_as_of ?? "deze maand"}`}, energieprijs incl. 6% btw.</p>
+                        .join(", ") || `van ${result.tariffs_as_of ?? "deze maand"}`}. Prijzen per kWh met de kosten voor groene stroom en WKK en 6% btw.</p>
                     <button type="button" className="cc-again" onClick={restart}>Opnieuw beginnen</button>
                 </div>
             )}

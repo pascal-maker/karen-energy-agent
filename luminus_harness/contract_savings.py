@@ -46,6 +46,7 @@ WARNINGS = {
     "fee_not_found": "Ik vond geen vaste vergoeding op de factuur; je huidige kost kan dus hoger liggen dan hier staat.",
     "day_night_split_assumed": "Ik weet niet hoeveel je overdag en 's nachts verbruikt en rekende met de helft overdag, de helft 's nachts. Je echte verdeling staat op je jaarafrekening.",
     "day_night_price_not_found": "Ik vond je dag- en nachtprijs niet op de factuur, dus ik kan je huidige kost niet berekenen.",
+    "green_wkk_not_found": "Ik vond op de factuur geen kosten voor groene stroom en WKK. Zitten die niet in je prijs, dan betaal je nu ongeveer 1,5 cent per kWh meer dan hier staat, en ligt je besparing hoger.",
     "meter_unknown": "Dit geldt voor een enkelvoudige meter: de tariefkaarten zijn daarvoor. Heb je een dag/nachtmeter, dan klopt deze besparing niet.",
     "price_from_chosen_product": "Je prijs komt van de huidige tariefkaart van het product dat je koos.",
 }
@@ -139,14 +140,29 @@ def _matching_card(cards: list[dict[str, Any]], supplier: str, product: str) -> 
     return None
 
 
+def comparable(card: dict[str, Any], energy: str) -> bool:
+    """Whether a card's yearly cost can be ranked with the others. Electricity cards must say what green power
+    and CHP certificates cost per kWh (some include it in the price, others add it); a price that is last month's
+    realized price, not a forward estimate, is not ranked against estimates."""
+    if card.get("price_basis") == "realized_last_month":
+        return False
+    return energy != "electricity" or isinstance(card.get("green_wkk_eur_per_kwh"), (int, float))
+
+
+def _surcharge(card: dict[str, Any]) -> Decimal:
+    return Decimal(str(card.get("green_wkk_eur_per_kwh") or 0))
+
+
 def _card_price(card: dict[str, Any], day_share: Decimal | None) -> Decimal | None:
-    """The card's price per kWh at this meter: the single-meter price, or for a day/night meter the day and
-    night prices weighted by the household's split; None when the card has no verified day/night prices."""
+    """The card's price per kWh at this meter, green power and CHP included: the single-meter price, or for a
+    day/night meter the day and night prices weighted by the household's split; None when the card has no
+    verified day/night prices."""
     if day_share is None:
-        return Decimal(str(card["price_per_kwh_eur"]))
+        return Decimal(str(card["price_per_kwh_eur"])) + _surcharge(card)
     if not isinstance(card.get("price_day_eur"), (int, float)) or not isinstance(card.get("price_night_eur"), (int, float)):
         return None
-    return day_share * Decimal(str(card["price_day_eur"])) + (1 - day_share) * Decimal(str(card["price_night_eur"]))
+    weighted = day_share * Decimal(str(card["price_day_eur"])) + (1 - day_share) * Decimal(str(card["price_night_eur"]))
+    return weighted + _surcharge(card)
 
 
 def _offer(card: dict[str, Any], kwh: Decimal, day_share: Decimal | None = None) -> dict[str, Any]:
@@ -158,7 +174,8 @@ def _offer(card: dict[str, Any], kwh: Decimal, day_share: Decimal | None = None)
         "label": card_label(card),
         "contract_type": card.get("contract_type", "variable"),
         "duration_months": card.get("duration_months"),
-        "price_per_kwh_eur": str(price.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP).normalize()) if day_share is not None else str(price),
+        "price_per_kwh_eur": str(price.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP).normalize()),
+        "green_wkk_eur_per_kwh": str(card["green_wkk_eur_per_kwh"]) if "green_wkk_eur_per_kwh" in card else None,
         **({"price_day_eur": str(card["price_day_eur"]), "price_night_eur": str(card["price_night_eur"])} if day_share is not None else {}),
         "fixed_fee_eur_per_year": _money(_card_fee(card)),
         "yearly_eur": _money(yearly),
@@ -207,13 +224,13 @@ def _compare_energy(
     result["usage_kwh"] = str(kwh)
 
     data = {"contracts": contracts}
-    cards = verified_cards(data, "variable", energy) + verified_cards(data, "fixed", energy)
+    cards = [card for card in verified_cards(data, "variable", energy) + verified_cards(data, "fixed", energy) if comparable(card, energy)]
     entry = terms.get(energy) or {}
     day_share = None
     if day_night:
         # Weighted by the bill's own registers when it prints them, else half and half, said as an assumption.
         day, night = (entry.get("day_kwh") or {}).get("value"), (entry.get("night_kwh") or {}).get("value")
-        if day and night:
+        if day is not None and night is not None and day + night > 0:
             day_share = day / (day + night)
         else:
             day_share = Decimal("0.5")
@@ -226,23 +243,31 @@ def _compare_energy(
     product = (entry.get("product") or {}).get("value") or ""
     current_card = _matching_card(cards, supplier, product)
 
+    # Green power and CHP rows of the bill itself, on top of its energy price, as the cards' surcharge is.
+    bill_surcharge = sum((_incl_vat(fact, warnings) for fact in entry.get("green_wkk") or []), Decimal("0"))
+    priced = [entry.get(key) for key in ("price", "day_price", "night_price") if entry.get(key)]
+    if energy == "electricity" and priced and not entry.get("green_wkk") and not any(
+        re.search(r"(?i)groene|wkk|warmtekracht", str(fact.get("field", ""))) for fact in priced
+    ):
+        # The cards' prices carry these costs; a bill that shows neither a row nor "+ WKK" in its price may not.
+        warnings.append("green_wkk_not_found")
     current = None
     if day_night and entry.get("day_price") and entry.get("night_price"):
-        price = day_share * _incl_vat(entry["day_price"], warnings) + (1 - day_share) * _incl_vat(entry["night_price"], warnings)
+        price = day_share * _incl_vat(entry["day_price"], warnings) + (1 - day_share) * _incl_vat(entry["night_price"], warnings) + bill_surcharge
         fee = _yearly_fee(entry.get("standing_charge"), billing_days, warnings)
         if not entry.get("standing_charge"):
             warnings.append("fee_not_found")
         current = {"price_source": "invoice", "price_per_kwh_eur": price, "fee": fee,
-                   "evidence": _evidence(entry.get("product"), entry["day_price"], entry["night_price"], entry.get("standing_charge"))}
+                   "evidence": _evidence(entry.get("product"), entry["day_price"], entry["night_price"], entry.get("standing_charge"), *(entry.get("green_wkk") or []))}
     elif day_night and (entry.get("day_price") or entry.get("night_price") or entry.get("price")):
         warnings.append("day_night_price_not_found")  # one price only: no weighted current cost
     elif entry.get("price"):
-        price = _incl_vat(entry["price"], warnings)
+        price = _incl_vat(entry["price"], warnings) + bill_surcharge
         fee = _yearly_fee(entry.get("standing_charge"), billing_days, warnings)
         if not entry.get("standing_charge"):
             warnings.append("fee_not_found")
         current = {"price_source": "invoice", "price_per_kwh_eur": price, "fee": fee,
-                   "evidence": _evidence(entry.get("product"), entry["price"], entry.get("standing_charge"))}
+                   "evidence": _evidence(entry.get("product"), entry["price"], entry.get("standing_charge"), *(entry.get("green_wkk") or []))}
     elif current_card:
         chosen = (entry.get("product") or {}).get("source") == _ANSWERS_SOURCE
         warnings.append("price_from_chosen_product" if chosen else "price_from_tariff_card")
@@ -389,7 +414,7 @@ def contract_options(contracts: dict[str, Any]) -> dict[str, list[dict[str, str]
     data = {"contracts": contracts}
     options = {}
     for energy in ("electricity", "gas"):
-        cards = verified_cards(data, "variable", energy) + verified_cards(data, "fixed", energy)
+        cards = [card for card in verified_cards(data, "variable", energy) + verified_cards(data, "fixed", energy) if comparable(card, energy)]
         options[energy] = sorted(
             ({"supplier": card["name"], "product": str(card.get("product_name") or ""), "label": card_label(card),
               "contract_type": card.get("contract_type", "variable")} for card in cards),

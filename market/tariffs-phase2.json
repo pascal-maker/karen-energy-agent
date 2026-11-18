@@ -14,7 +14,9 @@
       "notes": "Residential Flanders variable product. The card also publishes separate peak/off-peak prices for a dual meter and a variable injection tariff.",
       "contract_type": "variable",
       "price_day_eur": 0.2679,
-      "price_night_eur": 0.2117
+      "price_night_eur": 0.2117,
+      "green_wkk_eur_per_kwh": 0.0,
+      "green_wkk_note": "Included in the price: 'De vermelde prijs voor geleverde energie omvat de energiekost, de kosten voor groenestroomcertificaten (GSC) en de kosten voor warmtekrachtkoppelingcertificaten'; row 'Geleverde energie, groene stroom + WKK'."
     },
     {
       "name": "Engie",
@@ -42,7 +44,9 @@
       "notes": "Variable price indexed monthly to Belpex-RLP-M. The November 2026 card (version 012611) is valid from 1 to 30 November 2026 for residential customers in Flanders and Wallonia.",
       "contract_type": "variable",
       "price_day_eur": 0.2268,
-      "price_night_eur": 0.2268
+      "price_night_eur": 0.2268,
+      "green_wkk_eur_per_kwh": 0.0151,
+      "green_wkk_note": "Separate: 'Bijdrage groene stroom en WKK' 'Vlaanderen 1,51' (€cent/kWh); 'Alle prijzen en tarieven zijn inclusief 6% btw'."
     },
     {
       "name": "TotalEnergies",
@@ -57,7 +61,9 @@
       "notes": "Residential Flanders product for meters read annually. The card also publishes an estimated annual price of 22.38 eurocent/kWh and a BELPEX_M_RLP formula.",
       "contract_type": "variable",
       "price_day_eur": 0.2573,
-      "price_night_eur": 0.2231
+      "price_night_eur": 0.2231,
+      "green_wkk_eur_per_kwh": 0.0,
+      "green_wkk_note": "Included in the price: 'De energieprijzen en tariefformules vermeld op deze tariefkaart omvatten de Bijdrage Groene Energie (BGE), waarvan het bedrag als volgt wordt vastgesteld 1,57 € cent/kWh'."
     },
     {
       "name": "Mega",
@@ -124,7 +130,9 @@
       "notes": "Residential Flanders variable one-year product. The card warns that activated SMR3/AMR digital-meter configurations may be billed dynamically instead.",
       "contract_type": "variable",
       "price_day_eur": 0.2568,
-      "price_night_eur": 0.2035
+      "price_night_eur": 0.2035,
+      "green_wkk_eur_per_kwh": 0.01596,
+      "green_wkk_note": "Separate, 'Vlaams Gewest': 'Kosten groene stroom 1,1660', 'Kosten WKK 0,4300' (c€/kWh); card header 'INCL. BTW'. 1,1660 + 0,4300 = 1,596."
     },
     {
       "name": "Aspiravi",
@@ -139,7 +147,10 @@
       "notes": "Residential variable product; the November 2026 card's formulas apply to contracts starting or renewing from 01/11/2026 to 31/01/2027. Formula 0.116 x Belpex + 2 c€/kWh excl. VAT for the single meter, 0.1335 x Belpex + 2 (day) and 0.09854 x Belpex + 2 (night). Supply is restricted to eligible co-operators.",
       "contract_type": "variable",
       "price_day_eur": 0.2677,
-      "price_night_eur": 0.20315
+      "price_night_eur": 0.20315,
+      "green_wkk_eur_per_kwh": 0.0157304,
+      "green_wkk_note": "Separate, excl. btw: 'Kosten Groene stroom excl. BTW 1,078', 'Kosten WKK excl. BTW 0,406'. (1,078 + 0,406) × 1,06 = 1,57304 incl. btw.",
+      "price_basis": "realized_last_month"
     },
     {
       "name": "Frank Energie",
@@ -152,7 +163,9 @@
       "source_url": "https://cdn.sanity.io/files/8navd656/production-be/17a305790aae6dec39336180582faca63dc1fbfa.pdf",
       "retrieved_at": "2026-11-18",
       "notes": "Variable formula is (0.1068 x Belpex RLP_BE + 1.500) x 1.06 EURct/kWh. The official card calls the standing charge an abonnementskost and publishes it per month.",
-      "contract_type": "variable"
+      "contract_type": "variable",
+      "green_wkk_eur_per_kwh": 0.01537,
+      "green_wkk_note": "Separate, 'Kosten groene stroom en WKK': 'GSC (EURct/kWh) 1,166', 'WKK (EURct/kWh) 0,371'; 'De tarieven (incl. 6% btw, tenzij anders vermeld)'. 1,166 + 0,371 = 1,537."
     },
     {
       "name": "Luminus",
@@ -168,7 +181,9 @@
       "retrieved_at": "2026-11-18",
       "notes": "Quote: 'Vaste vergoeding (€/jaar) 25,00'. Online-only product. (Luminus Comfy Elektriciteit was not refreshed for November.)",
       "price_day_eur": 0.284,
-      "price_night_eur": 0.223
+      "price_night_eur": 0.223,
+      "green_wkk_eur_per_kwh": 0.0,
+      "green_wkk_note": "Included in the price: 'De vermelde prijs voor geleverde energie omvat de energiekost, de kosten voor groenestroomcertificaten (GSC) en de kosten voor warmtekrachtkoppelingcertificaten'."
     },
     {
       "name": "Engie",
@@ -184,7 +199,9 @@
       "retrieved_at": "2026-11-18",
       "notes": "Quote: 'Vaste vergoeding(1) 69,00 €/jaar'. The monthOffset=0 API URL always serves the current month's card. (Engie Empower was not refreshed for November.)",
       "price_day_eur": 0.25009,
-      "price_night_eur": 0.19998
+      "price_night_eur": 0.19998,
+      "green_wkk_eur_per_kwh": 0.01582,
+      "green_wkk_note": "Separate column 'Kosten Groene stroom & WKK(5)' (c€/kWh), 'Prijzen inclusief 6% btw': 'Afname(2) 22,963 25,009 19,998 19,998 1,582'."
     },
     {
       "name": "Eneco",
@@ -200,7 +217,9 @@
       "retrieved_at": "2026-11-18",
       "notes": "'contract van bepaalde duur met een looptijd van 1 jaar'. Also Eneco Zon & Wind Vast (BC_032_012610_NL_ENECO_POWER_FIX.pdf): 22,10 c€/kWh, 65,00 €/jaar, 'contract van onbepaalde duur waarbij de energieprijs vast is tijdens het eerste jaar'. Energiedelen admin cost 124,63 €/jaar/EAN extra if applicable.",
       "price_day_eur": 0.2839,
-      "price_night_eur": 0.219
+      "price_night_eur": 0.219,
+      "green_wkk_eur_per_kwh": 0.0151,
+      "green_wkk_note": "Separate: 'Bijdrage groene stroom en WKK' 'Vlaanderen 1,51' (€cent/kWh); 'Alle prijzen en tarieven zijn inclusief 6% btw'."
     },
     {
       "name": "TotalEnergies",
@@ -216,7 +235,9 @@
       "retrieved_at": "2026-11-18",
       "notes": "Contract 'van onbepaalde duur'; price guaranteed not to rise for the first 12 months ('zal de energieprijzen ... de eerste 12 maanden van de levering niet verhogen'), so duration_months=12 is the fixed-price period, not a term. The 'latest' card URL serves the current month's card.",
       "price_day_eur": 0.2791,
-      "price_night_eur": 0.248
+      "price_night_eur": 0.248,
+      "green_wkk_eur_per_kwh": 0.0,
+      "green_wkk_note": "Included in the price: 'De energieprijzen en tariefformules vermeld op deze tariefkaart omvatten de Bijdrage Groene Energie (BGE), waarvan het bedrag als volgt wordt vastgesteld 1,57 € cent/kWh'."
     },
     {
       "name": "OCTA+",
@@ -246,7 +267,9 @@
       "retrieved_at": "2026-11-18",
       "notes": "STANDING CHARGE IS MONTHLY: quote 'Platformkost € 8,99 / maand' (not converted). 'de duur van jouw contract 1 jaar, indien je aansluitingspunt zich in het Vlaams of Waals Gewest bevindt'. Card covers Vlaanderen and Wallonië. Plenty Vast (for Plenty shareholders): same 22,66 c€/kWh with platformkost € 3,99/maand.",
       "price_day_eur": 0.2465,
-      "price_night_eur": 0.2465
+      "price_night_eur": 0.2465,
+      "green_wkk_eur_per_kwh": 0.0156,
+      "green_wkk_note": "Separate, under 'Taksen, heffingen en andere kosten incl. btw': 'Kosten groene certificaten (c€/kWh)' 1,17 (Vlaanderen; 3,03 and 2,69 are the other regions) and 'WKK (c€/kWh) 0,39'. 1,17 + 0,39 = 1,56."
     },
     {
       "name": "Elegant",
@@ -262,7 +285,9 @@
       "retrieved_at": "2026-11-18",
       "notes": "Quote: 'Vaste vergoeding (€/jaar)(1) 120,00'. Network table lists Fluvius only (Flanders). Card header says 'Vast 1 jaar'; the afname formula fields are '-' (only injectie is indexed). 'Current' URL path; the November card is valid 'vanaf 1 november 2026' until replaced.",
       "price_day_eur": 0.2216,
-      "price_night_eur": 0.213
+      "price_night_eur": 0.213,
+      "green_wkk_eur_per_kwh": 0.0159,
+      "green_wkk_note": "Separate: 'Bijdrage groene stroom (c€/kWh) 1,17', 'Bijdrage warmtekrachtkoppeling (c€/kWh) 0,42'; 'Prijzen inclusief 6% btw'. 1,17 + 0,42 = 1,59."
     },
     {
       "name": "Energyvision",
@@ -276,7 +301,9 @@
       "standing_charge_unit": "per_year",
       "source_url": "https://www.energyvision.be/sites/default/files/2026-11/EV-1126-GS3JV-nl.pdf",
       "retrieved_at": "2026-11-18",
-      "notes": "Quote: 'Vaste vergoeding 75 €/jaar'; 'contract van bepaalde duur van 3 jaar waarbij de energieprijs vast is'. Unusually low price - double-check before relying on it. Other product 'Goedkope stroom 1.800 kWh vast' (10-year contract) is only partly fixed (10,60 c€/kWh for first 1.800 kWh, 20,04 variable above) - not a pure fixed tariff."
+      "notes": "Quote: 'Vaste vergoeding 75 €/jaar'; 'contract van bepaalde duur van 3 jaar waarbij de energieprijs vast is'. Unusually low price - double-check before relying on it. Other product 'Goedkope stroom 1.800 kWh vast' (10-year contract) is only partly fixed (10,60 c€/kWh for first 1.800 kWh, 20,04 variable above) - not a pure fixed tariff.",
+      "green_wkk_eur_per_kwh": null,
+      "green_wkk_note": "Not on the card: 'De prijs van “Groene stroom” dient verhoogd te worden met ... de bijdrage groene energie en/of warmtekrachtkoppeling, die EnergyVision kan of moet aanrekenen', without an amount. The card's price is therefore not comparable with the others and is left out of the contract check."
     }
   ],
   "gas_suppliers": [

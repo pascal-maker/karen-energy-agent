@@ -31,6 +31,12 @@ _NOT_ENERGY_PRICE = re.compile(
     r"bijdrage\w*|capaciteit\w*|injectie\w*|teruglever\w*|groene\s+stroom|wkk|certificat\w*|federale|energiefonds|"
     r"openbare\s+dienst|odv|distribution|accise\w*|cotisation\w*|surcharge\w*|prélèvement\w*|réseau|injection)"
 )
+# Green power and CHP certificate costs, a per-kWh row of their own on many bills ("Kosten groene stroom 0,0150 €/kWh",
+# "Kosten WKK"). Not the energy price, but part of what the supplier charges per kWh, like the cards' surcharge.
+GREEN_WKK_LABEL = re.compile(
+    r"(?i)\b(?:(?:kosten|bijdrage)\s+(?:groene\s+(?:stroom|energie|certificaten)|wkk|warmtekracht\w*)|groenestroom\w*|"
+    r"wkk|warmtekrachtkoppeling\w*|certificats?\s+verts|cogénération)\b"
+)
 _ENERGY_PRICE_LABEL = re.compile(r"(?i)\b(?:energie(?:prijs|kost\w*|component)|prix\s+de\s+l'énergie|énergie|verbruik|consommation|prijs)\b")
 _ELECTRICITY_WORDS = r"\b(?:elektriciteit\w*|stroom\w*|électricité)\b"
 _GAS_WORDS = r"\b(?:aardgas\w*|gas\w*|gaz)\b"
@@ -66,7 +72,7 @@ _DATE_RANGE_RE = re.compile(r"(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\s*(?:-|–|t
 SINGLE_METER_RE = re.compile(r"(?i)\b(?:enkelvoudige?\s+meter|enkelvoudig\s+tarief|normale\s+meter|monohoraire|compteur\s+simple)\b")
 DAY_NIGHT_RE = re.compile(r"(?i)\b(?:tweevoudige?\s+meter|dag[\s/-]*(?:en\s+)?nacht\w*|dubbel\s+tarief|bihoraire|jour\s*/\s*nuit)\b")
 # Consumption printed per register ("Elektriciteit dag 1.850 kWh", "Elektriciteit nacht 1.200 kWh") is a day/night meter.
-_REGISTER_KWH = r"\s+(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*kwh\b"
+_REGISTER_KWH = r"\s+(\d{1,3}(?:[.\s]\d{3})+(?:,\d+)?|\d+(?:,\d+)?)\s*kwh\b"  # "1.800 kWh", "1.800,00 kWh", "0 kWh"
 DAY_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:dag|jour)" + _REGISTER_KWH)
 NIGHT_REGISTER_RE = re.compile(r"(?i)\b(?:elektriciteit|afname|verbruik|électricité)\s+(?:nacht|nuit)" + _REGISTER_KWH)
 EXCLUSIVE_NIGHT_RE = re.compile(r"(?i)\b(?:exclusie(?:f|ve)\s+nacht\w*|uitsluitend\s+nacht|exclusif\s+nuit)\b")
@@ -158,13 +164,29 @@ def _period(label: str) -> str | None:
     return "night" if _NIGHT.fullmatch(words[-1].group(0)) else "day"
 
 
-def _prices(chunk: KnowledgeChunk) -> list[dict[str, Any]]:
+def _prices(chunk: KnowledgeChunk, addons: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Energy prices per kWh; green power and CHP rows go to `addons` when given."""
     text = chunk.text
     found = []
     previous_end = 0
     for match in PRICE_RE.finditer(text):
         label = _label_before(text, match.start(), previous_end)
         previous_end = match.end()
+        green = GREEN_WKK_LABEL.search(label)
+        if green and addons is not None and not re.search(r"(?i)\benergie(?:prijs|kost)|geleverde\s+energie", label):
+            raw, unit = (match.group(1), "€") if match.group(1) else (match.group(2), match.group(3).lower())
+            value = _decimal_value(raw)
+            if value is not None:
+                eur = value / 100 if unit in ("c€", "ct", "cent", "eurocent") else value
+                if Decimal("0") < eur < Decimal("0.2"):
+                    fact = _fact(eur, chunk, text[max(0, match.start() - 90):match.end() + 40], label.strip()[-60:] + " " + match.group(0))
+                    fact.update(
+                        kind="wkk" if re.search(r"(?i)wkk|warmtekracht|cogénération", green.group(0)) else "green",
+                        energy=_energy_near(text, match.start() - len(label), match.start()),
+                        vat=_vat_near(text, match.start(), match.end()),
+                    )
+                    addons.append(fact)
+            continue
         if _NOT_ENERGY_PRICE.search(label):
             continue
         # A line without "energieprijs" or "verbruik" is accepted only when nothing marks it as another cost.
@@ -311,7 +333,7 @@ def _registers(chunks: list[KnowledgeChunk]) -> tuple[dict[str, Any] | None, dic
             match = pattern.search(chunk.text)
             if match and found[period] is None:
                 value = _decimal_value(match.group(1).replace(" ", "."))
-                if value is not None and value > 0:
+                if value is not None and value >= 0:  # 0 kWh at night is a real split: all by day
                     found[period] = _fact(value, chunk, chunk.text[max(0, match.start() - 30):match.end() + 30], match.group(0))
     return found["day"], found["night"]
 
@@ -388,7 +410,8 @@ def read_contract_terms(chunks: list[KnowledgeChunk], energies: tuple[Energy, ..
     a value without an energy word belongs to the bill's only energy, and to none when there are two."""
     ordered = sorted(chunks, key=lambda chunk: chunk.page)
     unique = _pages(ordered)
-    prices = [price for chunk in unique for price in _prices(chunk)]
+    addons: list[dict[str, Any]] = []
+    prices = [price for chunk in unique for price in _prices(chunk, addons)]
     products = [product for chunk in unique for product in _products(chunk)]
     standing = [charge for chunk in unique for charge in _standing_charges(chunk)]
     single_energy = len(energies) == 1
@@ -412,6 +435,10 @@ def read_contract_terms(chunks: list[KnowledgeChunk], energies: tuple[Energy, ..
         }
         if energy == "electricity":
             entry["day_kwh"], entry["night_kwh"] = _registers(unique)
+            # One green power and one CHP row at most: a table repeats them per product period.
+            mine = [fact for fact in addons if fact["energy"] in (energy, None)]
+            entry["green_wkk"] = [next(fact for fact in mine if fact["kind"] == kind) for kind in ("green", "wkk")
+                                  if any(fact["kind"] == kind for fact in mine)]
         if entry["price"] is None and energy == "gas":
             entry["price"] = entry["day_price"]  # gas has no day/night; a "dag" word nearby is noise
         terms[energy] = entry

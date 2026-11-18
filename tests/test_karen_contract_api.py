@@ -12,9 +12,9 @@ FIXTURES = Path(__file__).parent / "fixtures" / "invoices"
 CARDS = {
     "as_of": "2026-10-19",
     "suppliers": [
-        {"name": "Alfa", "status": "verified", "product_name": "Alfa Flex", "price_per_kwh_eur": 0.19,
+        {"name": "Alfa", "status": "verified", "product_name": "Alfa Flex", "green_wkk_eur_per_kwh": 0.0, "price_per_kwh_eur": 0.19,
          "standing_charge_amount": 25.0, "standing_charge_unit": "per_year"},
-        {"name": "Beta", "status": "verified", "product_name": "Beta Vast", "contract_type": "fixed", "duration_months": 36,
+        {"name": "Beta", "status": "verified", "product_name": "Beta Vast", "green_wkk_eur_per_kwh": 0.0, "contract_type": "fixed", "duration_months": 36,
          "price_per_kwh_eur": 0.14, "standing_charge_amount": 75.0, "standing_charge_unit": "per_year"},
     ],
     "gas_suppliers": [
