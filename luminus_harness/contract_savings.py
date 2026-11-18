@@ -250,6 +250,8 @@ def _compare_energy(
                    "fee": _card_fee(current_card), "evidence": _evidence(entry.get("product"))}
 
     offers = sorted((_offer(card, kwh, day_share) for card in cards), key=lambda offer: offer["_yearly"])
+    # The oldest card compared: electricity and gas cards are not always refreshed on the same day.
+    result["tariffs_as_of"] = min((str(card.get("retrieved_at")) for card in cards if card.get("retrieved_at")), default=contracts.get("as_of"))
     for offer in offers:
         offer["is_current"] = current_card is not None and offer["label"] == card_label(current_card)
     others = [offer for offer in offers if not offer["is_current"]]

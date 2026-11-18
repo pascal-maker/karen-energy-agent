@@ -17,6 +17,7 @@ type EnergyResult = {
     status: "compared" | "already_cheapest" | "offers_only" | "not_comparable"; reason: string | null; message: string
     usage_kwh: string | null
     day_share?: string
+    tariffs_as_of?: string
     current: { supplier: string | null; product: string | null; yearly_eur: string; price_per_kwh_eur: string; fixed_fee_eur_per_year: string; price_source: string; evidence: Evidence[] } | null
     offers: Offer[]; best: Offer | null; best_by_type: { variable: Offer | null; fixed: Offer | null }
     saving_eur_per_year: string | null; saving_eur_per_month: string | null; warnings: Warning[]
@@ -371,7 +372,10 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                         <p className="cc-sources">{result.switching.sources.map(source => source.url
                             ? <a key={source.url + source.excerpt} href={source.url} target="_blank" rel="noreferrer">{source.title} ↗</a> : null)}</p>
                     </section>
-                    <p className="cc-note">{result.excluded} Tariefkaarten van {result.tariffs_as_of ?? "deze maand"}, energieprijs incl. 6% btw.</p>
+                    <p className="cc-note">{result.excluded} Tariefkaarten {(["electricity", "gas"] as Energy[])
+                        .filter(energy => result.energies[energy]?.tariffs_as_of)
+                        .map(energy => `${ENERGY_NAME[energy].toLowerCase()}: ${new Date(result.energies[energy]!.tariffs_as_of!).toLocaleDateString("nl-BE", { day: "numeric", month: "long", year: "numeric" })}`)
+                        .join(", ") || `van ${result.tariffs_as_of ?? "deze maand"}`}, energieprijs incl. 6% btw.</p>
                     <button type="button" className="cc-again" onClick={restart}>Opnieuw beginnen</button>
                 </div>
             )}

@@ -350,3 +350,23 @@ def test_an_unknown_meter_is_said_with_the_saving():
     assert "meter_unknown" in [warning["code"] for warning in unknown["warnings"]]
     single = _bill("27-nl-contract-enkelvoudige-meter.pdf")["energies"]["electricity"]  # "Metertype: enkelvoudige meter"
     assert "meter_unknown" not in [warning["code"] for warning in single["warnings"]]
+
+
+
+def test_each_energy_says_how_old_its_tariff_cards_are():
+    result = check_invoice_contract(
+        load_pdf_chunks(FIXTURES / "28-nl-contract-dag-nacht-en-gas.pdf", source="28.pdf"), local_contracts()
+    )
+    data = local_contracts()
+    for energy, key in (("electricity", "suppliers"), ("gas", "gas_suppliers")):
+        dates = [card["retrieved_at"] for card in data[key] if card["status"] == "verified"]
+        assert result["energies"][energy]["tariffs_as_of"] == min(dates)
+
+
+def test_the_real_cards_compare_a_day_night_bill():
+    result = check_invoice_contract(
+        load_pdf_chunks(FIXTURES / "28-nl-contract-dag-nacht-en-gas.pdf", source="28.pdf"), local_contracts()
+    )
+    electricity = result["energies"]["electricity"]
+    assert electricity["status"] in ("compared", "already_cheapest")
+    assert electricity["offers"] and all(offer["price_day_eur"] and offer["price_night_eur"] for offer in electricity["offers"])
