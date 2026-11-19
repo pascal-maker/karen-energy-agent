@@ -89,7 +89,9 @@ EXCLUSIVE_NIGHT_RE = re.compile(r"(?i)\b(?:exclusie(?:f|ve)\s+nacht\w*|uitsluite
 VCHECK_LABEL_RE = re.compile(r"(?i)\b(?:unieke\s+identificatiecode|identificatiecode|v-?check(?:-?code)?|code\s+productversie)\b")
 # Printed with separators in any grouping ("9EK-GZWY3-20260401" on a 2026 Luminus bill); without them it is 8
 # characters and an 8-digit date, the 16 boxes of vtest.be's form.
-VCHECK_CODE_RE = re.compile(r"(?<![\w-])([A-Z0-9][A-Z0-9 -]{14,20}\d)(?![\w-])")
+# Exactly the code: 8 characters and an 8-digit date, with at most one space or hyphen between characters, so
+# text after it ("… 20260401 BTW 6%") is never pulled in.
+VCHECK_CODE_RE = re.compile(r"(?<![\w-])((?:[A-Z0-9][ -]?){8}(?:\d[ -]?){7}\d)(?![\w-])")
 _VCHECK_CODE_SHAPE = re.compile(r"[A-Z0-9]{8}\d{8}")
 # The link printed next to the QR code carries the codes per energy: E= electricity, G= gas.
 VCHECK_FACTUURCODE_RE = re.compile(r"(?i)(?:https?://)?(?:www\.)?vtest\.be/vcheck/factuurcode\?([^\s]+)")

@@ -457,6 +457,17 @@ def test_v_check_code_shape(printed, code):
     assert vcheck_code(printed) == code
 
 
+def test_v_check_code_stops_at_the_code_when_text_follows():
+    # Review of 89ea664: "V-check-code: AB12CD3420260401 BTW 6%" lost the code because the match ran on into "BTW 6".
+    result = _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 "
+        "Elektriciteit V-check-code: AB12CD3420260401 BTW 6% Elektriciteitsverbruik: 3.000 kWh"
+    )
+    assert result["v_check"]["codes"] == [
+        {"code": "AB12CD3420260401", "energy": "electricity", "page": 1, "usage_kwh": "3000"},
+    ]
+
+
 def test_a_phone_number_after_the_contract_box_is_not_a_product():
     terms = read_contract_terms([KnowledgeChunk(page=1, text="Uw huidig contract 078/18 01 83 0800/65 065", urls=(), source="t")],
                                 ("electricity",))
