@@ -200,6 +200,12 @@ def _compare_energy(
     result: dict[str, Any] = {"status": None, "reason": None, "usage_kwh": None, "current": None, "offers": [],
                               "best": None, "best_by_type": {"variable": None, "fixed": None},
                               "saving_eur_per_year": None, "saving_eur_per_month": None}
+    # The contract on the bill, shown also when it can't be compared (an advance bill has no yearly usage).
+    product = (terms.get(energy) or {}).get("product")
+    result["contract"] = (
+        {"product": product["value"], "contract_type": product.get("contract_type")}
+        if product and product.get("source") != _ANSWERS_SOURCE else None
+    )
     meter = terms.get("meter")
     day_night = energy == "electricity" and bool(meter) and meter["value"] == "day_night"
     if energy == "electricity" and meter and meter["value"] == "exclusive_night":
@@ -330,7 +336,9 @@ def _v_check(terms: dict[str, Any], energies: dict[str, Any], region: str | None
         return None
     only = next(iter(energies)) if len(energies) == 1 else None  # a code on a one-energy bill is that energy's
     return {
-        "url": next((link for link in found["links"] if "v-check" in link.lower()), VCHECK_URL),
+        # The bill's own link opens the V-check on the household's contract; else the V-check's start page.
+        "url": next((link for link in found["links"] if "factuurcode" in link.lower()), None)
+        or next((link for link in found["links"] if re.search(r"(?i)v-?check", link)), VCHECK_URL),
         "codes": [
             {"code": code["value"], "energy": code.get("energy") or only, "page": code["page"],
              "usage_kwh": (energies.get(code.get("energy") or only or "") or {}).get("usage_kwh")}

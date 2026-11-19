@@ -145,3 +145,26 @@ make("31-nl-contract-kort-formaat", "Uw jaarafrekening", [
     "Aangerekende voorschotten - € 960,00",
     "**Totaal te betalen € 83,87",
 ])
+
+# 32: a monthly advance bill in the layout of a large supplier (2026): no yearly usage and no kWh price, but the
+# contract per EAN ("… - Comfort (april 2026) Elektriciteit - Vast Tarief") and the V-check link with the codes
+# per energy. Supplier, products, addresses, EANs and codes are made up.
+make("32-nl-voorschot-vcheck-link", "Uw maandelijks voorschot", [
+    f"Leverancier: {SUPPLIER}", "Klant: Jane Doe", "Klantnummer: TEST-KLANT-032",
+    "Factuurnummer TEST-2026-032 Factuurdatum 13.10.2026",
+    "Omschrijving Periode Bedrag",
+    "Elektriciteit (EAN 540000000000000321) okt 2026 63,21 €",
+    "Gas (EAN 540000000000000322) okt 2026 105,66 €",
+    "Totaal (excl. BTW) 168,87 €",
+    "BTW 10,13 €",
+    "**Totaal factuurbedrag (incl. BTW) 179,00 €",
+    "",
+    "EAN 540000000000000321 - Teststraat 0 - 2640 Teststad - Kanaal Comfort (april 2026) Elektriciteit - Vast Tarief",
+    "Groen contract van onbepaalde duur met startdatum 03.04.2026 met opzegtermijn van 3 weken zonder verbrekingsvergoeding.",
+    "EAN 540000000000000322 - Teststraat 0 - 2640 Teststad - Kanaal Comfort (april 2026) Gas - Vast Tarief",
+    "Contract van onbepaalde duur met startdatum 01.04.2026 met opzegtermijn van 3 weken zonder verbrekingsvergoeding.",
+    "",
+    "Aanvullende informatie over uw Comfort tarief is beschikbaar via de QR code of op",
+    "https://www.vtest.be/vcheck/factuurcode?E=9ZZ-TESTA-20260401&G=9ZZ-TESTB-20260401",
+    "Uw huidig contract 078/00 00 00 Kanaal Comfort (april 2026) Elektriciteit",
+])

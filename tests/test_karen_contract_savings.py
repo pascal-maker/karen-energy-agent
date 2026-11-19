@@ -427,3 +427,48 @@ def test_the_bills_register_split_is_used_as_printed(registers, share, yearly):
     assert result["day_share"] == share
     assert result["current"]["yearly_eur"] == yearly
     assert "day_night_split_assumed" not in [warning["code"] for warning in result["warnings"]]
+
+
+# --- a monthly advance bill as a large supplier prints it (2026) ------------------------------------
+
+def test_advance_bill_gives_the_contract_and_the_v_check_link_with_its_codes():
+    result = _bill("32-nl-voorschot-vcheck-link.pdf")
+    # The link next to the QR code opens the V-check on the household's own contract.
+    assert result["v_check"]["url"] == "https://www.vtest.be/vcheck/factuurcode?E=9ZZ-TESTA-20260401&G=9ZZ-TESTB-20260401"
+    assert [(code["energy"], code["code"]) for code in result["v_check"]["codes"]] == [
+        ("electricity", "9ZZTESTA20260401"), ("gas", "9ZZTESTB20260401")]
+    for energy, product in (("electricity", "Kanaal Comfort (april 2026) Elektriciteit"), ("gas", "Kanaal Comfort (april 2026) Gas")):
+        entry = result["energies"][energy]
+        assert entry["reason"] == "no_usage"  # an advance bill has no yearly usage
+        assert entry["contract"] == {"product": product, "contract_type": "fixed"}  # "… - Vast Tarief"
+    assert result["region"] == "flanders"  # the postcode after the EAN
+
+
+@pytest.mark.parametrize("printed, code", [
+    ("9EK-GZWY3-20260401", "9EKGZWY320260401"),
+    ("KNGP2504 00030125", "KNGP250400030125"),
+    ("AB12CD34-5678-9012", "AB12CD3456789012"),
+    ("541448820046773508", None),  # an EAN: 18 digits
+    ("TEST-2026-0321", None),  # an invoice number
+])
+def test_v_check_code_shape(printed, code):
+    from luminus_harness.contract_terms import vcheck_code
+
+    assert vcheck_code(printed) == code
+
+
+def test_v_check_code_stops_at_the_code_when_text_follows():
+    # Review of 89ea664: "V-check-code: AB12CD3420260401 BTW 6%" lost the code because the match ran on into "BTW 6".
+    result = _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 "
+        "Elektriciteit V-check-code: AB12CD3420260401 BTW 6% Elektriciteitsverbruik: 3.000 kWh"
+    )
+    assert result["v_check"]["codes"] == [
+        {"code": "AB12CD3420260401", "energy": "electricity", "page": 1, "usage_kwh": "3000"},
+    ]
+
+
+def test_a_phone_number_after_the_contract_box_is_not_a_product():
+    terms = read_contract_terms([KnowledgeChunk(page=1, text="Uw huidig contract 078/18 01 83 0800/65 065", urls=(), source="t")],
+                                ("electricity",))
+    assert terms["electricity"]["product"] is None

@@ -18,6 +18,7 @@ type EnergyResult = {
     usage_kwh: string | null
     day_share?: string
     tariffs_as_of?: string
+    contract?: { product: string; contract_type: string | null } | null
     current: { supplier: string | null; product: string | null; yearly_eur: string; price_per_kwh_eur: string; fixed_fee_eur_per_year: string; price_source: string; evidence: Evidence[] } | null
     offers: Offer[]; best: Offer | null; best_by_type: { variable: Offer | null; fixed: Offer | null }
     saving_eur_per_year: string | null; saving_eur_per_month: string | null; warnings: Warning[]
@@ -48,6 +49,8 @@ export function contractEndpoint(apiEndpoint: string, path: "contract-check" | "
 
 const euro = (value: string | number, digits = 0) =>
     Number(value).toLocaleString("nl-BE", { style: "currency", currency: "EUR", minimumFractionDigits: digits, maximumFractionDigits: digits })
+// "2026-11-18" → "18 november 2026"
+const longDate = (iso: string) => new Date(iso).toLocaleDateString("nl-BE", { day: "numeric", month: "long", year: "numeric" })
 const cents = (value: string) => `${(Number(value) * 100).toLocaleString("nl-BE", { maximumFractionDigits: 2 })} c€/kWh`
 
 function contractKind(offer: Offer): string {
@@ -234,6 +237,10 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                     </div>
                 )}
                 {meterCaveat && entry.status !== "not_comparable" && <p className="cc-caveat" role="note">{meterCaveat.message}</p>}
+                {entry.contract && (
+                    <p className="cc-contract">Je contract: <strong>{entry.contract.product}</strong>
+                        {entry.contract.contract_type ? ` · ${entry.contract.contract_type === "fixed" ? "vast" : "variabel"}` : ""}</p>
+                )}
                 {entry.status !== "compared" && <p className="cc-message">{entry.message}</p>}
                 {entry.status === "offers_only" && best && (
                     <p className="cc-message">Goedkoopste bij jouw verbruik: <strong>{best.label}</strong> ({contractKind(best)}), {euro(best.yearly_eur)} per jaar.</p>
@@ -246,6 +253,14 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                         <input inputMode="numeric" placeholder="kWh per jaar" aria-label={`${ENERGY_NAME[energy]}verbruik in kWh per jaar`}
                             value={billUsage[energy]} onChange={event => setBillUsage(current => ({ ...current, [energy]: event.target.value }))} />
                         <button type="button" onClick={() => recheckWithUsage(energy)}>Opnieuw berekenen</button>
+                    </div>
+                )}
+                {needsUsage && energy === "electricity" && (
+                    <div className="cc-chips cc-chips-inline" aria-label="Gemiddeld verbruik per gezinsgrootte (VREG)">
+                        {HOUSEHOLDS.map(([label, kwh]) => (
+                            <button type="button" key={label} onClick={() => setBillUsage(current => ({ ...current, electricity: String(kwh) }))}>
+                                {label} ≈ {kwh.toLocaleString("nl-BE")} kWh</button>
+                        ))}
                     </div>
                 )}
                 {entry.offers.length > 0 && (
@@ -363,19 +378,21 @@ export default function ContractCheck({ apiEndpoint = "" }: { apiEndpoint: strin
                                     {item.usage_kwh && <span> · vul {Number(item.usage_kwh).toLocaleString("nl-BE")} kWh in</span>}
                                 </li>
                             ))}</ul>
-                            <a className="cc-vcheck-link" href={result.v_check.url} target="_blank" rel="noreferrer">Open de V-check ↗</a>
+                            <a className="cc-vcheck-link" href={result.v_check.url} target="_blank" rel="noreferrer">
+                                {result.v_check.url.includes("factuurcode") ? "Open de V-check met je contract ↗" : "Open de V-check ↗"}</a>
                         </section>
                     )}
                     <section className="cc-switch">
                         <h3>Zo stap je over</h3>
                         {richText(result.switching.text)}
-                        <p className="cc-sources">{result.switching.sources.map(source => source.url
+                        <p className="cc-sources">{result.switching.sources.filter((source, index, all) =>
+                            all.findIndex(other => other.url === source.url) === index).map(source => source.url
                             ? <a key={source.url + source.excerpt} href={source.url} target="_blank" rel="noreferrer">{source.title} ↗</a> : null)}</p>
                     </section>
                     <p className="cc-note">{result.excluded} Tariefkaarten {(["electricity", "gas"] as Energy[])
                         .filter(energy => result.energies[energy]?.tariffs_as_of)
-                        .map(energy => `${ENERGY_NAME[energy].toLowerCase()}: ${new Date(result.energies[energy]!.tariffs_as_of!).toLocaleDateString("nl-BE", { day: "numeric", month: "long", year: "numeric" })}`)
-                        .join(", ") || `van ${result.tariffs_as_of ?? "deze maand"}`}. Prijzen per kWh met de kosten voor groene stroom en WKK en 6% btw.</p>
+                        .map(energy => `${ENERGY_NAME[energy].toLowerCase()}: ${longDate(result.energies[energy]!.tariffs_as_of!)}`)
+                        .join(", ") || (result.tariffs_as_of ? `van ${longDate(result.tariffs_as_of)}` : "van deze maand")}. Prijzen per kWh met de kosten voor groene stroom en WKK en 6% btw.</p>
                     <button type="button" className="cc-again" onClick={restart}>Opnieuw beginnen</button>
                 </div>
             )}
@@ -422,6 +439,8 @@ const css = `
   .cc-saving { grid-column:1 / -1; margin:4px 0 0; }
   .cc-saving strong { color:#1f7a45; }
   .cc-message, .cc-alt { margin:8px 0 0; color:#4f6156; }
+  .cc-contract { margin:0 0 4px; color:#4f6156; }
+  .cc-chips-inline { margin-top:8px; }
   .cc-caveat { margin:10px 0 0; padding:8px 10px; border-radius:10px; color:#6b4a12; background:#fdf4e3; font-size:13px; }
   .cc-inline { display:flex; gap:8px; margin-top:10px; }
   .cc-inline input { flex:1; min-width:0; }

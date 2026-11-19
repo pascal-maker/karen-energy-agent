@@ -121,7 +121,11 @@ async function main() {
         ...COMPARED.energies.electricity, status: "not_comparable", reason: "no_usage", message: "Deze factuur vermeldt geen jaarverbruik.",
         usage_kwh: null, current: null, offers: [], best: null, best_by_type: { variable: null, fixed: null },
         saving_eur_per_year: null, saving_eur_per_month: null, warnings: [],
-    } } })
+        contract: { product: "Kanaal Comfort (april 2026) Elektriciteit", contract_type: "fixed" },
+    } }, tariffs_as_of: "2026-11-18",
+        switching: { ...SWITCHING, sources: [SWITCHING.sources[0], { ...SWITCHING.sources[0], excerpt: "regelt alles" }] },
+        v_check: { url: "https://www.vtest.be/vcheck/factuurcode?E=9ZZ-TESTA-20260401",
+                   codes: [{ code: "9ZZTESTA20260401", energy: "electricity", page: 1, usage_kwh: null }] } })
     const file = $('input[type="file"]')
     Object.defineProperty(file, "files", { configurable: true, value: [new window.File(["%PDF"], "factuur.pdf", { type: "application/pdf" })] })
     await act(async () => file.dispatchEvent(new window.Event("change", { bubbles: true })))
@@ -130,6 +134,15 @@ async function main() {
     assert.deepEqual(requests.at(-1).body, { session_id: "session-1234567890abcdef" })
     assert.match(text(), /geen jaarverbruik/)
     assert.match($(".cc-based").textContent, /factuur\.pdf/)
+    // An advance bill: the contract it names is shown, the V-check opens on it, the date reads as a date,
+    // and a source quoted twice is listed once.
+    assert.match($(".cc-contract").textContent, /Kanaal Comfort \(april 2026\) Elektriciteit · vast/)
+    assert.equal($(".cc-vcheck-link").textContent.trim(), "Open de V-check met je contract ↗")
+    assert.match($(".cc-note").textContent, /van 18 november 2026/)
+    assert.equal(document.querySelectorAll(".cc-switch .cc-sources a").length, 1)
+    // Household sizes fill the missing kWh, as in the form.
+    await act(async () => [...document.querySelectorAll(".cc-chips-inline button")].find(b => b.textContent.includes("4 personen")).click())
+    assert.equal($(".cc-inline input").value, "4000")
     await type($(".cc-inline input"), "3.500")
     responses.push({ ...COMPARED, based_on: "invoice", v_check: {
         url: "https://www.vtest.be/v-check", codes: [{ code: "KNGP250400030125", energy: "electricity", page: 1, usage_kwh: "3500" }],
