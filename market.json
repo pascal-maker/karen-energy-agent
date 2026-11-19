@@ -1,408 +1,10 @@
 {
  "schema_version": 1,
- "generated_at": "2026-11-18T22:57:55+00:00",
+ "generated_at": "2026-11-19T11:27:33+00:00",
  "market": "BE",
  "spot": {
   "unit": "EUR/MWh",
   "today": {
-   "date": "2026-11-18",
-   "resolution_minutes": 15,
-   "points": [
-    [
-     "00:00",
-     85.68
-    ],
-    [
-     "00:15",
-     86.2
-    ],
-    [
-     "00:30",
-     87.62
-    ],
-    [
-     "00:45",
-     85.65
-    ],
-    [
-     "01:00",
-     87.12
-    ],
-    [
-     "01:15",
-     78.64
-    ],
-    [
-     "01:30",
-     75.38
-    ],
-    [
-     "01:45",
-     76.37
-    ],
-    [
-     "02:00",
-     72.48
-    ],
-    [
-     "02:15",
-     69.4
-    ],
-    [
-     "02:30",
-     67.2
-    ],
-    [
-     "02:45",
-     71.06
-    ],
-    [
-     "03:00",
-     72.59
-    ],
-    [
-     "03:15",
-     72.52
-    ],
-    [
-     "03:30",
-     67.84
-    ],
-    [
-     "03:45",
-     62.44
-    ],
-    [
-     "04:00",
-     59.47
-    ],
-    [
-     "04:15",
-     59.97
-    ],
-    [
-     "04:30",
-     62.81
-    ],
-    [
-     "04:45",
-     62.43
-    ],
-    [
-     "05:00",
-     72.03
-    ],
-    [
-     "05:15",
-     72.84
-    ],
-    [
-     "05:30",
-     74.61
-    ],
-    [
-     "05:45",
-     84.78
-    ],
-    [
-     "06:00",
-     76.83
-    ],
-    [
-     "06:15",
-     90.3
-    ],
-    [
-     "06:30",
-     101.23
-    ],
-    [
-     "06:45",
-     115.28
-    ],
-    [
-     "07:00",
-     118.72
-    ],
-    [
-     "07:15",
-     117.55
-    ],
-    [
-     "07:30",
-     129.25
-    ],
-    [
-     "07:45",
-     131.26
-    ],
-    [
-     "08:00",
-     137.18
-    ],
-    [
-     "08:15",
-     130.43
-    ],
-    [
-     "08:30",
-     128.49
-    ],
-    [
-     "08:45",
-     133.52
-    ],
-    [
-     "09:00",
-     123.9
-    ],
-    [
-     "09:15",
-     122.7
-    ],
-    [
-     "09:30",
-     130.6
-    ],
-    [
-     "09:45",
-     118.82
-    ],
-    [
-     "10:00",
-     121.53
-    ],
-    [
-     "10:15",
-     115.63
-    ],
-    [
-     "10:30",
-     100.2
-    ],
-    [
-     "10:45",
-     98.34
-    ],
-    [
-     "11:00",
-     96.66
-    ],
-    [
-     "11:15",
-     96.54
-    ],
-    [
-     "11:30",
-     100.13
-    ],
-    [
-     "11:45",
-     100.0
-    ],
-    [
-     "12:00",
-     103.1
-    ],
-    [
-     "12:15",
-     101.81
-    ],
-    [
-     "12:30",
-     102.33
-    ],
-    [
-     "12:45",
-     102.32
-    ],
-    [
-     "13:00",
-     103.61
-    ],
-    [
-     "13:15",
-     99.88
-    ],
-    [
-     "13:30",
-     99.69
-    ],
-    [
-     "13:45",
-     97.03
-    ],
-    [
-     "14:00",
-     102.92
-    ],
-    [
-     "14:15",
-     104.15
-    ],
-    [
-     "14:30",
-     112.1
-    ],
-    [
-     "14:45",
-     130.86
-    ],
-    [
-     "15:00",
-     124.81
-    ],
-    [
-     "15:15",
-     146.83
-    ],
-    [
-     "15:30",
-     160.7
-    ],
-    [
-     "15:45",
-     169.45
-    ],
-    [
-     "16:00",
-     166.63
-    ],
-    [
-     "16:15",
-     176.06
-    ],
-    [
-     "16:30",
-     189.24
-    ],
-    [
-     "16:45",
-     203.15
-    ],
-    [
-     "17:00",
-     201.83
-    ],
-    [
-     "17:15",
-     207.82
-    ],
-    [
-     "17:30",
-     211.48
-    ],
-    [
-     "17:45",
-     213.59
-    ],
-    [
-     "18:00",
-     209.17
-    ],
-    [
-     "18:15",
-     211.23
-    ],
-    [
-     "18:30",
-     211.7
-    ],
-    [
-     "18:45",
-     217.0
-    ],
-    [
-     "19:00",
-     214.72
-    ],
-    [
-     "19:15",
-     210.2
-    ],
-    [
-     "19:30",
-     208.23
-    ],
-    [
-     "19:45",
-     201.41
-    ],
-    [
-     "20:00",
-     202.14
-    ],
-    [
-     "20:15",
-     199.82
-    ],
-    [
-     "20:30",
-     199.41
-    ],
-    [
-     "20:45",
-     186.9
-    ],
-    [
-     "21:00",
-     193.79
-    ],
-    [
-     "21:15",
-     187.69
-    ],
-    [
-     "21:30",
-     180.62
-    ],
-    [
-     "21:45",
-     170.31
-    ],
-    [
-     "22:00",
-     187.35
-    ],
-    [
-     "22:15",
-     174.23
-    ],
-    [
-     "22:30",
-     170.2
-    ],
-    [
-     "22:45",
-     163.11
-    ],
-    [
-     "23:00",
-     166.58
-    ],
-    [
-     "23:15",
-     155.71
-    ],
-    [
-     "23:30",
-     155.8
-    ],
-    [
-     "23:45",
-     151.19
-    ]
-   ],
-   "min": 59.47,
-   "max": 217.0,
-   "avg": 129.81,
-   "cheapest_hours": [
-    2,
-    3,
-    4
-   ]
-  },
-  "tomorrow": {
    "date": "2026-11-19",
    "resolution_minutes": 15,
    "points": [
@@ -800,8 +402,9 @@
     5
    ]
   },
+  "tomorrow": null,
   "stale": false,
-  "updated_at": "2026-11-18T22:57:55+00:00"
+  "updated_at": "2026-11-19T11:27:33+00:00"
  },
  "history": {
   "unit": "EUR/MWh",
@@ -903,10 +506,10 @@
   },
   "current_month": {
    "month": "2026-11",
-   "avg_so_far": 236.4
+   "avg_so_far": 234.2
   },
   "stale": false,
-  "updated_at": "2026-11-18T22:57:55+00:00"
+  "updated_at": "2026-11-19T11:27:33+00:00"
  },
  "forecast": {
   "unit": "EUR/MWh",
@@ -927,95 +530,99 @@
   "months": [
    {
     "month": "2026-11",
-    "point": 209.22,
-    "low": 164.17,
-    "high": 254.34
+    "point": 210.11,
+    "low": 164.87,
+    "high": 255.42
    },
    {
     "month": "2026-12",
-    "point": 209.22,
-    "low": 163.05,
-    "high": 284.16
+    "point": 210.11,
+    "low": 163.75,
+    "high": 285.38
    },
    {
     "month": "2027-01",
-    "point": 209.22,
-    "low": 143.4,
-    "high": 301.95
+    "point": 210.11,
+    "low": 144.01,
+    "high": 303.24
    },
    {
     "month": "2027-02",
-    "point": 209.22,
-    "low": 143.4,
-    "high": 350.41
+    "point": 210.11,
+    "low": 144.01,
+    "high": 351.9
    },
    {
     "month": "2027-03",
-    "point": 209.22,
-    "low": 135.57,
-    "high": 394.8
+    "point": 210.11,
+    "low": 136.15,
+    "high": 396.49
    },
    {
     "month": "2027-04",
-    "point": 209.22,
-    "low": 124.54,
-    "high": 411.06
+    "point": 210.11,
+    "low": 125.07,
+    "high": 412.81
    },
    {
     "month": "2027-05",
-    "point": 209.22,
-    "low": 124.54,
-    "high": 411.06
+    "point": 210.11,
+    "low": 125.07,
+    "high": 412.81
    },
    {
     "month": "2027-06",
-    "point": 209.22,
-    "low": 124.54,
-    "high": 428.54
+    "point": 210.11,
+    "low": 125.07,
+    "high": 430.37
    },
    {
     "month": "2027-07",
-    "point": 209.22,
-    "low": 124.54,
-    "high": 428.54
+    "point": 210.11,
+    "low": 125.07,
+    "high": 430.37
    },
    {
     "month": "2027-08",
-    "point": 209.22,
-    "low": 124.54,
-    "high": 428.54
+    "point": 210.11,
+    "low": 125.07,
+    "high": 430.37
    },
    {
     "month": "2027-09",
-    "point": 209.22,
-    "low": 124.54,
-    "high": 428.54
+    "point": 210.11,
+    "low": 125.07,
+    "high": 430.37
    },
    {
     "month": "2027-10",
-    "point": 209.22,
-    "low": 124.54,
-    "high": 428.54
+    "point": 210.11,
+    "low": 125.07,
+    "high": 430.37
    }
   ],
   "stale": false,
-  "updated_at": "2026-11-18T22:57:55+00:00"
+  "updated_at": "2026-11-19T11:27:33+00:00"
  },
  "contracts": {
-  "as_of": "2026-10-19",
+  "as_of": "2026-11-18",
   "suppliers": [
    {
     "name": "Luminus",
     "status": "verified",
     "product_name": "BasicFlex Online Elektriciteit",
-    "price_per_kwh_eur": 0.1919,
-    "price_per_kwh_note": "Enkelvoudige meter; supplier energy price, including 6% VAT; October 2026 tariff card.",
+    "price_per_kwh_eur": 0.2394,
+    "price_per_kwh_note": "November 2026 card '(november 2026) Tarief: variabel', Vlaanderen, estimate under the Vlaamse Nutsregulator method (as the V-test uses), incl. 6% btw. Quote: 'Jaarschatting energieprijs (c€/kWh)2 23,94 26,79 21,17 21,17' (enkelvoudig, piekuren, daluren, exclusief nacht); 'Vaste vergoeding (€/jaar) 25,00 25,00 -'.",
     "standing_charge_amount": 25.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://www.luminus.be/api-next/get-pricelist?documentSlug=basicflex&energyType=electricity&language=nl&tabValue=Flanders",
-    "retrieved_at": "2026-10-19",
+    "retrieved_at": "2026-11-18",
     "notes": "Residential Flanders variable product. The card also publishes separate peak/off-peak prices for a dual meter and a variable injection tariff.",
-    "contract_type": "variable"
+    "contract_type": "variable",
+    "price_day_eur": 0.2679,
+    "price_night_eur": 0.2117,
+    "green_wkk_eur_per_kwh": 0.0,
+    "green_wkk_note": "Included in the price: 'De vermelde prijs voor geleverde energie omvat de energiekost, de kosten voor groenestroomcertificaten (GSC) en de kosten voor warmtekrachtkoppelingcertificaten'; row 'Geleverde energie, groene stroom + WKK'."
    },
    {
     "name": "Engie",
@@ -1034,27 +641,35 @@
     "name": "Eneco",
     "status": "verified",
     "product_name": "Eneco Zon & Wind Flex",
-    "price_per_kwh_eur": 0.1949,
-    "price_per_kwh_note": "Enkelvoudige meter; estimated annual energy price on the October 2026 card, including 6% VAT. The card also shows a monthly estimate of 20.78 eurocent/kWh.",
+    "price_per_kwh_eur": 0.2268,
+    "price_per_kwh_note": "'Tariefkaart november 2026', version 012611, 'Geldig van 1 november 2026 t.e.m 30 november 2026', 'Alle prijzen en tarieven zijn inclusief 6% btw'. Quote: '22,68 22,68 22,68 22,68 Geschatte jaarprijs' (enkelvoudig, dag, nacht, uitsluitend nacht: the same price for every meter) and '65,00 22,81 22,81 22,81 22,81 Maandprijs'.",
     "standing_charge_amount": 65.0,
     "standing_charge_unit": "per_year",
-    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012610_NL_ENECO_POWER_FLEX.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "Variable price indexed monthly to Belpex-RLP-M. The tariff card is valid from 1 October through 31 October 2026 for residential customers in Flanders and Wallonia.",
-    "contract_type": "variable"
+    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012611_NL_ENECO_POWER_FLEX.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "Variable price indexed monthly to Belpex-RLP-M. The November 2026 card (version 012611) is valid from 1 to 30 November 2026 for residential customers in Flanders and Wallonia.",
+    "contract_type": "variable",
+    "price_day_eur": 0.2268,
+    "price_night_eur": 0.2268,
+    "green_wkk_eur_per_kwh": 0.0151,
+    "green_wkk_note": "Separate: 'Bijdrage groene stroom en WKK' 'Vlaanderen 1,51' (€cent/kWh); 'Alle prijzen en tarieven zijn inclusief 6% btw'."
    },
    {
     "name": "TotalEnergies",
     "status": "verified",
     "product_name": "TotalEnergies myEssential Variabel",
-    "price_per_kwh_eur": 0.2078,
-    "price_per_kwh_note": "Enkelvoudige meter; monthly indicative supplier energy price for October 2026, including 6% VAT; exact variable index is finalized after the delivery month.",
+    "price_per_kwh_eur": 0.2387,
+    "price_per_kwh_note": "Card 'november 2026', Vlaamse Gewest, BTW 6% inbegrepen, estimate under the Vlaamse Nutsregulator method (as the V-test uses), incl. 6% btw (footnote ***: 'geschat ... volgens de methodologie van de Vlaamse Nutsregulator'). Quote: '23,87 25,73 22,31 23,62 Maandelijkstarief' (enkelvoudig, piekuren, daluren, excl. nacht), vaste vergoeding '35,00'.",
     "standing_charge_amount": 35.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://totalenergies.be/static/marketing-documents/b2c/tariff-card/latest/MYESSENTIAL_ELECTRICITY_VL_NL.pdf",
-    "retrieved_at": "2026-10-19",
+    "retrieved_at": "2026-11-18",
     "notes": "Residential Flanders product for meters read annually. The card also publishes an estimated annual price of 22.38 eurocent/kWh and a BELPEX_M_RLP formula.",
-    "contract_type": "variable"
+    "contract_type": "variable",
+    "price_day_eur": 0.2573,
+    "price_night_eur": 0.2231,
+    "green_wkk_eur_per_kwh": 0.0,
+    "green_wkk_note": "Included in the price: 'De energieprijzen en tariefformules vermeld op deze tariefkaart omvatten de Bijdrage Groene Energie (BGE), waarvan het bedrag als volgt wordt vastgesteld 1,57 € cent/kWh'."
    },
    {
     "name": "Mega",
@@ -1112,40 +727,51 @@
     "name": "OCTA+",
     "status": "verified",
     "product_name": "OCTA+ SmartVariabel",
-    "price_per_kwh_eur": 0.1946,
-    "price_per_kwh_note": "Enkelvoudige meter; estimated average supplier energy price for the coming 12 months on the October 2026 card, including VAT.",
+    "price_per_kwh_eur": 0.2301,
+    "price_per_kwh_note": "'TARIEFFICHE NOVEMBER 2026', residentieel, incl. btw, 'Variabel tarief - geschatte gemiddelde prijs voor de komende 12 maanden'. Quote: 'Enkelvoudige meter 23,01', 'Tweevoudige meter - Piekuren 25,68', 'Tweevoudige meter - Daluren 20,35'; 'Vaste vergoeding (€/jaar) 65,00'.",
     "standing_charge_amount": 65.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://files.octaplus.be/tariffs/E_OCTA_SMARTVARIABLE_RE_VL_NL.pdf",
-    "retrieved_at": "2026-10-19",
+    "retrieved_at": "2026-11-18",
     "notes": "Residential Flanders variable one-year product. The card warns that activated SMR3/AMR digital-meter configurations may be billed dynamically instead.",
-    "contract_type": "variable"
+    "contract_type": "variable",
+    "price_day_eur": 0.2568,
+    "price_night_eur": 0.2035,
+    "green_wkk_eur_per_kwh": 0.01596,
+    "green_wkk_note": "Separate, 'Vlaams Gewest': 'Kosten groene stroom 1,1660', 'Kosten WKK 0,4300' (c€/kWh); card header 'INCL. BTW'. 1,1660 + 0,4300 = 1,596."
    },
    {
     "name": "Aspiravi",
     "status": "verified",
     "product_name": "Eco Plus Flex",
-    "price_per_kwh_eur": 0.21352,
-    "price_per_kwh_note": "Enkelvoudige meter; September 2026 realized/reference energy cost shown on the October 2026 tariff card, including 6% VAT. October's final variable price is only known after the month ends.",
+    "price_per_kwh_eur": 0.23539,
+    "price_per_kwh_note": "Card for contracts 'afgesloten in november 2026', incl. 6% BTW. NOT a forward estimate: the card shows the realized price of the last known month ('Voor oktober 2026 was de gemiddelde prijs (Belpex) 174,19 €/MWh'); Aspiravi publishes no VNR estimate. Quote: 'Energiekosten dag (c€/kWh) incl. BTW 23,539 26,770' (enkelvoudig, tweevoudig dag), 'Energiekosten nacht (c€/kWh) incl. BTW 20,315'; 'Vaste vergoeding (€/jaar) incl. BTW 38,5'.",
     "standing_charge_amount": 38.5,
     "standing_charge_unit": "per_year",
-    "source_url": "https://aspiravi-energy.be/wp-content/uploads/2026/10/900027_Eco_Plus_flex_huishoudelijk-formule-2026-1.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "Residential variable product for contracts starting or renewing from 1 October through 31 December 2026. The card publishes the formula 0.116 x Belpex + 2 c€/kWh excl. VAT for the mono meter and restricts supply to eligible co-operators.",
-    "contract_type": "variable"
+    "source_url": "https://aspiravi-energy.be/wp-content/uploads/2026/11/900027_Eco_Plus_flex_huishoudelijk-formule-2026.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "Residential variable product; the November 2026 card's formulas apply to contracts starting or renewing from 01/11/2026 to 31/01/2027. Formula 0.116 x Belpex + 2 c€/kWh excl. VAT for the single meter, 0.1335 x Belpex + 2 (day) and 0.09854 x Belpex + 2 (night). Supply is restricted to eligible co-operators.",
+    "contract_type": "variable",
+    "price_day_eur": 0.2677,
+    "price_night_eur": 0.20315,
+    "green_wkk_eur_per_kwh": 0.0157304,
+    "green_wkk_note": "Separate, excl. btw: 'Kosten Groene stroom excl. BTW 1,078', 'Kosten WKK excl. BTW 0,406'. (1,078 + 0,406) × 1,06 = 1,57304 incl. btw.",
+    "price_basis": "realized_last_month"
    },
    {
     "name": "Frank Energie",
     "status": "verified",
     "product_name": "Frank Energie Variabel",
-    "price_per_kwh_eur": 0.186786,
-    "price_per_kwh_note": "24u/digital meter; expected October 2026 variable energy price under the official VNR estimate, including 6% VAT.",
+    "price_per_kwh_eur": 0.21971,
+    "price_per_kwh_note": "'Frank Energie Variabel — november 2026', incl. 6% btw. Quote: 'Verwacht volgens methode VNR voor november 2026 (EURct/kWh) 21,9710' (Energiekosten 24u); 'Abonnementskost (EUR/maand) 4,17'. This card has no day/night prices (Frank publishes other variants separately).",
     "standing_charge_amount": 4.17,
     "standing_charge_unit": "per_month",
-    "source_url": "https://cdn.sanity.io/files/8navd656/production-be/4577990f859014d566f5a0d1ed61beaba3d97d47.pdf",
-    "retrieved_at": "2026-10-19",
+    "source_url": "https://cdn.sanity.io/files/8navd656/production-be/17a305790aae6dec39336180582faca63dc1fbfa.pdf",
+    "retrieved_at": "2026-11-18",
     "notes": "Variable formula is (0.1068 x Belpex RLP_BE + 1.500) x 1.06 EURct/kWh. The official card calls the standing charge an abonnementskost and publishes it per month.",
-    "contract_type": "variable"
+    "contract_type": "variable",
+    "green_wkk_eur_per_kwh": 0.01537,
+    "green_wkk_note": "Separate, 'Kosten groene stroom en WKK': 'GSC (EURct/kWh) 1,166', 'WKK (EURct/kWh) 0,371'; 'De tarieven (incl. 6% btw, tenzij anders vermeld)'. 1,166 + 0,371 = 1,537."
    },
    {
     "name": "Luminus",
@@ -1153,13 +779,17 @@
     "contract_type": "fixed",
     "product_name": "BasicFix Online Elektriciteit",
     "duration_months": 24,
-    "price_per_kwh_eur": 0.205,
-    "price_per_kwh_note": "Enkelvoudige meter, incl. 6% BTW ('Luminus energieprijzen (incl. BTW)'), card '(oktober 2026)', Regio: Vlaanderen. Quote: 'Geleverde energie (c€/kWh) 20,50 23,25 18,05 18,05'; header 'Tarief: vast ... Duur van het contract: 2 jaar'",
+    "price_per_kwh_eur": 0.2521,
+    "price_per_kwh_note": "Card '(november 2026) Tarief: vast', 'Luminus energieprijzen (incl. BTW)', Vlaanderen. Quote: 'Geleverde energie, groene stroom + WKK ... 25,21 28,40 22,30 22,30' (enkelvoudig, piekuren, daluren, exclusief nacht); 'Vaste vergoeding (€/jaar) 25,00 25,00 -'.",
     "standing_charge_amount": 25.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://www.luminus.be/api-next/get-pricelist?documentSlug=basicfix&energyType=electricity&language=nl&tabValue=Flanders",
-    "retrieved_at": "2026-10-19",
-    "notes": "Quote: 'Vaste vergoeding (€/jaar) 25,00'. Online-only product. Alternative fixed product: Luminus Comfy Elektriciteit (oktober 2026, 'Tarief: vast', 1 jaar): 23,90 c€/kWh enkelvoudig, vaste vergoeding 65,00 €/jaar, 30% welkomstkorting op energiekost 12 maanden (documentSlug=comfy)."
+    "retrieved_at": "2026-11-18",
+    "notes": "Quote: 'Vaste vergoeding (€/jaar) 25,00'. Online-only product. (Luminus Comfy Elektriciteit was not refreshed for November.)",
+    "price_day_eur": 0.284,
+    "price_night_eur": 0.223,
+    "green_wkk_eur_per_kwh": 0.0,
+    "green_wkk_note": "Included in the price: 'De vermelde prijs voor geleverde energie omvat de energiekost, de kosten voor groenestroomcertificaten (GSC) en de kosten voor warmtekrachtkoppelingcertificaten'."
    },
    {
     "name": "Engie",
@@ -1167,13 +797,17 @@
     "contract_type": "fixed",
     "product_name": "Easy (Type : Vast)",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.231,
-    "price_per_kwh_note": "Enkelvoudig, Afname, incl. 6% btw, 'Vaste prijzen elektriciteit voor contracten afgesloten in Oktober 2026 (looptijd van 1 jaar)', Vlaamse Gewest. Quote: 'Afname(2) 23,100'",
+    "price_per_kwh_eur": 0.22963,
+    "price_per_kwh_note": "'Vaste prijzen elektriciteit voor contracten afgesloten in November 2026 (looptijd van 1 jaar)', 'Prijzen inclusief 6% btw', Vlaamse Gewest. Quote: 'Afname(2) 22,963 25,009 19,998 19,998' (enkelvoudig, tweevoudig piekuren, tweevoudig daluren, uitsluitend nacht); vaste vergoeding '69,00 €/jaar'.",
     "standing_charge_amount": 69.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://www.engie.be/api/engie/be/ms/pricing/v1/public/pricesAndConditionsPDF?document=E_EASY_R_GREEN_C_F_12_V_N&monthOffset=0&segment=R&language=N",
-    "retrieved_at": "2026-10-19",
-    "notes": "Quote: 'Vaste vergoeding(1) 69,00 €/jaar'. Also Engie Empower (Type : Vast), onbepaalde duur, Oct 2026: 22,243 c€/kWh enkelvoudig, 90,00 €/jaar (document=E_EMPOWER_R_GREEN_C_F_00_V_N). The monthOffset=0 API URL always serves the current month's card."
+    "retrieved_at": "2026-11-18",
+    "notes": "Quote: 'Vaste vergoeding(1) 69,00 €/jaar'. The monthOffset=0 API URL always serves the current month's card. (Engie Empower was not refreshed for November.)",
+    "price_day_eur": 0.25009,
+    "price_night_eur": 0.19998,
+    "green_wkk_eur_per_kwh": 0.01582,
+    "green_wkk_note": "Separate column 'Kosten Groene stroom & WKK(5)' (c€/kWh), 'Prijzen inclusief 6% btw': 'Afname(2) 22,963 25,009 19,998 19,998 1,582'."
    },
    {
     "name": "Eneco",
@@ -1181,13 +815,17 @@
     "contract_type": "fixed",
     "product_name": "Eneco Zon & Wind Fix One",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.2169,
-    "price_per_kwh_note": "Enkelvoudige meter, incl. 6% btw, 'Tariefkaart oktober 2026', 'Geldig van 1 oktober 2026 t.e.m uiterlijk 31 oktober 2026', Vlaanderen en Wallonië. Quote row: '65,00   21,69   24,69   19,08' (vaste vergoeding, enkelvoudig, dag, nacht)",
+    "price_per_kwh_eur": 0.2489,
+    "price_per_kwh_note": "'Tariefkaart november 2026', version 012611, 'Geldig van 1 november 2026 t.e.m uiterlijk 30 november 2026', 'Alle prijzen en tarieven zijn inclusief 6% btw'. Quote: '65,00 24,89 28,39 21,90 21,90' (vaste vergoeding, enkelvoudig, dag, nacht, uitsluitend nacht).",
     "standing_charge_amount": 65.0,
     "standing_charge_unit": "per_year",
-    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012610_NL_ENECO_POWER_FIX_ONE.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "'contract van bepaalde duur met een looptijd van 1 jaar'. Also Eneco Zon & Wind Vast (BC_032_012610_NL_ENECO_POWER_FIX.pdf): 22,10 c€/kWh, 65,00 €/jaar, 'contract van onbepaalde duur waarbij de energieprijs vast is tijdens het eerste jaar'. Energiedelen admin cost 124,63 €/jaar/EAN extra if applicable."
+    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012611_NL_ENECO_POWER_FIX_ONE.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "'contract van bepaalde duur met een looptijd van 1 jaar'. Also Eneco Zon & Wind Vast (BC_032_012610_NL_ENECO_POWER_FIX.pdf): 22,10 c€/kWh, 65,00 €/jaar, 'contract van onbepaalde duur waarbij de energieprijs vast is tijdens het eerste jaar'. Energiedelen admin cost 124,63 €/jaar/EAN extra if applicable.",
+    "price_day_eur": 0.2839,
+    "price_night_eur": 0.219,
+    "green_wkk_eur_per_kwh": 0.0151,
+    "green_wkk_note": "Separate: 'Bijdrage groene stroom en WKK' 'Vlaanderen 1,51' (€cent/kWh); 'Alle prijzen en tarieven zijn inclusief 6% btw'."
    },
    {
     "name": "TotalEnergies",
@@ -1195,17 +833,21 @@
     "contract_type": "fixed",
     "product_name": "TotalEnergies myEssential Vast",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.2193,
-    "price_per_kwh_note": "Enkelvoudige meter, BTW 6% inbegrepen, 'Tariefkaart ... oktober 2026', Vlaamse Gewest. Quote row: '35,00   21,93   23,71   20,38   20,88   Jaarlijkstarief'; 'De energieprijs voor verbruik is vast tijdens de contractperiode.'",
+    "price_per_kwh_eur": 0.2624,
+    "price_per_kwh_note": "Card 'november 2026', Vlaamse Gewest, 'BTW 6 % inbegrepen'. Quote: '35,00 26,24 27,91 24,80 25,42 Jaarlijkstarief' (vaste vergoeding, enkelvoudig, piekuren, daluren, excl. nacht); 'De energieprijs voor verbruik is vast tijdens de contractperiode'.",
     "standing_charge_amount": 35.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://totalenergies.be/static/marketing-documents/b2c/tariff-card/latest/MYESSENTIAL-FIXED_ELECTRICITY_VL_NL.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "Contract 'van onbepaalde duur'; price guaranteed not to rise for the first 12 months ('zal de energieprijzen ... de eerste 12 maanden van de levering niet verhogen'), so duration_months=12 is the fixed-price period, not a term. Other Oct 2026 fixed cards: myComfort Vast (1 jaar) 22,74 c€/kWh + 90,00 €/jaar (MYCOMFORT-FIXED_ELECTRICITY_VL_NL.pdf); Elektriciteit Vast (1 jaar) 22,74 c€/kWh + 100,00 €/jaar (ELECTRICITE-FIXE_ELECTRICITY_VL_NL.pdf). Boilerplate on these cards still says 'De variabele energieprijs en de vaste vergoeding' in section 1.1, contradicting the 'vast' statement - template artefact."
+    "retrieved_at": "2026-11-18",
+    "notes": "Contract 'van onbepaalde duur'; price guaranteed not to rise for the first 12 months ('zal de energieprijzen ... de eerste 12 maanden van de levering niet verhogen'), so duration_months=12 is the fixed-price period, not a term. The 'latest' card URL serves the current month's card.",
+    "price_day_eur": 0.2791,
+    "price_night_eur": 0.248,
+    "green_wkk_eur_per_kwh": 0.0,
+    "green_wkk_note": "Included in the price: 'De energieprijzen en tariefformules vermeld op deze tariefkaart omvatten de Bijdrage Groene Energie (BGE), waarvan het bedrag als volgt wordt vastgesteld 1,57 € cent/kWh'."
    },
    {
     "name": "OCTA+",
-    "status": "verified",
+    "status": "withdrawn",
     "contract_type": "fixed",
     "product_name": "OCTA+ Elektriciteit Fixed",
     "duration_months": 12,
@@ -1214,8 +856,8 @@
     "standing_charge_amount": 65.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://files.octaplus.be/tariffs/E_OCTA_FIXED_RE_VL_NL.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "Quote: 'Vaste vergoeding (€/jaar) 65,00'. 'Duurtijd Onbepaald' with 'Gegarandeerde vaste prijs gedurende minimum 12 maanden' -> indefinite contract, price fixed >=12 months. Promo: creditnota 180 € after a full year. Also OCTA+ EcoFixed (Sept 2026): 20,82 c€/kWh, 130,00 €/jaar (E_OCTA_ECOFIXED_RE_VL_NL.pdf)."
+    "retrieved_at": "2026-11-18",
+    "notes": "Withdrawn 2026-11-18: octaplus.be's tariff page no longer links this product; its card URL still serves 'TARIEFFICHE SEPTEMBER 2026'. Not compared. Current OCTA+ fixed products are BoostFix and EcoBoostFix (not added)."
    },
    {
     "name": "Bolt",
@@ -1223,13 +865,17 @@
     "contract_type": "fixed",
     "product_name": "Bolt Vast",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.2266,
-    "price_per_kwh_note": "Enkelvoudige meter, 'Maandprijs' row, 'Tarieven incl. btw', 'Tariefkaart Bolt Vast Oktober 2026 / Residentieel / Elektriciteit'. Quote: 'Maandprijs 22,66  22,66  22,66'; tariefformule column reads 'Vast'",
+    "price_per_kwh_eur": 0.2465,
+    "price_per_kwh_note": "'November 2026 /Residentieel /Elektriciteit', 'Tarieven incl. btw'. Quote: 'Maandprijs 24,65 24,65 24,65 24,65' (enkelvoudige meter, tweevoudig dag, nacht, uitsluitend nacht: the same price for every meter); 'Platformkost € 8,99 / maand'.",
     "standing_charge_amount": 8.99,
     "standing_charge_unit": "per_month",
-    "source_url": "https://files.boltenergie.be/pricelists/fix/fix_res_el_nl_202610.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "STANDING CHARGE IS MONTHLY: quote 'Platformkost € 8,99 / maand' (not converted). 'de duur van jouw contract 1 jaar, indien je aansluitingspunt zich in het Vlaams of Waals Gewest bevindt'. Card covers Vlaanderen and Wallonië. Plenty Vast (for Plenty shareholders): same 22,66 c€/kWh with platformkost € 3,99/maand."
+    "source_url": "https://files.boltenergie.be/pricelists/fix/fix_res_el_nl_202611.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "STANDING CHARGE IS MONTHLY: quote 'Platformkost € 8,99 / maand' (not converted). 'de duur van jouw contract 1 jaar, indien je aansluitingspunt zich in het Vlaams of Waals Gewest bevindt'. Card covers Vlaanderen and Wallonië. Plenty Vast (for Plenty shareholders): same 22,66 c€/kWh with platformkost € 3,99/maand.",
+    "price_day_eur": 0.2465,
+    "price_night_eur": 0.2465,
+    "green_wkk_eur_per_kwh": 0.0156,
+    "green_wkk_note": "Separate, under 'Taksen, heffingen en andere kosten incl. btw': 'Kosten groene certificaten (c€/kWh)' 1,17 (Vlaanderen; 3,03 and 2,69 are the other regions) and 'WKK (c€/kWh) 0,39'. 1,17 + 0,39 = 1,56."
    },
    {
     "name": "Elegant",
@@ -1237,13 +883,17 @@
     "contract_type": "fixed",
     "product_name": "Zeker & Vast",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.186,
-    "price_per_kwh_note": "24h (enkelvoudig) Afname, 'Prijzen inclusief 6% btw', 'Vast  1 jaar  Versie oktober 2026  Particulier'. Quote: 'Afname 18,60 18,98 18,23' (24h/Piek/Dal) under heading 'Maandelijkse prijzen (c€/kWh)'",
+    "price_per_kwh_eur": 0.2173,
+    "price_per_kwh_note": "'Vast 1 jaar Versie november 2026 Particulier Prijzen inclusief 6% btw Geldig vanaf 1 november 2026'. Quote: '24h Piek Dal Excl. nacht' / 'Afname 21,73 22,16 21,30 21,30'; 'Vaste vergoeding (€/jaar)(1) 120,00'.",
     "standing_charge_amount": 120.0,
     "standing_charge_unit": "per_year",
-    "source_url": "https://cdn.elegant.be/Pricing/TariffCharts/Current/ZekerVastElectricity_Residential.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "Quote: 'Vaste vergoeding (€/jaar)(1) 120,00'. Network table lists Fluvius only (Flanders). The 'Maandelijkse prijzen' heading is odd for a fixed product, but card header says 'Vast 1 jaar' and the afname formula fields are '-' (only injectie is indexed). 'Current' URL path; card valid 'vanaf 1 oktober 2026' until replaced."
+    "source_url": "https://cdn.elegant.be/Pricing/TariffCharts/Current/Zeker%20%26%20Vast%20Electricity_Residential.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "Quote: 'Vaste vergoeding (€/jaar)(1) 120,00'. Network table lists Fluvius only (Flanders). Card header says 'Vast 1 jaar'; the afname formula fields are '-' (only injectie is indexed). 'Current' URL path; the November card is valid 'vanaf 1 november 2026' until replaced.",
+    "price_day_eur": 0.2216,
+    "price_night_eur": 0.213,
+    "green_wkk_eur_per_kwh": 0.0159,
+    "green_wkk_note": "Separate: 'Bijdrage groene stroom (c€/kWh) 1,17', 'Bijdrage warmtekrachtkoppeling (c€/kWh) 0,42'; 'Prijzen inclusief 6% btw'. 1,17 + 0,42 = 1,59."
    },
    {
     "name": "Energyvision",
@@ -1251,13 +901,15 @@
     "contract_type": "fixed",
     "product_name": "Goedkope stroom 3 jaar vast",
     "duration_months": 36,
-    "price_per_kwh_eur": 0.1357,
-    "price_per_kwh_note": "Single afname price (card does not split by meter type), 'Alle prijzen en tarieven zijn inclusief 6% BTW', 'Tariefkaart oktober 2026', particulieren in Vlaanderen. Quote: 'Groene stroom - vast tarief 13,57 €cent/kWh'",
+    "price_per_kwh_eur": 0.184,
+    "price_per_kwh_note": "'Tariefkaart november 2026' (EV-1126-GS3JV-nl), particulieren in Vlaanderen, 'Alle prijzen en tarieven zijn inclusief 6% BTW'. Quote: 'Groene stroom - vast 18,40 €cent/kWh', 'Vaste vergoeding 75 €/jaar'. The card prints one price and no meter types, so no day/night price is taken.",
     "standing_charge_amount": 75.0,
     "standing_charge_unit": "per_year",
-    "source_url": "https://www.energyvision.be/sites/default/files/inline-files/EV-1026-GS3JV-nl.pdf",
-    "retrieved_at": "2026-10-19",
-    "notes": "Quote: 'Vaste vergoeding 75 €/jaar'; 'contract van bepaalde duur van 3 jaar waarbij de energieprijs vast is'. Unusually low price - double-check before relying on it. Other product 'Goedkope stroom 1.800 kWh vast' (10-year contract) is only partly fixed (10,60 c€/kWh for first 1.800 kWh, 20,04 variable above) - not a pure fixed tariff."
+    "source_url": "https://www.energyvision.be/sites/default/files/2026-11/EV-1126-GS3JV-nl.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "Quote: 'Vaste vergoeding 75 €/jaar'; 'contract van bepaalde duur van 3 jaar waarbij de energieprijs vast is'. Unusually low price - double-check before relying on it. Other product 'Goedkope stroom 1.800 kWh vast' (10-year contract) is only partly fixed (10,60 c€/kWh for first 1.800 kWh, 20,04 variable above) - not a pure fixed tariff.",
+    "green_wkk_eur_per_kwh": null,
+    "green_wkk_note": "Not on the card: 'De prijs van “Groene stroom” dient verhoogd te worden met ... de bijdrage groene energie en/of warmtekrachtkoppeling, die EnergyVision kan of moet aanrekenen', without an amount. The card's price is therefore not comparable with the others and is left out of the contract check."
    }
   ],
   "gas_suppliers": [
@@ -1266,12 +918,12 @@
     "status": "verified",
     "contract_type": "variable",
     "product_name": "BasicFlex Online Gas",
-    "price_per_kwh_eur": 0.0835,
-    "price_per_kwh_note": "Gas supplier energy price incl. 6% BTW, 'BasicFlex Online Gas (oktober 2026)', Regio Vlaanderen. Quote: 'Energie (c€/kWh) 8,35'. The card also shows 'Jaarschatting geleverde energie (c€/kWh) 7,69'.",
+    "price_per_kwh_eur": 0.1003,
+    "price_per_kwh_note": "Card '(november 2026)', variabel, 'Luminus geleverde energieprijzen (incl. BTW)'. Estimate for the coming 12 months: 'Jaarschatting geleverde energie (c€/kWh) 10,03' ('Deze jaarschatting is gebaseerd op de huidige en verwachte prijsevolutie van de komende 12 maanden'); the day price is 'Energie (c€/kWh) 9,70'. 'Vaste vergoeding (€/jaar) 20,00'.",
     "standing_charge_amount": 20.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://www.luminus.be/api-next/get-pricelist?documentSlug=basicflex&energyType=gas&language=nl&tabValue=Flanders",
-    "retrieved_at": "2026-10-20",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'Vaste vergoeding (€/jaar) 20,00'. 'Tarief: variabel', 'Duur van het contract: onbepaald'."
    },
    {
@@ -1279,12 +931,12 @@
     "status": "verified",
     "contract_type": "variable",
     "product_name": "Eneco Aardgas Flex",
-    "price_per_kwh_eur": 0.0912,
-    "price_per_kwh_note": "Monthly price ('Maandprijs') incl. 6% btw, 'Tariefkaart oktober 2026', Vlaanderen en Wallonië. Quote: '9,12 Maandprijs'; estimated annual price ('Geschatte jaarprijs') 8,46. Formula '(0,1 X TTFDAW-RLP-M + 1,074) X 1,06'.",
+    "price_per_kwh_eur": 0.1059,
+    "price_per_kwh_note": "'Tariefkaart november 2026', 'Alle prijzen en tarieven zijn inclusief 6% btw'. Quote: '10,59 Geschatte jaarprijs', '65,00 10,50 Maandprijs' (vaste vergoeding, monthly price).",
     "standing_charge_amount": 65.0,
     "standing_charge_unit": "per_year",
-    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012610_NL_ENECO_GAS_FLEX.pdf",
-    "retrieved_at": "2026-10-20",
+    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012611_NL_ENECO_GAS_FLEX.pdf",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'VASTE VERGOEDING (€/jaar) 65,00'. Contract van onbepaalde duur, monthly indexed on TTFDAW-RLP-M."
    },
    {
@@ -1292,12 +944,12 @@
     "status": "verified",
     "contract_type": "variable",
     "product_name": "TotalEnergies myEssential Variabel",
-    "price_per_kwh_eur": 0.0792,
-    "price_per_kwh_note": "'Maandelijkstarief' incl. 6% BTW, 'Tariefkaart ... oktober 2026', 'Aardgas in het Vlaamse Gewest'. Quote: 'Verbruik (c€/kWh) 7.92'. Formula '0.1009 * TTF_M_RLP + 0.504' (excl. BTW); the card also shows 8,59 c€/kWh based on last month's index.",
+    "price_per_kwh_eur": 0.1016,
+    "price_per_kwh_note": "Card 'november 2026', 'BTW 6 % inbegrepen', estimate under the Vlaamse Nutsregulator method (footnote ***). Quote: '10,16 Maandelijkstarief', vaste vergoeding '35,00'; 'Ter indicatie ... Enkelvoudige Meter: 9,60 € cent/kWh' (last month's index).",
     "standing_charge_amount": 35.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://totalenergies.be/static/marketing-documents/b2c/tariff-card/latest/MYESSENTIAL_GAS_VL_NL.pdf",
-    "retrieved_at": "2026-10-20",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'Vaste vergoeding (€/jaar) 35'. Onbepaalde duur. Read from the rendered PDF (the text layer is not extractable)."
    },
    {
@@ -1305,12 +957,12 @@
     "status": "verified",
     "contract_type": "variable",
     "product_name": "OCTA+ Gas SmartVariabel",
-    "price_per_kwh_eur": 0.0949,
-    "price_per_kwh_note": "'Variabel tarief - geschatte gemiddelde prijs voor de komende 12 maanden', INCL. BTW, 'TARIEFFICHE OKTOBER 2026', residentieel Vlaanderen. Quote: 'Gasprijs (c€/kWh) 9,49'. No separate monthly price on the card.",
+    "price_per_kwh_eur": 0.1193,
+    "price_per_kwh_note": "'TARIEFFICHE NOVEMBER 2026', 'INCL. BTW', 'Variabel tarief - geschatte gemiddelde prijs voor de komende 12 maanden'. Quote: 'Gasprijs (c€/kWh) 11,93', 'Vaste vergoeding (€/jaar) 160,00'.",
     "standing_charge_amount": 160.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://files.octaplus.be/tariffs/G_OCTA_SMARTVARIABLE_RE_VL_NL.pdf",
-    "retrieved_at": "2026-10-20",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'Vaste vergoeding (€/jaar) 160,00', 'Duurtijd 1 jaar'. Read from the rendered PDF."
    },
    {
@@ -1318,12 +970,12 @@
     "status": "verified",
     "contract_type": "variable",
     "product_name": "Easy (Type : Variabel)",
-    "price_per_kwh_eur": 0.09786,
-    "price_per_kwh_note": "Monthly price incl. 6% btw, 'Variabele prijzen aardgas voor contracten afgesloten in Oktober 2026 (looptijd van 1 jaar)', Vlaamse Gewest. Quote: 'Maandelijkse prijzen 9,786'; 'Geschatte jaarprijzen 9,135'.",
+    "price_per_kwh_eur": 0.11229,
+    "price_per_kwh_note": "'Variabele prijzen aardgas voor contracten afgesloten in November 2026 (looptijd van 1 jaar)', 'Prijzen inclusief 6% btw', Vlaamse Gewest. Quote: 'Geschatte jaarprijzen 11,229' (monthly price 'Maandelijkse prijzen 11,057'), vaste vergoeding '55,00'.",
     "standing_charge_amount": 55.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://www.engie.be/api/engie/be/ms/pricing/v1/public/pricesAndConditionsPDF?document=G_EASY_R_GREY_C_I_12_V_N&monthOffset=0&segment=R&language=N",
-    "retrieved_at": "2026-10-20",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'Vaste vergoeding (€/jaar) 55,00'."
    },
    {
@@ -1332,12 +984,12 @@
     "contract_type": "fixed",
     "product_name": "BasicFix Online Gas",
     "duration_months": 24,
-    "price_per_kwh_eur": 0.087,
-    "price_per_kwh_note": "Gas supplier energy price incl. 6% BTW, 'BasicFix Online Gas (oktober 2026)', Regio Vlaanderen. Quote: 'Energie (c€/kWh) 8,70'; 'Tarief: vast', 'Duur van het contract: 2 jaar'.",
+    "price_per_kwh_eur": 0.1059,
+    "price_per_kwh_note": "Card '(november 2026)', 'Tarief: vast', 'Luminus geleverde energieprijzen (incl. BTW)'. Quote: 'Energie (c€/kWh) 10,59', 'Vaste vergoeding (€/jaar) 20,00'.",
     "standing_charge_amount": 20.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://www.luminus.be/api-next/get-pricelist?documentSlug=basicfix&energyType=gas&language=nl&tabValue=Flanders",
-    "retrieved_at": "2026-10-20",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'Vaste vergoeding (€/jaar) 20,00'. Online-only product."
    },
    {
@@ -1346,13 +998,13 @@
     "contract_type": "fixed",
     "product_name": "Eneco Aardgas Fix One",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.0907,
-    "price_per_kwh_note": "Incl. 6% btw, 'Tariefkaart oktober 2026', Vlaanderen en Wallonië. Quote: 'VERBRUIK (€cent/kWh) 9,07'.",
+    "price_per_kwh_eur": 0.1045,
+    "price_per_kwh_note": "'Tariefkaart november 2026', 'Alle prijzen en tarieven zijn inclusief 6% btw'. Quote: 'VASTE VERGOEDING VERBRUIK (€/jaar) (€cent/kWh) 65,00 10,45'.",
     "standing_charge_amount": 65.0,
     "standing_charge_unit": "per_year",
-    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012610_NL_ENECO_GAS_FIX_ONE.pdf",
-    "retrieved_at": "2026-10-20",
-    "notes": "'contract van bepaalde duur met een looptijd van 1 jaar'. Offer valid 1-31 October 2026 within available volumes."
+    "source_url": "https://cdn.eneco.be/downloads/nl/general/tk/BC_032_012611_NL_ENECO_GAS_FIX_ONE.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "Quote (November 2026 card): 'contract van bepaalde duur met een looptijd van 1 jaar'. Vaste vergoeding 65,00 €/jaar."
    },
    {
     "name": "TotalEnergies",
@@ -1360,17 +1012,17 @@
     "contract_type": "fixed",
     "product_name": "TotalEnergies myEssential Vast",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.0781,
-    "price_per_kwh_note": "'Jaarlijkstarief' incl. 6% BTW, 'Tariefkaart ... oktober 2026', 'Aardgas in het Vlaamse Gewest'. Quote: 'Verbruik (c€/kWh) 7,81'; 'De energieprijs is vast tijdens de contractperiode.'",
+    "price_per_kwh_eur": 0.1128,
+    "price_per_kwh_note": "Card 'november 2026', 'BTW 6 % inbegrepen'. Quote: '35,00 11,28 Jaarlijkstarief'; 'De energieprijs is vast tijdens de contractperiode'.",
     "standing_charge_amount": 35.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://totalenergies.be/static/marketing-documents/b2c/tariff-card/latest/MYESSENTIAL-FIXED_GAS_VL_NL.pdf",
-    "retrieved_at": "2026-10-20",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'Vaste vergoeding (€/jaar) 35,00'. Onbepaalde duur; footnote: prices not raised during the first 12 months of delivery, so duration_months=12. Read from the rendered PDF."
    },
    {
     "name": "OCTA+",
-    "status": "verified",
+    "status": "withdrawn",
     "contract_type": "fixed",
     "product_name": "OCTA+ Gas Fixed",
     "duration_months": 12,
@@ -1379,8 +1031,8 @@
     "standing_charge_amount": 65.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://files.octaplus.be/tariffs/G_OCTA_FIXED_RE_VL_NL.pdf",
-    "retrieved_at": "2026-10-20",
-    "notes": "Quote: 'Vaste vergoeding (€/jaar) 65,00', 'Duurtijd Onbepaald', 'Gegarandeerde vaste prijs gedurende minimum 12 maanden'. Promo: 150 € korting incl. btw on a new Fixed contract. Read from the rendered PDF."
+    "retrieved_at": "2026-11-18",
+    "notes": "Withdrawn 2026-11-18: the card URL still serves 'TARIEFFICHE SEPTEMBER 2026', as for OCTA+ Elektriciteit Fixed, which octaplus.be no longer lists. Not compared."
    },
    {
     "name": "Bolt",
@@ -1388,12 +1040,12 @@
     "contract_type": "fixed",
     "product_name": "Bolt Vast",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.0896,
-    "price_per_kwh_note": "'Maandprijs' incl. btw, 'Tariefkaart Bolt Vast Oktober 2026 / Residentieel / Gas'. Quote: 'Verbruik 8,96' (c€/kWh).",
+    "price_per_kwh_eur": 0.1123,
+    "price_per_kwh_note": "'November 2026 /Residentieel /Gas', incl. btw. Quote: 'Maandprijs 11,23'; 'Platformkost € 8,99 / maand'.",
     "standing_charge_amount": 8.99,
     "standing_charge_unit": "per_month",
-    "source_url": "https://files.boltenergie.be/pricelists/fix/fix_res_ng_nl_202610.pdf",
-    "retrieved_at": "2026-10-20",
+    "source_url": "https://files.boltenergie.be/pricelists/fix/fix_res_ng_nl_202611.pdf",
+    "retrieved_at": "2026-11-18",
     "notes": "STANDING CHARGE IS MONTHLY: 'Platformkost € 8,99 / maand'. Bolt only supplies gas together with Bolt electricity. Contract duration 1 jaar in Flanders and Wallonia (3 years minimum in Brussels)."
    },
    {
@@ -1402,13 +1054,13 @@
     "contract_type": "fixed",
     "product_name": "Zeker & Vast",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.091,
-    "price_per_kwh_note": "'Prijzen inclusief 6% btw', 'Tariefkaart Aardgas Zeker & Vast', 'Vast 1 jaar Versie oktober 2026 Particulier'. Quote: 'Energiekost (c€/kWh) 9,10'.",
+    "price_per_kwh_eur": 0.1049,
+    "price_per_kwh_note": "'Vast 1 jaar Versie november 2026 Particulier Prijzen inclusief 6% btw Geldig vanaf 1 november 2026'. Quote: 'Energiekost (c€/kWh) 10,49', 'Vaste vergoeding (€/jaar)(1) 120,00'.",
     "standing_charge_amount": 120.0,
     "standing_charge_unit": "per_year",
-    "source_url": "https://cdn.elegant.be/Pricing/TariffCharts/Current/ZekerVastGas_Residential.pdf",
-    "retrieved_at": "2026-10-20",
-    "notes": "Quote: 'Vaste vergoeding (€/jaar)(1) 120,00'. Valid from 1 oktober 2026 until replaced."
+    "source_url": "https://cdn.elegant.be/Pricing/TariffCharts/Current/Zeker%20%26%20Vast%20Gas_Residential.pdf",
+    "retrieved_at": "2026-11-18",
+    "notes": "Quote (November 2026 card): 'Vast 1 jaar'; 'Vaste vergoeding (€/jaar)(1) 120,00', pro rata the term of the contract."
    },
    {
     "name": "Engie",
@@ -1416,12 +1068,12 @@
     "contract_type": "fixed",
     "product_name": "Easy (Type : Vast)",
     "duration_months": 12,
-    "price_per_kwh_eur": 0.10385,
-    "price_per_kwh_note": "Incl. 6% btw, 'Vaste prijzen aardgas voor contracten afgesloten in Oktober 2026 (looptijd van 1 jaar)', Vlaamse Gewest. Quote: 'Prijs per kWh (c€/kWh) 10,385'.",
+    "price_per_kwh_eur": 0.1031,
+    "price_per_kwh_note": "'Vaste prijzen aardgas voor contracten afgesloten in November 2026 (1) (looptijd van 1 jaar)', 'Prijzen inclusief 6% btw', Vlaamse Gewest. Quote: 'Vaste vergoeding (€/jaar)(11)' / '60,00 10,310'.",
     "standing_charge_amount": 60.0,
     "standing_charge_unit": "per_year",
     "source_url": "https://www.engie.be/api/engie/be/ms/pricing/v1/public/pricesAndConditionsPDF?document=G_EASY_R_GREY_C_F_12_V_N&monthOffset=0&segment=R&language=N",
-    "retrieved_at": "2026-10-20",
+    "retrieved_at": "2026-11-18",
     "notes": "Quote: 'Vaste vergoeding (€/jaar) 60,00'. The price can change during the month; the price on engie.be on the signing date applies."
    }
   ]
