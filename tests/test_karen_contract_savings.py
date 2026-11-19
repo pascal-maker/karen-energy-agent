@@ -18,11 +18,13 @@ FIXTURES = Path(__file__).parent / "fixtures" / "invoices"
 CARDS = {
     "as_of": "2026-10-19",
     "suppliers": [
-        {"name": "Alfa", "status": "verified", "product_name": "Alfa Flex", "price_per_kwh_eur": 0.19,
+        {"name": "Alfa", "status": "verified", "product_name": "Alfa Flex", "green_wkk_eur_per_kwh": 0.0, "price_per_kwh_eur": 0.19,
+         "price_day_eur": 0.21, "price_night_eur": 0.17,
          "standing_charge_amount": 25.0, "standing_charge_unit": "per_year", "source_url": "https://example.test/alfa"},
-        {"name": "Beta", "status": "verified", "product_name": "Beta Vast", "contract_type": "fixed", "duration_months": 36,
+        {"name": "Beta", "status": "verified", "product_name": "Beta Vast", "green_wkk_eur_per_kwh": 0.0, "contract_type": "fixed", "duration_months": 36,
+         "price_day_eur": 0.16, "price_night_eur": 0.12,
          "price_per_kwh_eur": 0.14, "standing_charge_amount": 75.0, "standing_charge_unit": "per_year"},
-        {"name": "Gamma", "status": "verified", "product_name": "Gamma Variabel", "price_per_kwh_eur": 0.18,
+        {"name": "Gamma", "status": "verified", "product_name": "Gamma Variabel", "green_wkk_eur_per_kwh": 0.0, "price_per_kwh_eur": 0.18,
          "standing_charge_amount": 4.0, "standing_charge_unit": "per_month"},
         {"name": "Delta", "status": "unverified", "product_name": "Delta Flex", "price_per_kwh_eur": 0.01},
     ],
@@ -119,20 +121,60 @@ def test_saving_on_a_single_meter_bill():
     assert electricity["saving_eur_per_month"] == "21.38"
     assert result["total"] == {"saving_eur_per_year": "256.50", "saving_eur_per_month": "21.38"}
     assert result["region"] == "flanders" and result["tariffs_as_of"] == "2026-10-19"
-    assert electricity["warnings"] == []
+    # Bill 27 prints no green power or CHP row: said, so a price without them is not taken as complete.
+    assert [warning["code"] for warning in electricity["warnings"]] == ["green_wkk_not_found"]
 
 
-def test_day_night_meter_is_not_compared_but_gas_is():
+def test_day_night_meter_weighs_day_and_night_by_the_bills_registers():
     result = _bill("28-nl-contract-dag-nacht-en-gas.pdf")
-    assert result["energies"]["electricity"]["status"] == "not_comparable"
-    assert result["energies"]["electricity"]["reason"] == "day_night_meter"
-    assert result["energies"]["electricity"]["saving_eur_per_year"] is None
+    electricity = result["energies"]["electricity"]
+    # Day 1.800 kWh, night 1.400 kWh: 56,25% by day. Now: 0,5625 × 0,231 + 0,4375 × 0,174 = 0,2060625 €/kWh,
+    # × 3.200 + 50 = 709,40. Beta: 0,5625 × 0,16 + 0,4375 × 0,12 = 0,1425, × 3.200 + 75 = 531,00.
+    assert electricity["status"] == "compared"
+    assert electricity["day_share"] == "0.5625"
+    assert electricity["current"]["yearly_eur"] == "709.40"
+    assert electricity["best"]["supplier"] == "Beta" and electricity["best"]["yearly_eur"] == "531.00"
+    assert electricity["best"]["price_day_eur"] == "0.16" and electricity["best"]["price_night_eur"] == "0.12"
+    assert electricity["saving_eur_per_year"] == "178.40"
+    # Gamma publishes no day/night prices: it is left out rather than compared on its single price.
+    assert [offer["supplier"] for offer in electricity["offers"]] == ["Beta", "Alfa"]
+    assert "day_night_split_assumed" not in [warning["code"] for warning in electricity["warnings"]]
     gas = result["energies"]["gas"]
     # 12.000 × 0,095 + 5,00 × 12 = 1.200,00 against Beta Gas 12.000 × 0,078 + 35 = 971,00
     assert gas["current"]["yearly_eur"] == "1200.00"
     assert gas["best"]["product"] == "Beta Gas Vast"
     assert gas["saving_eur_per_year"] == "229.00"
-    assert result["total"]["saving_eur_per_year"] == "229.00"
+    assert result["total"]["saving_eur_per_year"] == "407.40"  # 178,40 + 229,00
+
+
+def test_day_night_without_a_split_is_half_and_half_and_says_so():
+    from luminus_harness.contract_savings import compare_answers
+
+    result = compare_answers(CARDS, postcode="9000", meter="day_night",
+                             energies={"electricity": {"usage_kwh": 3000, "supplier": "Alfa", "product": "Alfa Flex"}})
+    electricity = result["energies"]["electricity"]
+    assert electricity["day_share"] == "0.5000"
+    assert "day_night_split_assumed" in [warning["code"] for warning in electricity["warnings"]]
+    # Alfa: (0,21 + 0,17) / 2 = 0,19, × 3.000 + 25 = 595,00; Beta: 0,14 × 3.000 + 75 = 495,00
+    assert electricity["current"]["yearly_eur"] == "595.00"
+    assert electricity["saving_eur_per_year"] == "100.00"
+
+
+def test_day_night_without_any_verified_day_night_card_shows_no_saving():
+    single_only = {**CARDS, "suppliers": [{k: v for k, v in card.items() if not k.startswith("price_day") and not k.startswith("price_night")}
+                                          for card in CARDS["suppliers"]]}
+    result = check_invoice_contract(load_pdf_chunks(FIXTURES / "28-nl-contract-dag-nacht-en-gas.pdf", source="28.pdf"), single_only)
+    assert result["energies"]["electricity"]["reason"] == "day_night_meter"
+    assert result["energies"]["electricity"]["saving_eur_per_year"] is None
+
+
+def test_day_night_bill_with_one_price_has_no_current_cost():
+    result = _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 Metertype: tweevoudige meter "
+        "Energieprijs 3.000 kWh x 0,2000 €/kWh (incl. btw) Elektriciteit dag 1.500 kWh Elektriciteit nacht 1.500 kWh"
+    )["energies"]["electricity"]
+    assert result["current"] is None and result["status"] == "offers_only"
+    assert "day_night_price_not_found" in [warning["code"] for warning in result["warnings"]]
 
 
 def test_region_without_verified_cards_shows_no_saving():
@@ -146,7 +188,11 @@ def test_region_without_verified_cards_shows_no_saving():
 
 def test_day_night_consumption_rows_mean_a_day_night_meter():
     result = _bill("13-nl-jaarafrekening-nieuw-voorschot-tabel.pdf")
-    assert result["energies"]["electricity"]["reason"] == "day_night_meter"
+    electricity = result["energies"]["electricity"]
+    # Day 1.850 and night 1.200 kWh, no price on the bill: day/night offers, no saving.
+    assert electricity["day_share"] == "0.6066"
+    assert electricity["status"] == "offers_only" and electricity["reason"] == "no_current_price"
+    assert all("price_day_eur" in offer for offer in electricity["offers"])
     gas = result["energies"]["gas"]
     assert gas["status"] == "offers_only" and gas["reason"] == "no_current_price"
     assert gas["offers"] and gas["saving_eur_per_year"] is None
@@ -205,9 +251,14 @@ def test_the_real_tariff_cards_load_and_compare():
         load_pdf_chunks(FIXTURES / "27-nl-contract-enkelvoudige-meter.pdf", source="27.pdf"), local_contracts()
     )
     electricity = result["energies"]["electricity"]
-    assert electricity["status"] == "compared" and electricity["offers"]
+    assert electricity["status"] in ("compared", "already_cheapest") and electricity["offers"]
     assert all(offer["source_url"] for offer in electricity["offers"])
-    assert Decimal(electricity["saving_eur_per_year"]) > 0
+    # Every ranked card carries its green power and CHP cost; Energyvision (amount not on its card) and Aspiravi
+    # (last month's realized price, not an estimate) are not ranked.
+    assert all(offer["green_wkk_eur_per_kwh"] is not None for offer in electricity["offers"])
+    assert not {"Energyvision", "Aspiravi"} & {offer["supplier"] for offer in electricity["offers"]}
+    # Bill 27 shows no green power or CHP cost: Karen says the current cost may be too low.
+    assert "green_wkk_not_found" in [warning["code"] for warning in electricity["warnings"]]
 
 
 # --- the layout suppliers publish as their sample bill ---------------------------------------------
@@ -224,10 +275,14 @@ def test_supplier_table_layout_takes_the_current_product_after_a_change():
     assert electricity["standing_charge"]["unit"] == "per_year" and electricity["standing_charge"]["vat"] == "excl"
     assert terms["postcode"]["value"] == "3500" and terms["postcode"]["delivery"] is True  # "Leveradres:"
 
+    # The bill's own green power and CHP rows (0,0150 and 0,0040 €/kWh excl. btw) are part of the current price.
+    assert [(fact["kind"], fact["value"], fact["vat"]) for fact in electricity["green_wkk"]] == [
+        ("green", Decimal("0.0150000"), "excl"), ("wkk", Decimal("0.0040000"), "excl")]
     result = _bill("30-nl-contract-tabel-productwissel.pdf")["energies"]["electricity"]
-    # 3.400 × 0,1750 × 1,06 + 60,00 × 1,06 = 630,70 + 63,60; Beta 3.400 × 0,14 + 75 = 551,00
-    assert result["current"]["yearly_eur"] == "694.30"
-    assert result["saving_eur_per_year"] == "143.30"
+    # 3.400 × (0,1750 + 0,0150 + 0,0040) × 1,06 + 60,00 × 1,06 = 699,18 + 63,60; Beta 3.400 × 0,14 + 75 = 551,00
+    assert result["current"]["yearly_eur"] == "762.78"
+    assert result["saving_eur_per_year"] == "211.78"
+    assert "green_wkk_not_found" not in [warning["code"] for warning in result["warnings"]]
 
 
 def test_short_format_reads_the_tariff_line_and_says_the_fee_is_missing():
@@ -305,3 +360,70 @@ def test_an_unknown_meter_is_said_with_the_saving():
     assert "meter_unknown" in [warning["code"] for warning in unknown["warnings"]]
     single = _bill("27-nl-contract-enkelvoudige-meter.pdf")["energies"]["electricity"]  # "Metertype: enkelvoudige meter"
     assert "meter_unknown" not in [warning["code"] for warning in single["warnings"]]
+
+
+
+def test_each_energy_says_how_old_its_tariff_cards_are():
+    result = check_invoice_contract(
+        load_pdf_chunks(FIXTURES / "28-nl-contract-dag-nacht-en-gas.pdf", source="28.pdf"), local_contracts()
+    )
+    data = local_contracts()
+    for energy, key in (("electricity", "suppliers"), ("gas", "gas_suppliers")):
+        dates = [card["retrieved_at"] for card in data[key] if card["status"] == "verified"]
+        assert result["energies"][energy]["tariffs_as_of"] == min(dates)
+
+
+def test_the_real_cards_compare_a_day_night_bill():
+    result = check_invoice_contract(
+        load_pdf_chunks(FIXTURES / "28-nl-contract-dag-nacht-en-gas.pdf", source="28.pdf"), local_contracts()
+    )
+    electricity = result["energies"]["electricity"]
+    assert electricity["status"] in ("compared", "already_cheapest")
+    assert electricity["offers"] and all(offer["price_day_eur"] and offer["price_night_eur"] for offer in electricity["offers"])
+
+
+
+# --- review of 930e46e ------------------------------------------------------------------------------
+
+def test_cards_are_ranked_on_the_same_cost_basis():
+    from luminus_harness.contract_savings import compare_answers
+
+    cards = {"as_of": "2026-11-18", "gas_suppliers": [], "suppliers": [
+        # Price includes green power and CHP: nothing to add.
+        {"name": "Inclusief", "status": "verified", "product_name": "Inclusief Flex", "price_per_kwh_eur": 0.2394,
+         "green_wkk_eur_per_kwh": 0.0, "standing_charge_amount": 25.0, "standing_charge_unit": "per_year"},
+        # Lower price, surcharge listed apart: more expensive in the end.
+        {"name": "Apart", "status": "verified", "product_name": "Apart Flex", "price_per_kwh_eur": 0.2268,
+         "green_wkk_eur_per_kwh": 0.0151, "standing_charge_amount": 65.0, "standing_charge_unit": "per_year"},
+        # Surcharge not stated: not ranked.
+        {"name": "Onbekend", "status": "verified", "product_name": "Onbekend Vast", "contract_type": "fixed",
+         "duration_months": 36, "price_per_kwh_eur": 0.10, "green_wkk_eur_per_kwh": None,
+         "standing_charge_amount": 75.0, "standing_charge_unit": "per_year"},
+        # Last month's realized price: not ranked against estimates.
+        {"name": "Gerealiseerd", "status": "verified", "product_name": "Gerealiseerd Flex", "price_per_kwh_eur": 0.10,
+         "green_wkk_eur_per_kwh": 0.0157, "price_basis": "realized_last_month",
+         "standing_charge_amount": 38.5, "standing_charge_unit": "per_year"},
+    ]}
+    offers = compare_answers(cards, postcode="9000", meter="single", energies={"electricity": {"usage_kwh": 3500}})
+    offers = offers["energies"]["electricity"]["offers"]
+    # 3.500 × 0,2394 + 25 = 862,90; 3.500 × (0,2268 + 0,0151) + 65 = 911,65: the order of the bare prices turns round.
+    assert [(offer["supplier"], offer["yearly_eur"]) for offer in offers] == [("Inclusief", "862.90"), ("Apart", "911.65")]
+    from luminus_harness.contract_savings import contract_options
+    assert [option["supplier"] for option in contract_options(cards)["electricity"]] == ["Apart", "Inclusief"]
+
+
+@pytest.mark.parametrize("registers, share, yearly", [
+    ("Elektriciteit dag 3200 kWh Elektriciteit nacht 0 kWh", "1.0000", "840.00"),  # all by day: 3.200 × 0,25 + 40
+    ("Elektriciteit dag 1.800,00 kWh Elektriciteit nacht 1.400,00 kWh", "0.5625", "742.00"),  # 3.200 × (0,5625 × 0,25 + 0,4375 × 0,18) + 40
+])
+def test_the_bills_register_split_is_used_as_printed(registers, share, yearly):
+    result = _text(
+        "Leveringsadres: Teststraat 1, 2000 Teststad Factuurperiode: 01/01/2025 tot 31/12/2025 Metertype: tweevoudige meter "
+        "Kosten groene stroom 0,0000 €/kWh "
+        "Energieprijs dag 0,2500 €/kWh (incl. btw) Energieprijs nacht 0,1800 €/kWh (incl. btw) "
+        f"Vaste vergoeding € 40,00 per jaar {registers}",
+        usage_kwh={"electricity": 3200},
+    )["energies"]["electricity"]
+    assert result["day_share"] == share
+    assert result["current"]["yearly_eur"] == yearly
+    assert "day_night_split_assumed" not in [warning["code"] for warning in result["warnings"]]
