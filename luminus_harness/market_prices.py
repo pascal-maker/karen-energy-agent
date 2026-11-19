@@ -671,10 +671,17 @@ async def answer_supplier_price_question(question: str) -> dict[str, Any] | None
         "en": f"On {name}'s current tariff card, {what} costs:",
         "fr": f"Sur la fiche tarifaire actuelle de {name}, {what} coûte :",
     }.get(lang, f"Op de huidige tariefkaart van {name} kost {what}:")
+    # Electricity prices are shown with green power and CHP costs (kwh_price); gas has no such surcharge.
+    basis = {
+        "en": "Energy price with green power and CHP costs, incl. 6% VAT",
+        "fr": "Prix de l'énergie avec certificats verts et cogénération, TVA 6% incl.",
+    }.get(lang, "Energieprijs met groene stroom en WKK, incl. 6% btw") if energy == "electricity" else {
+        "en": "Energy price incl. 6% VAT", "fr": "Prix de l'énergie TVA 6% incl.",
+    }.get(lang, "Energieprijs incl. 6% btw")
     note = {
-        "en": "Energy price incl. 6% VAT for Flanders, without network costs and levies. Your own price depends on your usage: check it on V-test.",
-        "fr": "Prix de l'énergie TVA 6% incl. pour la Flandre, hors coûts de réseau et taxes. Ton prix dépend de ta consommation : vérifie-le sur V-test.",
-    }.get(lang, "Energieprijs incl. 6% btw in Vlaanderen, zonder netkosten en heffingen. Wat jij betaalt hangt af van je verbruik: reken het na op V-test.")
+        "en": f"{basis} for Flanders, without network costs and levies. Your own price depends on your usage: check it on V-test.",
+        "fr": f"{basis} pour la Flandre, hors coûts de réseau et taxes. Ton prix dépend de ta consommation : vérifie-le sur V-test.",
+    }.get(lang, f"{basis} in Vlaanderen, zonder netkosten en heffingen. Wat jij betaalt hangt af van je verbruik: reken het na op V-test.")
     lines = [lead, *(f"- {_card_line(card, lang)}" for card in cards), note]
     return {
         "answer": "\n".join(lines),

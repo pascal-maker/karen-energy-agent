@@ -348,3 +348,19 @@ def test_chat_ranks_and_shows_prices_on_one_cost_basis():
     assert "Energyvision" not in answer and "Aspiravi" not in answer
     assert market_prices.kwh_price({"price_per_kwh_eur": 0.2268, "green_wkk_eur_per_kwh": 0.0151}) == pytest.approx(0.2419)
     assert market_prices.kwh_price({"price_per_kwh_eur": 0.0835}) == 0.0835  # gas cards carry no surcharge
+
+
+@pytest.mark.asyncio
+async def test_supplier_answer_says_the_cost_basis_of_its_prices(monkeypatch):
+    data = market()
+    data["contracts"]["suppliers"] = [{"name": "Eneco", "status": "verified", "product_name": "Eneco Zon & Wind Flex",
+                                       "price_per_kwh_eur": 0.2268, "green_wkk_eur_per_kwh": 0.0151,
+                                       "standing_charge_amount": 65.0, "standing_charge_unit": "per_year"}]
+    data["contracts"]["gas_suppliers"] = [{"name": "Eneco", "status": "verified", "product_name": "Eneco Aardgas Flex",
+                                           "price_per_kwh_eur": 0.1059, "standing_charge_amount": 65.0,
+                                           "standing_charge_unit": "per_year"}]
+    monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=data))
+    power = (await market_prices.answer_supplier_price_question("Wat kost stroom bij Eneco?"))["answer"]
+    assert "24,2 cent/kWh" in power and "Energieprijs met groene stroom en WKK, incl. 6% btw in Vlaanderen" in power
+    gas = (await market_prices.answer_supplier_price_question("Wat kost gas bij Eneco?"))["answer"]
+    assert "10,6 cent/kWh" in gas and "Energieprijs incl. 6% btw in Vlaanderen" in gas and "WKK" not in gas
