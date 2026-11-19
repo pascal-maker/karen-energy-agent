@@ -52,6 +52,10 @@ PRODUCT_LABEL_RE = re.compile(r"(?i)\b(?:productnaam|uw\s+product|product|tarief
 # Suppliers' own layouts: a contract box ("Uw huidig contract Comfy Green Elektriciteit") and the short format
 # ("… - Variabel tarief Actief+ elektriciteit, contract van 1 jaar").
 CONTRACT_BOX_RE = re.compile(r"(?i)\buw\s+huidige?\s+(?:contract|tarief|product)\s*:?\s*")
+# "EAN 5414… - Teststraat 1 - 2640 Teststad - Comfy (april 2026) Elektriciteit - Vast Tarief"
+EAN_PRODUCT_RE = re.compile(
+    r"\bEAN\s*:?\s*54\d{16}\s*-\s*[^-\n]{2,80}?-\s*\d{4}\s+[^-\n]{2,40}?-\s*(?P<name>[^\n]{3,80}?)\s*-\s*(?P<kind>[Vv]ast|[Vv]ariabel|[Dd]ynamisch)\s+[Tt]arief"
+)
 TARIFF_PRODUCT_RE = re.compile(r"(?i)\b(vast|variabel|dynamisch)\s+tarief\s+(?=[A-ZÀ-Ý])")
 # A product name ends where the next "Label:" starts or at one of these words.
 _PRODUCT_STOP = {
@@ -83,7 +87,12 @@ EXCLUSIVE_NIGHT_RE = re.compile(r"(?i)\b(?:exclusie(?:f|ve)\s+nacht\w*|uitsluite
 # vtest.be's form takes the last 8 as digits. Read only right after one of these labels, so an EAN, customer
 # or invoice number is never taken for it.
 VCHECK_LABEL_RE = re.compile(r"(?i)\b(?:unieke\s+identificatiecode|identificatiecode|v-?check(?:-?code)?|code\s+productversie)\b")
-VCHECK_CODE_RE = re.compile(r"(?<![\w-])([A-Z0-9]{4}[ -]?[A-Z0-9]{4}[ -]?\d{4}[ -]?\d{4})(?![\w-])")
+# Printed with separators in any grouping ("9EK-GZWY3-20260401" on a 2026 Luminus bill); without them it is 8
+# characters and an 8-digit date, the 16 boxes of vtest.be's form.
+VCHECK_CODE_RE = re.compile(r"(?<![\w-])([A-Z0-9][A-Z0-9 -]{14,20}\d)(?![\w-])")
+_VCHECK_CODE_SHAPE = re.compile(r"[A-Z0-9]{8}\d{8}")
+# The link printed next to the QR code carries the codes per energy: E= electricity, G= gas.
+VCHECK_FACTUURCODE_RE = re.compile(r"(?i)(?:https?://)?(?:www\.)?vtest\.be/vcheck/factuurcode\?([^\s]+)")
 VTEST_LINK_RE = re.compile(r"(?i)(?<![\w/.])(?:https?://)?(?:www\.)?vtest(?:\.vreg)?\.be(?:/[^\s,;()]*)?")
 VCHECK_URL = "https://www.vtest.be/v-check"
 
@@ -229,10 +238,16 @@ def _product_name(text: str, start: int) -> str:
 
 def _products(chunk: KnowledgeChunk) -> list[dict[str, Any]]:
     found = []
+    for match in EAN_PRODUCT_RE.finditer(chunk.text):
+        name = " ".join(match.group("name").split())
+        fact = _fact(name, chunk, chunk.text[max(0, match.start() - 20):match.end() + 40], match.group(0))
+        fact["energy"] = "gas" if _GAS.search(name) else "electricity" if _ELECTRICITY.search(name) else None
+        fact["contract_type"] = "fixed" if match.group("kind").lower() == "vast" else "variable"
+        found.append(fact)
     for label_re in (PRODUCT_LABEL_RE, CONTRACT_BOX_RE, TARIFF_PRODUCT_RE):
         for match in label_re.finditer(chunk.text):
             name = _product_name(chunk.text, match.end())
-            if len(name) < 3:
+            if len(name) < 3 or name[0].isdigit():  # "Uw huidig contract 078/18 01 83" is a phone number
                 continue
             # "Unieke identificatiecode van uw product: KNGP2504 00030125" is the V-check code, not a product name.
             if VCHECK_CODE_RE.fullmatch(name) or VCHECK_LABEL_RE.search(chunk.text[max(0, match.start() - 40):match.start()]):
@@ -353,18 +368,31 @@ def _postcode(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     return None
 
 
+def vcheck_code(printed: str) -> str | None:
+    """The code without separators when it has the V-check's shape (8 characters and an 8-digit date)."""
+    code = re.sub(r"[ -]", "", printed).upper()
+    return code if _VCHECK_CODE_SHAPE.fullmatch(code) else None
+
+
 def _v_check(chunks: list[KnowledgeChunk]) -> dict[str, Any] | None:
     """The V-check codes on the bill (one per contract, at most three) and any link to the V-test."""
     codes: dict[str, dict[str, Any]] = {}
     links: list[str] = []
     for chunk in chunks:
+        for link in VCHECK_FACTUURCODE_RE.finditer(chunk.text):
+            for key, value in re.findall(r"(?i)\b([EG])=([A-Z0-9-]+)", link.group(1)):
+                code = vcheck_code(value)
+                if code and code not in codes and len(codes) < 3:
+                    fact = _fact(code, chunk, chunk.text[max(0, link.start() - 80):link.end()], link.group(0))
+                    fact["energy"] = "electricity" if key.upper() == "E" else "gas"
+                    codes[code] = fact
         for label in VCHECK_LABEL_RE.finditer(chunk.text):
             window = chunk.text[label.end():label.end() + 120]
             match = VCHECK_CODE_RE.search(window)
             if not match or "EAN" in window[:match.start()]:
                 continue
-            code = re.sub(r"[ -]", "", match.group(1))
-            if code in codes or len(codes) == 3:
+            code = vcheck_code(match.group(1))
+            if code is None or code in codes or len(codes) == 3:
                 continue
             start = label.end() + match.start()
             fact = _fact(code, chunk, chunk.text[max(0, label.start() - 40):start + 40], chunk.text[label.start():start + len(match.group(1))])
