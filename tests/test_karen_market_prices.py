@@ -325,3 +325,26 @@ async def test_a_named_supplier_price_question_gets_that_supplier_s_cards(monkey
 async def test_other_supplier_questions_keep_their_own_route(monkeypatch, question):
     monkeypatch.setattr(market_prices, "load_market_data", AsyncMock(return_value=_cards()))
     assert await market_prices.answer_supplier_price_question(question) is None
+
+
+def test_chat_ranks_and_shows_prices_on_one_cost_basis():
+    """Review of 930e46e: a card that lists green power and CHP apart is not cheaper than one that includes them."""
+    data = market()
+    data["contracts"]["suppliers"] = [
+        {"name": "Luminus", "status": "verified", "product_name": "BasicFlex Online", "price_per_kwh_eur": 0.2394,
+         "green_wkk_eur_per_kwh": 0.0, "source_url": "https://www.luminus.be/tariefkaart.pdf"},
+        {"name": "Eneco", "status": "verified", "product_name": "Eneco Zon & Wind Flex", "price_per_kwh_eur": 0.2268,
+         "green_wkk_eur_per_kwh": 0.0151, "source_url": "https://www.eneco.be/tariefkaart.pdf"},
+        {"name": "Energyvision", "status": "verified", "product_name": "Goedkope stroom", "price_per_kwh_eur": 0.10,
+         "green_wkk_eur_per_kwh": None, "source_url": "https://www.energyvision.be/tariefkaart.pdf"},
+        {"name": "Aspiravi", "status": "verified", "product_name": "Eco Plus Flex", "price_per_kwh_eur": 0.10,
+         "green_wkk_eur_per_kwh": 0.0157, "price_basis": "realized_last_month", "source_url": "https://aspiravi.be/t.pdf"},
+    ]
+    answer = market_prices.market_price_reply(data, "nl")["answer"]
+    assert "met groene stroom en WKK" in answer
+    # 23,94 against 22,68 + 1,51 = 24,19: the order of the bare prices turns round.
+    assert answer.index("Luminus BasicFlex Online: 23,9 cent/kWh") < answer.index("Eneco Zon & Wind Flex: 24,2 cent/kWh")
+    # Unknown surcharge, and last month's realized price: not ranked.
+    assert "Energyvision" not in answer and "Aspiravi" not in answer
+    assert market_prices.kwh_price({"price_per_kwh_eur": 0.2268, "green_wkk_eur_per_kwh": 0.0151}) == pytest.approx(0.2419)
+    assert market_prices.kwh_price({"price_per_kwh_eur": 0.0835}) == 0.0835  # gas cards carry no surcharge

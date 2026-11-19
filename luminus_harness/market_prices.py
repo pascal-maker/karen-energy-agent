@@ -213,16 +213,28 @@ async def load_market_data() -> dict[str, Any] | None:
     return data
 
 
+def kwh_price(card: dict[str, Any]) -> float:
+    """The card's price per kWh with green power and CHP certificate costs, the same basis for every card: some
+    cards include them in the energy price, others list them apart (green_wkk_eur_per_kwh). Cards without the
+    field (gas, older data) add nothing."""
+    surcharge = card.get("green_wkk_eur_per_kwh")
+    return card["price_per_kwh_eur"] + (surcharge if isinstance(surcharge, (int, float)) else 0)
+
+
 def verified_cards(data: dict[str, Any], contract_type: str = "variable", energy: str = "electricity") -> list[dict[str, Any]]:
-    """Verified tariff cards with a kWh price, cheapest first. Cards without a contract_type are variable."""
+    """Verified tariff cards with a kWh price, cheapest first on the same cost basis (kwh_price). Cards without a
+    contract_type are variable. Left out: a card whose green power and CHP cost is unknown (the field present but
+    empty) and a card whose price is last month's realized price instead of an estimate."""
     key = "gas_suppliers" if energy == "gas" else "suppliers"
     return sorted(
         (
             card for card in (data.get("contracts") or {}).get(key) or []
             if card.get("status") == "verified" and isinstance(card.get("price_per_kwh_eur"), (int, float))
             and card.get("contract_type", "variable") == contract_type
+            and card.get("price_basis") != "realized_last_month"
+            and not ("green_wkk_eur_per_kwh" in card and not isinstance(card["green_wkk_eur_per_kwh"], (int, float)))
         ),
-        key=lambda card: card["price_per_kwh_eur"],
+        key=kwh_price,
     )
 
 
@@ -266,7 +278,7 @@ def _visual_group(kind: str, cards: list[dict[str, Any]], lang: str, digits: int
         months = card.get("duration_months") if kind == "fixed" else None
         items.append({
             "label": card_label(card),
-            "value": round(card["price_per_kwh_eur"] * 100, digits),
+            "value": round(kwh_price(card) * 100, digits),
             **({"note": labels["months"].format(months)} if months else {}),
         })
     return {"title": labels[kind], "items": items}
@@ -335,11 +347,11 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl", region: str = "fl
         }.get(lang, f"De tariefkaarten van leveranciers die ik heb, gelden voor Vlaanderen, niet voor {place}. Vergelijk de prijzen voor jouw verbruik met {name}: {url}"))
     if suppliers:
         lines.append({
-            "en": "Variable contracts on the suppliers' current tariff cards (energy price incl. 6% VAT, without network costs):",
-            "fr": "Contrats variables sur les fiches tarifaires actuelles des fournisseurs (prix de l'énergie TVA 6% incl., hors coûts de réseau) :",
-        }.get(lang, "Variabele contracten op de huidige tariefkaarten van leveranciers (energieprijs incl. 6% btw, zonder netkosten):"))
+            "en": "Variable contracts on the suppliers' current tariff cards (energy price with green power and CHP costs, incl. 6% VAT, without network costs):",
+            "fr": "Contrats variables sur les fiches tarifaires actuelles des fournisseurs (prix de l'énergie avec certificats verts et cogénération, TVA 6% incl., hors coûts de réseau) :",
+        }.get(lang, "Variabele contracten op de huidige tariefkaarten van leveranciers (energieprijs met groene stroom en WKK, incl. 6% btw, zonder netkosten):"))
         for supplier in suppliers:
-            cents = _cents(supplier["price_per_kwh_eur"] * 100, lang)
+            cents = _cents(kwh_price(supplier) * 100, lang)
             unit = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
             lines.append(f"• {card_label(supplier)}: {cents} {unit}")
     if fixed_cards:
@@ -349,7 +361,7 @@ def market_price_reply(data: dict[str, Any], lang: str = "nl", region: str = "fl
         }.get(lang, "Goedkoopste vaste contracten op de huidige tariefkaarten:"))
         unit = {"en": "cents/kWh", "fr": "c€/kWh"}.get(lang, "cent/kWh")
         for card in fixed_cards:
-            lines.append(f"• {card_label(card)}: {_cents(card['price_per_kwh_eur'] * 100, lang)} {unit}")
+            lines.append(f"• {card_label(card)}: {_cents(kwh_price(card) * 100, lang)} {unit}")
 
     market_source = next(iter(data.get("sources") or []), {})
     sources = [{
@@ -625,7 +637,7 @@ _STANDING_UNIT = {"per_year": {"nl": "per jaar", "en": "a year", "fr": "par an"}
 
 
 def _card_line(card: dict[str, Any], lang: str) -> str:
-    cents = _cents(card["price_per_kwh_eur"] * 100, lang)
+    cents = _cents(kwh_price(card) * 100, lang)
     kind = _CONTRACT_TYPE[card.get("contract_type", "variable")][lang]
     amount, unit = card.get("standing_charge_amount"), _STANDING_UNIT.get(card.get("standing_charge_unit"), {}).get(lang)
     fee = ""
@@ -830,7 +842,7 @@ def named_comparison_reply(question: str, data: dict[str, Any], lang: str = "nl"
     if len(names) < 2 or not _WHICH_BETTER.search(question) or _GAS.search(question):
         return None
     names = names[:3]
-    lines = [f"Zo verhouden {' en '.join(names)} zich op hun huidige tariefkaarten (energieprijs incl. 6% btw, zonder netkosten):"]
+    lines = [f"Zo verhouden {' en '.join(names)} zich op hun huidige tariefkaarten (energieprijs met groene stroom en WKK, incl. 6% btw, zonder netkosten):"]
     missing, cards = [], []
     for name in names:
         for kind in ("variable", "fixed"):
@@ -842,7 +854,7 @@ def named_comparison_reply(question: str, data: dict[str, Any], lang: str = "nl"
                 missing.append(f"{name} heeft geen nagekeken {'variabele' if kind == 'variable' else 'vaste'} tariefkaart.")
     if not cards:
         return None
-    cheapest = min(cards, key=lambda card: card["price_per_kwh_eur"])
+    cheapest = min(cards, key=kwh_price)
     lines += missing
     lines.append(
         f"Per kWh is {card_label(cheapest)} het goedkoopst. Wat je in totaal betaalt, hangt ook af van de vaste vergoeding "

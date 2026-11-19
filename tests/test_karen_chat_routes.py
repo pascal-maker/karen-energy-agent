@@ -66,7 +66,7 @@ def test_other_usage_questions_keep_their_route(question):
 def test_two_named_suppliers_are_compared_on_their_own_cards():
     reply = market_prices.named_comparison_reply("wat is goedkoper luminus of engie", with_named_cards(), "nl")
     lines = reply["answer"].splitlines()
-    assert lines[0] == "Zo verhouden Luminus en Engie zich op hun huidige tariefkaarten (energieprijs incl. 6% btw, zonder netkosten):"
+    assert lines[0] == "Zo verhouden Luminus en Engie zich op hun huidige tariefkaarten (energieprijs met groene stroom en WKK, incl. 6% btw, zonder netkosten):"
     assert "• Luminus BasicFlex Online (variabel): 19,2 cent/kWh" in lines
     assert "• Engie Direct vast (vast): 20,5 cent/kWh, vaste vergoeding € 60 per jaar" in lines
     assert "• Luminus BasicFix (vast): 21,0 cent/kWh" in lines

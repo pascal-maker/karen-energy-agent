@@ -1,8 +1,9 @@
 """Fixed or variable? A decision with a probability, from the published price forecast.
 
 market.json has no fixed-contract prices, so Karen asks for the fixed price the
-user was offered (cent per kWh, energy price incl. VAT). The variable side is the
-median of today's verified variable tariff cards, moved with the 12-month
+user was offered (cent per kWh, energy price incl. VAT, with green power and CHP costs). Card prices are read
+on that same basis with market_prices.kwh_price(), since some cards include those costs and others list them
+apart. The variable side is the median of today's verified variable tariff cards, moved with the 12-month
 day-ahead forecast: Belgian variable cards are indexed monthly on Belpex, at
 about 0.11 cent per kWh for each EUR/MWh before 6% VAT (Frank Energie 0.1068,
 Aspiravi 0.116). The forecast's 10-90% band per month is read as a lognormal
@@ -19,7 +20,7 @@ from statistics import NormalDist, median
 from typing import Any
 
 from . import market_prices
-from .market_prices import _cents, card_label, question_language, verified_cards
+from .market_prices import _cents, card_label, kwh_price, question_language, verified_cards
 
 PASS_THROUGH_CENT_PER_EUR_MWH = 0.11 * 1.06
 DEFAULT_USAGE_KWH = 3500
@@ -78,7 +79,7 @@ def _variable_reference_cents(data: dict[str, Any]) -> tuple[float, list[str]] |
     suppliers = verified_cards(data)
     if len(suppliers) < 3:
         return None
-    return median(s["price_per_kwh_eur"] * 100 for s in suppliers), [s["name"] for s in suppliers]
+    return median(kwh_price(s) * 100 for s in suppliers), [s["name"] for s in suppliers]
 
 
 def _forecast(data: dict[str, Any]) -> list[dict[str, float]] | None:
@@ -124,14 +125,16 @@ def chance_variable_is_cheaper(months: list[dict[str, float]], reference: float,
 def _missing_price_reply(lang: str) -> dict[str, Any]:
     answer = (
         "I can work that out, but I need the fixed price you were offered. Ask again with it, for example: "
-        "\"Is a fixed contract at 21 cents per kWh better than variable?\" Add your yearly usage in kWh if you know it."
+        "\"Is a fixed contract at 21 cents per kWh better than variable?\" If the offer lists green power and CHP costs "
+        "separately, add them to the price. Add your yearly usage in kWh if you know it."
         if lang == "en" else
         "Je peux le calculer, mais il me faut le prix fixe qu'on vous a proposé. Reposez la question avec ce prix, par "
-        "exemple : \"Un contrat fixe à 21 centimes par kWh, c'est mieux que variable ?\" Ajoutez votre consommation "
-        "annuelle en kWh si vous la connaissez."
+        "exemple : \"Un contrat fixe à 21 centimes par kWh, c'est mieux que variable ?\" Si l'offre indique à part les "
+        "certificats verts et la cogénération, ajoutez-les au prix. Ajoutez votre consommation annuelle en kWh si vous la connaissez."
         if lang == "fr" else
         "Dat reken ik graag voor je uit, maar ik heb de vaste prijs nodig die je aangeboden kreeg. Vraag het opnieuw "
         "met die prijs erbij, bijvoorbeeld: \"Is een vast contract aan 21 cent per kWh beter dan variabel?\" "
+        "Staan de kosten voor groene stroom en WKK apart op het aanbod, tel ze dan bij de prijs. "
         "Zet er je jaarverbruik in kWh bij als je dat kent."
     )
     return {"answer": answer, "sources": [], "live_source_status": "not-needed", "processing": "contract-advice"}
@@ -140,7 +143,7 @@ def _missing_price_reply(lang: str) -> dict[str, Any]:
 def _fixed_card_note(compared: dict[str, Any] | None, cheapest: dict[str, Any] | None, fixed: float, lang: str) -> str:
     """Which fixed card Karen compared with, or a tip when a verified card beats the offered price."""
     if compared is not None:
-        label, cents = card_label(compared), _cents(compared["price_per_kwh_eur"] * 100, lang)
+        label, cents = card_label(compared), _cents(kwh_price(compared) * 100, lang)
         note = {
             "en": f"I compared with the cheapest contract whose price is fixed for 1 year on today's tariff cards, {label} at {cents} cents/kWh. "
                   "Were you offered a different price? Tell me and I'll work it out again.",
@@ -148,9 +151,9 @@ def _fixed_card_note(compared: dict[str, Any] | None, cheapest: dict[str, Any] |
                   "On vous a proposé un autre prix ? Dites-le-moi et je refais le calcul.",
         }.get(lang, f"Ik vergeleek met het goedkoopste contract met een prijs die 1 jaar vastligt op de huidige tariefkaarten, {label} aan {cents} cent/kWh. "
                     "Kreeg je een andere prijs aangeboden? Zeg het, dan reken ik het opnieuw uit.")
-        if cheapest is not None and cheapest is not compared and cheapest["price_per_kwh_eur"] < compared["price_per_kwh_eur"]:
+        if cheapest is not None and cheapest is not compared and kwh_price(cheapest) < kwh_price(compared):
             # A cheaper card fixed for longer is listed elsewhere in the chat; say why it wasn't the benchmark.
-            other, other_cents = card_label(cheapest), _cents(cheapest["price_per_kwh_eur"] * 100, lang)
+            other, other_cents = card_label(cheapest), _cents(kwh_price(cheapest) * 100, lang)
             months = cheapest.get("duration_months")
             years = f"{months // 12}" if isinstance(months, int) and months % 12 == 0 else None
             note += " " + {
@@ -161,8 +164,8 @@ def _fixed_card_note(compared: dict[str, Any] | None, cheapest: dict[str, Any] |
             }.get(lang, f"{other} is goedkoper aan {other_cents} cent/kWh, maar die prijs ligt "
                         f"{years + ' jaar' if years else 'een andere periode'} vast, dus dat is geen vergelijking op gelijke voet.")
         return note
-    if cheapest is not None and cheapest["price_per_kwh_eur"] * 100 < fixed - 0.5:
-        label, cents = card_label(cheapest), _cents(cheapest["price_per_kwh_eur"] * 100, lang)
+    if cheapest is not None and kwh_price(cheapest) * 100 < fixed - 0.5:
+        label, cents = card_label(cheapest), _cents(kwh_price(cheapest) * 100, lang)
         return {
             "en": f"Tip: {label} lists a fixed price of {cents} cents/kWh on its current tariff card, lower than your offer.",
             "fr": f"Astuce : {label} affiche un prix fixe de {cents} c€/kWh sur sa fiche tarifaire actuelle, moins que votre offre.",
@@ -186,7 +189,7 @@ def contract_advice_reply(question: str, data: dict[str, Any]) -> dict[str, Any]
         benchmark = next((card for card in fixed_cards if card.get("duration_months") == HORIZON_MONTHS), None)
         if benchmark is None:
             return _missing_price_reply(lang)
-        fixed = benchmark["price_per_kwh_eur"] * 100
+        fixed = kwh_price(benchmark) * 100
         compared_card = benchmark
     else:
         compared_card = None
@@ -215,7 +218,7 @@ def contract_advice_reply(question: str, data: dict[str, Any]) -> dict[str, Any]
             f"{_cents(expected, lang)} cents/kWh, so about €{yearly:,.0f} a year "
             f"{'less' if expected < fixed else 'more'} than fixed at {usage:,} kWh.\n"
             f"This is an estimate from the day-ahead price forecast and today's variable tariff cards "
-            f"({len(names)} suppliers), energy price incl. 6% VAT only. Standing charges, network costs and taxes "
+            f"({len(names)} suppliers), energy price only, with green power and CHP costs, incl. 6% VAT. Standing charges, network costs and taxes "
             "are not included, and it is not financial advice."
         )
     elif lang == "fr":
@@ -230,7 +233,7 @@ def contract_advice_reply(question: str, data: dict[str, Any]) -> dict[str, Any]
             f"{_cents(expected, lang)} c€/kWh, soit environ {f'{yearly:,.0f}'.replace(',', ' ')} € par an "
             f"{'de moins' if expected < fixed else 'de plus'} que le fixe pour {f'{usage:,}'.replace(',', ' ')} kWh.\n"
             f"C'est une estimation basée sur la prévision des prix day-ahead et les fiches tarifaires variables actuelles "
-            f"({len(names)} fournisseurs), prix de l'énergie TVA 6% incl. uniquement. Redevance fixe, coûts de réseau et "
+            f"({len(names)} fournisseurs), prix de l'énergie uniquement, certificats verts et cogénération compris, TVA 6% incl. Redevance fixe, coûts de réseau et "
             "taxes ne sont pas inclus, et ce n'est pas un conseil financier."
         )
     else:
@@ -245,7 +248,7 @@ def contract_advice_reply(question: str, data: dict[str, Any]) -> dict[str, Any]
             f"{_cents(expected, lang)} cent/kWh, dus ongeveer € {f'{yearly:,.0f}'.replace(',', '.')} per jaar "
             f"{'minder' if expected < fixed else 'meer'} dan vast bij {f'{usage:,}'.replace(',', '.')} kWh.\n"
             f"Dit is een schatting op basis van de day-ahead-prijsvoorspelling en de huidige variabele "
-            f"tariefkaarten ({len(names)} leveranciers), alleen de energieprijs incl. 6% btw. Vaste vergoeding, "
+            f"tariefkaarten ({len(names)} leveranciers), alleen de energieprijs met groene stroom en WKK, incl. 6% btw. Vaste vergoeding, "
             "netkosten en heffingen zijn niet meegeteld, en het is geen financieel advies."
         )
     note = _fixed_card_note(compared_card, cheapest_fixed, fixed, lang)
