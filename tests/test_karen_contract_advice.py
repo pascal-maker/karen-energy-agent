@@ -301,3 +301,38 @@ def test_jev_cannot_send_a_termination_fee_question_to_the_sum(api_with_fixed_ca
         "type": "choice", "choice": "contract_advice", "confidence": 0.95, "probabilities": {}}}})
     reply = ask(api_with_fixed_cards, "Betaal ik een verbrekingsvergoeding als ik mijn vast contract vroegtijdig opzeg?")
     assert reply.get("processing") != "contract-advice" and "decision" not in reply
+
+
+def test_advice_uses_the_same_cost_basis_as_the_price_answers():
+    """Review of 9bb29e4: the advice read the bare card price; the supplier answer added green power and CHP."""
+    from luminus_harness.contract_savings import local_contracts
+
+    data = market()
+    data["contracts"] = local_contracts()
+    reply = contract_advice.contract_advice_reply("vast of variabel?", data)["answer"]
+    benchmark = next(card for card in market_prices.verified_cards(data, "fixed")
+                     if card.get("duration_months") == contract_advice.HORIZON_MONTHS)
+    cents = market_prices._cents(market_prices.kwh_price(benchmark) * 100, "nl")
+    assert f"{market_prices.card_label(benchmark)} aan {cents} cent/kWh" in reply
+    # The supplier route names the same product at the same price.
+    assert f"{market_prices.card_label(benchmark)} (vast): {cents} cent/kWh" in market_prices._card_line(benchmark, "nl")
+    assert "met groene stroom en WKK" in reply
+    bare = market_prices._cents(benchmark["price_per_kwh_eur"] * 100, "nl")
+    assert benchmark["green_wkk_eur_per_kwh"] == 0 or f"aan {bare} cent/kWh" not in reply
+
+
+def test_the_variable_median_includes_the_surcharge():
+    data = market()
+    data["contracts"]["suppliers"] = [
+        {"name": n, "status": "verified", "product_name": n, "price_per_kwh_eur": p, "green_wkk_eur_per_kwh": g}
+        for n, p, g in (("A", 0.20, 0.0), ("B", 0.21, 0.015), ("C", 0.23, 0.0))
+    ]
+    reference, _ = contract_advice._variable_reference_cents(data)
+    assert reference == pytest.approx(22.5)  # median of 20,0; 22,5; 23,0 (21 + 1,5 for B)
+
+
+def test_missing_price_asks_to_add_separately_listed_surcharges():
+    answer = contract_advice.contract_advice_reply("vast of variabel?", {**market(), "contracts": {"suppliers": []}})
+    assert answer is None or "groene stroom en WKK" in answer["answer"]
+    asked = contract_advice._missing_price_reply("nl")["answer"]
+    assert "groene stroom en WKK apart op het aanbod" in asked
