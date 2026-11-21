@@ -50,6 +50,16 @@ WARNINGS = {
     "meter_unknown": "Dit geldt voor een enkelvoudige meter: de tariefkaarten zijn daarvoor. Heb je een dag/nachtmeter, dan klopt deze besparing niet.",
     "price_from_chosen_product": "Je prijs komt van de huidige tariefkaart van het product dat je koos.",
 }
+# The same reasons and warnings when the check runs on the visitor's answers: there is no bill to point to.
+ANSWER_MESSAGES = {
+    "no_current_price": "Zonder je huidige prijs kan ik geen besparing berekenen. Kies je huidige contract om je besparing te zien. Dit kosten de aanbiedingen bij jouw verbruik.",
+    "no_usage": "Geef je jaarverbruik in kWh op om te vergelijken.",
+}
+ANSWER_WARNINGS = {
+    "day_night_price_not_found": "Voor het contract dat je koos vond ik geen dag- en nachtprijs, dus ik kan je huidige kost niet berekenen.",
+    "fee_not_found": "Voor het contract dat je koos vond ik geen vaste vergoeding; je huidige kost kan dus hoger liggen dan hier staat.",
+    "green_wkk_not_found": "Voor het contract dat je koos vond ik geen kosten voor groene stroom en WKK; je huidige kost kan dus hoger liggen dan hier staat.",
+}
 
 
 def local_contracts() -> dict[str, Any]:
@@ -465,4 +475,8 @@ def compare_answers(
         facts["supplier"] = {"value": " / ".join(dict.fromkeys(supplier_names))}
     result = compare_contract(facts, terms, contracts, usage_kwh=usage_kwh)
     result["based_on"] = "answers"
+    for entry in result.get("energies", {}).values():
+        entry["message"] = ANSWER_MESSAGES.get(entry.get("reason"), entry.get("message"))
+        for warning in entry.get("warnings", []):
+            warning["message"] = ANSWER_WARNINGS.get(warning["code"], warning["message"])
     return result
