@@ -4,7 +4,7 @@ emoji: 🎙️
 colorFrom: green
 colorTo: yellow
 sdk: gradio
-sdk_version: 5.50.0
+sdk_version: 6.32.0
 python_version: 3.12
 app_file: energy_voice_app.py
 pinned: false
