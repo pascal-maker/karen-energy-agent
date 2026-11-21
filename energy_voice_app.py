@@ -1538,7 +1538,9 @@ async def home() -> RedirectResponse:
     return RedirectResponse(url="/ui/")
 
 
-app = gr.mount_gradio_app(api_app, gradio_demo, path="/ui", css=CSS, theme=gr.themes.Soft())
+# ssr_mode=False: Spaces set GRADIO_SSR_MODE=true, and in Gradio 6 mounting then starts a Node server on the first
+# free port from GRADIO_SERVER_PORT (7860), so Uvicorn below can no longer bind it and the Space exits.
+app = gr.mount_gradio_app(api_app, gradio_demo, path="/ui", css=CSS, theme=gr.themes.Soft(), ssr_mode=False)
 
 
 def _register_zerogpu_functions() -> None:
