@@ -472,3 +472,47 @@ def test_a_phone_number_after_the_contract_box_is_not_a_product():
     terms = read_contract_terms([KnowledgeChunk(page=1, text="Uw huidig contract 078/18 01 83 0800/65 065", urls=(), source="t")],
                                 ("electricity",))
     assert terms["electricity"]["product"] is None
+
+
+# --- the three questions never point to a bill ----------------------------------------------------------
+
+def _answer_combinations():
+    from luminus_harness.contract_savings import contract_options
+
+    contracts = local_contracts()
+    options = contract_options(contracts)
+    picks = [None, *options["electricity"][:4], *options["gas"][:2]]
+    for meter in ("single", "day_night", None):
+        for pick in picks:
+            for gas in (False, True):
+                energies = {"electricity": {"usage_kwh": 3200}}
+                if gas:
+                    energies["gas"] = {"usage_kwh": 12000}
+                if pick:
+                    energy = "gas" if pick in options["gas"] else "electricity"
+                    energies.setdefault(energy, {"usage_kwh": 12000})
+                    energies[energy].update(supplier=pick["supplier"], product=pick["product"])
+                yield contracts, meter, energies
+
+
+def test_answers_wording_never_mentions_a_bill():
+    from luminus_harness.contract_savings import compare_answers
+
+    seen = set()
+    for contracts, meter, energies in _answer_combinations():
+        result = compare_answers(contracts, postcode="2000", meter=meter, energies=energies)
+        for entry in result["energies"].values():
+            texts = [entry.get("message") or "", *(w["message"] for w in entry.get("warnings", []))]
+            seen.add(entry.get("reason"))
+            for text in texts:
+                assert "factuur" not in text.lower(), (meter, energies, text)
+    assert "no_current_price" in seen  # "Weet ik niet / ander contract" is covered
+
+
+def test_no_current_price_from_answers_asks_for_the_contract():
+    from luminus_harness.contract_savings import compare_answers
+
+    result = compare_answers(local_contracts(), postcode="2000", meter="single", energies={"electricity": {"usage_kwh": 3200}})
+    entry = result["energies"]["electricity"]
+    assert entry["reason"] == "no_current_price"
+    assert entry["message"].startswith("Zonder je huidige prijs kan ik geen besparing berekenen.")
