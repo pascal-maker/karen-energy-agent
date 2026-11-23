@@ -741,8 +741,15 @@ _GENERATION_NAMES = {
 
 
 def _model_configured() -> bool:
-    """Gemma or the backup model can answer."""
-    return any(os.getenv(name, "").strip() for name in ("GEMINI_API_KEY", "OPENAI_API_KEY"))
+    """Qwen, Gemma or the backup model can answer."""
+    return any(os.getenv(name, "").strip() for name in ("QWEN_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"))
+
+
+def answer_model_name() -> str:
+    """The model that answers first: Qwen when its key is set, otherwise Gemma."""
+    if os.getenv("QWEN_API_KEY", "").strip():
+        return os.getenv("QWEN_MODEL", "").strip() or _QWEN_DEFAULT_MODEL
+    return os.getenv("GEMMA_MODEL", "gemma-4-26b-a4b-it")
 
 
 def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, on_delta: Callable[[str], None] | None = None) -> str:
@@ -760,6 +767,17 @@ def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, on_del
 
 
 def _generate_with_fallback(prompt: str, system_instruction: str, on_delta: Callable[[str], None] | None) -> str:
+    if os.getenv("QWEN_API_KEY", "").strip():
+        try:
+            return _generate_qwen(prompt, system_instruction, on_delta)
+        except GemmaUnavailableError:
+            # Qwen is busy, unreachable or refused its key: the models below answer as before.
+            if not any(os.getenv(name, "").strip() for name in ("GEMINI_API_KEY", "OPENAI_API_KEY")):
+                raise
+    return _generate_without_qwen(prompt, system_instruction, on_delta)
+
+
+def _generate_without_qwen(prompt: str, system_instruction: str, on_delta: Callable[[str], None] | None) -> str:
     if not os.getenv("GEMINI_API_KEY", "").strip() and os.getenv("OPENAI_API_KEY", "").strip():
         try:
             text = _generate_backup(prompt, system_instruction)
@@ -797,6 +815,100 @@ def _generate_backup(prompt: str, system_instruction: str) -> str:
     text = (result.output_text or "").strip()
     if not text:
         raise ValueError("The backup model returned no text")
+    return text
+
+
+# Qwen4-Max through Alibaba's OpenAI-compatible endpoint. QWEN_BASE_URL and QWEN_MODEL change the address and the
+# model; without QWEN_API_KEY none of this runs.
+_QWEN_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+_QWEN_DEFAULT_MODEL = "qwen4-max"
+_THINK_BLOCK = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL)
+
+
+class _ThinkFilter:
+    """Drops a leading <think>…</think> block from streamed pieces; the visitor only sees the answer."""
+
+    def __init__(self) -> None:
+        self.held, self.inside, self.started = "", False, False
+
+    def feed(self, piece: str) -> str:
+        self.held += piece
+        if not self.started:
+            opening = self.held.lstrip()
+            if "<think>".startswith(opening) and len(opening) < len("<think>"):
+                return ""  # could still become "<think>"
+            self.started = True
+            self.inside = opening.startswith("<think>")
+            if not self.inside:
+                text, self.held = self.held, ""
+                return text
+        if self.inside:
+            end = self.held.find("</think>")
+            if end < 0:
+                return ""
+            self.held, self.inside = self.held[end + len("</think>"):].lstrip(), False
+        text, self.held = self.held, ""
+        return text
+
+    def flush(self) -> str:
+        text, self.held = ("" if self.inside else self.held), ""
+        return text
+
+
+def _generate_qwen(prompt: str, system_instruction: str, on_delta: Callable[[str], None] | None = None) -> str:
+    """The same prompt to Qwen. Busy, unreachable, refused or empty: GemmaUnavailableError, so the next model answers.
+    A stream that breaks after text was shown is a GemmaAPIError: a second model would mix two answers."""
+    model = os.getenv("QWEN_MODEL", "").strip() or _QWEN_DEFAULT_MODEL
+    base_url = (os.getenv("QWEN_BASE_URL", "").strip() or _QWEN_DEFAULT_BASE_URL).rstrip("/")
+    request = Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps({
+            "model": model,
+            "messages": [{"role": "system", "content": system_instruction}, {"role": "user", "content": prompt}],
+            "stream": bool(on_delta),
+            **({"stream_options": {"include_usage": True}} if on_delta else {}),
+        }).encode("utf-8"),
+        headers={"Authorization": "Bearer " + os.environ["QWEN_API_KEY"].strip(), "Content-Type": "application/json"},
+        method="POST",
+    )
+    shown: list[str] = []
+    usage: dict[str, Any] = {}
+    try:
+        with urlopen(request, timeout=45) as response:
+            if on_delta:
+                thinking = _ThinkFilter()
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:") or line[5:].strip() == "[DONE]":
+                        continue
+                    chunk = json.loads(line[5:])
+                    usage = chunk.get("usage") or usage
+                    for choice in chunk.get("choices") or []:
+                        piece = thinking.feed(str((choice.get("delta") or {}).get("content") or ""))
+                        if piece:
+                            shown.append(piece)
+                            on_delta(piece)
+                rest = thinking.flush()
+                if rest:
+                    shown.append(rest)
+                    on_delta(rest)
+                text = "".join(shown).strip()
+            else:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+                usage = payload.get("usage") or {}
+                text = _THINK_BLOCK.sub("", str(payload["choices"][0]["message"].get("content") or "")).strip()
+    except HTTPError as error:
+        # A wrong QWEN_MODEL or QWEN_BASE_URL (400, 404) costs no visitor an answer either: the next model answers.
+        raise GemmaUnavailableError(f"Qwen is nu niet beschikbaar (HTTP {error.code}).") from error
+    except (TimeoutError, URLError, OSError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+        if shown:
+            raise GemmaAPIError("Qwen stopte midden in het antwoord.") from error
+        raise GemmaUnavailableError("Qwen kon nu geen verbinding maken.") from error
+    if not text:
+        raise GemmaUnavailableError("Qwen gaf een leeg antwoord terug.")
+    langfuse_trace.note_generation(
+        model=model, usage_details={"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens")},
+    )
     return text
 
 
@@ -1039,7 +1151,7 @@ async def answer_energy_question(question: str, chunks: list[KnowledgeChunk]) ->
     if _is_cancellation_question(question):
         return await _answer_cancellation_question(question)
     if not _model_configured():
-        raise GemmaAPIError("Karen heeft geen taalmodel: voeg GEMINI_API_KEY of OPENAI_API_KEY toe aan de backend.")
+        raise GemmaAPIError("Karen heeft geen taalmodel: voeg QWEN_API_KEY, GEMINI_API_KEY of OPENAI_API_KEY toe aan de backend.")
     lang = question_language(question)
     original_question = question
     if lang != "nl":
