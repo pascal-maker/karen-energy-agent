@@ -7,6 +7,7 @@ import contextvars
 import json
 import os
 import re
+import sys
 import time
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -769,12 +770,34 @@ def _generate(prompt: str, system_instruction: str = _SYSTEM_INSTRUCTION, on_del
 def _generate_with_fallback(prompt: str, system_instruction: str, on_delta: Callable[[str], None] | None) -> str:
     if os.getenv("QWEN_API_KEY", "").strip():
         try:
-            return _generate_qwen(prompt, system_instruction, on_delta)
-        except GemmaUnavailableError:
-            # Qwen is busy, unreachable or refused its key: the models below answer as before.
+            text = _generate_qwen(prompt, system_instruction, on_delta)
+        except GemmaUnavailableError as error:
+            # Qwen is busy, unreachable or refused its key: the models below answer as before, and why is kept.
+            _qwen_failed(str(error))
             if not any(os.getenv(name, "").strip() for name in ("GEMINI_API_KEY", "OPENAI_API_KEY")):
                 raise
+        else:
+            _qwen_problem["reason"] = ""
+            return text
     return _generate_without_qwen(prompt, system_instruction, on_delta)
+
+
+# Why the last Qwen call failed, until one succeeds: /api/health shows it, Langfuse and the Space log record it.
+_qwen_problem: dict[str, str] = {"reason": ""}
+_SECRET_LOOKING = re.compile(r"\b(?:sk-|Bearer\s+)\S+|\b[A-Za-z0-9_-]{24,}\b")
+
+
+def _qwen_failed(reason: str) -> None:
+    reason = _SECRET_LOOKING.sub("[verborgen]", reason)[:200]
+    _qwen_problem["reason"] = reason
+    print(f"[karen] Qwen unavailable, next model answers: {reason}", file=sys.stderr, flush=True)
+    with langfuse_trace.step("qwen-unavailable", level="WARNING", status_message=reason):
+        pass
+
+
+def qwen_problem() -> str:
+    """Why Qwen failed last, or "" while it answers (or has no key)."""
+    return _qwen_problem["reason"] if os.getenv("QWEN_API_KEY", "").strip() else ""
 
 
 def _generate_without_qwen(prompt: str, system_instruction: str, on_delta: Callable[[str], None] | None) -> str:
@@ -899,17 +922,28 @@ def _generate_qwen(prompt: str, system_instruction: str, on_delta: Callable[[str
                 text = _THINK_BLOCK.sub("", str(payload["choices"][0]["message"].get("content") or "")).strip()
     except HTTPError as error:
         # A wrong QWEN_MODEL or QWEN_BASE_URL (400, 404) costs no visitor an answer either: the next model answers.
-        raise GemmaUnavailableError(f"Qwen is nu niet beschikbaar (HTTP {error.code}).") from error
+        raise GemmaUnavailableError(f"HTTP {error.code}{_provider_error(error)}") from error
     except (TimeoutError, URLError, OSError, json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
         if shown:
             raise GemmaAPIError("Qwen stopte midden in het antwoord.") from error
-        raise GemmaUnavailableError("Qwen kon nu geen verbinding maken.") from error
+        raise GemmaUnavailableError(f"geen verbinding of onleesbaar antwoord ({type(error).__name__}: {str(error)[:80]})") from error
     if not text:
         raise GemmaUnavailableError("Qwen gaf een leeg antwoord terug.")
     langfuse_trace.note_generation(
         model=model, usage_details={"input": usage.get("prompt_tokens"), "output": usage.get("completion_tokens")},
     )
     return text
+
+
+def _provider_error(error: HTTPError) -> str:
+    """" invalid_api_key: Incorrect API key …" from an OpenAI-style or DashScope-style error body, or ""."""
+    try:
+        body = json.loads(error.read().decode("utf-8", errors="replace") or "{}")
+    except (json.JSONDecodeError, OSError, ValueError):
+        return ""
+    detail = body.get("error") if isinstance(body.get("error"), dict) else body
+    code, message = str(detail.get("code") or detail.get("type") or ""), str(detail.get("message") or "")
+    return (f" {code}" if code else "") + (f": {message[:120]}" if message else "")
 
 
 _THOUGHT_MARKER = "thought"
