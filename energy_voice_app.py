@@ -51,6 +51,7 @@ from luminus_harness.knowledge import (
 )
 from luminus_harness.gemma_answer import (
     answer_model_name,
+    qwen_problem,
     GemmaAPIError,
     answer_energy_question,
     answer_small_talk,
@@ -853,11 +854,14 @@ def _store_upload_session(chunks: list[KnowledgeChunk], analysis: dict[str, Any]
 
 @api_app.get("/api/health")
 async def api_health() -> dict[str, str]:
-    return {
+    health = {
         "status": "ok",
         "answer_model": answer_model_name(),
         "uploaded_pdf_processing": "masked-model" if model_enabled() else "local-only",
     }
+    if qwen_problem():
+        health["answer_model_problem"] = qwen_problem()
+    return health
 
 
 @api_app.get("/api/today")
